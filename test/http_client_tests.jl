@@ -2385,3 +2385,25 @@ end
         HT.forceclose(server)
     end
 end
+
+@testset "HTTP client codeunits bodies dispatch without Base ambiguity (#1302)" begin
+    server = HTTP.serve!("127.0.0.1", 0) do req
+        body = req.body === nothing ? UInt8[] : req.body
+        return HT.Response(200, String(copy(body)))
+    end
+    try
+        url = "http://127.0.0.1:$(HTTP.port(server))/"
+        # codeunits request body with a write deadline: routes through the
+        # deadline write IO, which was ambiguous with Base's CodeUnits write
+        resp = HT.post(url; body = codeunits("cu-body"), write_idle_timeout = 5)
+        @test resp.status == 200
+        @test String(resp.body) == "cu-body"
+        # client stream write of codeunits (Stream{true} disambiguation)
+        resp_open = HT.open("POST", url) do io
+            write(io, codeunits("cu-open"))
+        end
+        @test resp_open.status == 200
+    finally
+        close(server)
+    end
+end

@@ -177,6 +177,11 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     @atomic write_closed::Bool
     @atomic read_closed::Bool
     @atomic response_started::Bool
+    # `response_started` flips at `startwrite` even when the response head is
+    # deferred (h1 FIXED mode); `head_committed` flips only when head bytes have
+    # actually been written to the transport, so error paths can tell whether a
+    # raw error response is still possible (#1303).
+    @atomic head_committed::Bool
     @atomic continue_sent::Bool
     ignore_writes::Bool
     write_mode::_ServerStreamWriteMode.T
@@ -242,6 +247,7 @@ function Stream(server::Server, tracked::_ServerConn, request::Req) where {Req<:
         false,
         false,
         false,
+        false,
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
     )
@@ -284,6 +290,7 @@ function Stream(request::Req) where {Req<:Request}
         nothing,
         nothing,
         UInt32(0),
+        false,
         false,
         false,
         false,
@@ -340,6 +347,7 @@ function Stream(
         write_lock,
         send_state,
         stream_id,
+        false,
         false,
         false,
         false,
@@ -1107,6 +1115,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                             startwrite(stream)
                             closewrite(stream)
                         end
+                    elseif !(@atomic :acquire stream.head_committed)
+                        # startwrite ran but the response head was deferred (h1
+                        # FIXED mode) and never reached the wire: answer with a
+                        # raw error response instead of silently dropping the
+                        # connection (#1303).
+                        _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
+                        return nothing
                     end
                     @try_ignore begin
                         stream.response.close = true

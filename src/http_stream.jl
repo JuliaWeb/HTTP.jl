@@ -89,6 +89,7 @@ function Stream(
         false,
         false,
         false,
+        false,
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
     )
@@ -245,6 +246,16 @@ function write(stream::Stream{true}, data::StridedVector{UInt8})::Int
     return write(stream.request_buffer, data)
 end
 write(stream::Stream{false}, data::StridedVector{UInt8}) = _server_write(stream, data)
+
+# Base defines write(::IO, ::Base.CodeUnits); without these methods, writing
+# codeunits to a Stream is ambiguous (CodeUnits <: DenseVector{UInt8}
+# intersects the StridedVector methods above) (#1302).
+function write(stream::Stream{true}, data::Base.CodeUnits{UInt8})::Int
+    (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))
+    (@atomic :acquire stream.write_closed) && throw(ArgumentError("request body writes are closed"))
+    return write(stream.request_buffer, data)
+end
+write(stream::Stream{false}, data::Base.CodeUnits{UInt8}) = _server_write(stream, data)
 
 function write(stream::Stream{true}, data::AbstractVector{UInt8})::Int
     (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))

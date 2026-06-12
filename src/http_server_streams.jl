@@ -86,6 +86,7 @@ function _write_server_stream_head!(stream::Stream)::Nothing
             end_stream,
             _server_write_deadline_ns(stream.server::Server),
         )
+        @atomic :release stream.head_committed = true
         @atomic :release stream.response_started = true
         return nothing
     end
@@ -109,6 +110,7 @@ function _write_server_stream_head!(stream::Stream)::Nothing
     _write_headers!(io, headers)
     write(io, "\r\n")
     _write_server_stream_bytes!(stream, take!(io), false)
+    @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     return nothing
 end

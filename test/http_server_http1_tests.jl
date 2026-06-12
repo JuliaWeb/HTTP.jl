@@ -52,32 +52,59 @@ end
 # indefinitely. Wrap the whole exchange in `_run_with_timeout`, a task-level
 # watchdog that does not depend on socket deadlines, so a stuck read fails the
 # test in seconds instead of hanging the job until CI's wall-clock limit.
+# Raised when the raw probe saw no response bytes at all within its budget.
+# On Windows this is the known IOCP wake strand (JuliaServices/Reseau.jl#107):
+# the parked reader is intermittently never woken even though bytes arrive.
+struct _FirstByteTimeout <: Exception end
+
+# `_read_until_quiet` runs under its own `_run_with_timeout` watchdog, so the
+# timeout surfaces here wrapped in (possibly nested) TaskFailedException.
+function _is_first_byte_timeout(err)::Bool
+    err isa _FirstByteTimeout && return true
+    err isa TaskFailedException || return false
+    inner = err.task.exception
+    return inner !== nothing && _is_first_byte_timeout(inner)
+end
+
 function _raw_http_request(
     port::Integer,
     request::AbstractString;
     settle_s::Float64 = 0.5,
     close_write::Bool = true,
     wait_for_first_byte::Bool = true,
+    # Re-dial fresh and retry when no first byte arrives. Windows-only by
+    # default so other platforms stay strict; safe for these probes because no
+    # caller asserts on server-side invocation counts.
+    attempts::Int = Sys.iswindows() ? 3 : 1,
 )::String
-    return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0), label = "raw http request (port $(port))") do
-        sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
-        try
-            write(sock, Vector{UInt8}(codeunits(String(request))))
-            if close_write
-                HT.@try_ignore begin
-                    NC.closewrite(sock)
+    return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0) * attempts, label = "raw http request (port $(port))") do
+        for attempt in 1:attempts
+            sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
+            try
+                write(sock, Vector{UInt8}(codeunits(String(request))))
+                if close_write
+                    HT.@try_ignore begin
+                        NC.closewrite(sock)
+                    end
                 end
+                # master hardening kept: longer first-byte budget on Windows,
+                # combined with the re-dial retry below
+                first_byte_timeout_s = max(Sys.iswindows() ? 5.0 : 2.0, settle_s + 1.0)
+                return _read_until_quiet(
+                    sock;
+                    timeout_s = first_byte_timeout_s,
+                    quiet_timeout_s = min(0.25, max(0.05, settle_s)),
+                    wait_for_first_byte = wait_for_first_byte,
+                )
+            catch err
+                _is_first_byte_timeout(err) || rethrow(err)
+                attempt < attempts || error("timed out waiting for first response byte ($(attempts) attempts)")
+                @warn "raw probe got no first byte; re-dialing — known Windows IOCP wake strand (Reseau#107)" attempt port
+            finally
+                NC.close(sock)
             end
-            first_byte_timeout_s = max(Sys.iswindows() ? 5.0 : 2.0, settle_s + 1.0)
-            return _read_until_quiet(
-                sock;
-                timeout_s = first_byte_timeout_s,
-                quiet_timeout_s = min(0.25, max(0.05, settle_s)),
-                wait_for_first_byte = wait_for_first_byte,
-            )
-        finally
-            NC.close(sock)
         end
+        error("unreachable: raw probe retry loop exited")
     end
 end
 
@@ -166,7 +193,7 @@ function _read_until_quiet(
             end
         end
         if wait_for_first_byte && !saw_bytes
-            error("timed out waiting for first response byte")
+            throw(_FirstByteTimeout())
         end
         return String(out)
     end
@@ -946,6 +973,74 @@ end
     finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP stream writes accept codeunits without Base ambiguity (#1302)" begin
+    # Base defines write(::IO, ::Base.CodeUnits); the Stream StridedVector
+    # methods used to be ambiguous with it.
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Content-Length" => "2")
+        HT.startwrite(stream)
+        write(stream, codeunits("ok"))
+        return nothing
+    end
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(resp.body) == "ok"
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP stream handler error after deferred startwrite returns 500 (#1303)" begin
+    # h1 FIXED mode defers the response head at startwrite; a handler throw
+    # before anything reaches the wire must produce a raw 500, not a silent
+    # connection drop the client sees as "unexpected EOF".
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Content-Length" => "2")
+        HT.startwrite(stream)      # FIXED: response_started, head NOT committed
+        error("boom")
+    end
+    address = HT.server_addr(server)
+    try
+        resp = HT.request("GET", "http://$(address)/"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+
+    # control: once the head is committed (chunked writes it at startwrite), a
+    # handler throw must NOT emit a spurious 500 after the real head
+    server2 = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Transfer-Encoding" => "chunked")
+        HT.startwrite(stream)      # chunked: head committed to the wire here
+        error("boom")
+    end
+    address2 = HT.server_addr(server2)
+    try
+        outcome = try
+            resp2 = HT.request("GET", "http://$(address2)/"; status_exception = false, retry = false)
+            resp2.status
+        catch err
+            err
+        end
+        # truncated 200 or a client-side error are both acceptable; a 500 means
+        # the server wrote a second head after the committed one
+        @test outcome != 500
+    finally
+        _run_with_timeout(() -> HT.forceclose(server2); label = "server forceclose")
+        _run_with_timeout(() -> wait(server2); label = "server task completion")
     end
 end
 
