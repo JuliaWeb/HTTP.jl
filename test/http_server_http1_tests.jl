@@ -948,6 +948,44 @@ end
     end
 end
 
+@testset "HTTP stream byte I/O supports generic AbstractStrings and Chars" begin
+    # Strings are written via unsafe_write; generic AbstractStrings and Chars
+    # fall back to Base's per-byte path, which requires write(io, ::UInt8).
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        body = String(read(stream))
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        if isempty(body)
+            write(stream, Test.GenericString("generic"))
+            write(stream, ' ')
+            write(stream, 0x21)
+        else
+            write(stream, body)
+        end
+        return nothing
+    end
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(resp.body) == "generic !"
+
+        echoed = Ref("")
+        resp2 = HT.open(:POST, "http://$(address)/") do io
+            write(io, Test.GenericString("client generic"))
+            write(io, '!')
+            _ = HT.startread(io)
+            echoed[] = String(read(io))
+        end
+        @test resp2.status == 200
+        @test echoed[] == "client generic!"
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server stream handlers reject fixed-length mismatches before writing malformed bodies" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             request = HT.startread(stream)
