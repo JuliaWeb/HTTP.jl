@@ -39,6 +39,7 @@ function _rsr_next_headers!(reader)::HT.HeadersFrame
     while true
         frame = HT.read_frame!(reader)
         frame isa HT.HeadersFrame && return frame::HT.HeadersFrame
+        frame isa HT.DataFrame && continue      # POST request bodies
         frame isa HT.WindowUpdateFrame && continue
         frame isa HT.SettingsFrame && continue
         frame isa HT.PingFrame && continue
@@ -95,9 +96,10 @@ function _rsr_serve!(listener; scenario::Symbol, refuse_first::Int = 1, rst_code
     return attempts, conns, accept_task
 end
 
-function _rsr_request(url)
+function _rsr_request(url; method::String = "GET", body::String = "")
     return try
-        HT.get(url; protocol = :h2, retry = true, connect_timeout = 5, request_timeout = 15)
+        HT.request(method, url, Pair{String, String}[], body;
+                   protocol = :h2, retry = true, connect_timeout = 5, request_timeout = 15)
     catch err
         err
     end
@@ -155,6 +157,57 @@ end
         @test attempts[] == 1                  # surfaced on first occurrence
         @test result isa HT.H2StreamResetError
         result isa HT.H2StreamResetError && @test occursin("CANCEL", sprint(showerror, result))
+    finally
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(accept_task)
+    end
+end
+
+# §8.7 lifts the idempotency gate: requests on guaranteed-unprocessed streams
+# are retried even when non-idempotent (the body, here in-memory, is replayable).
+@testset "HTTP/2 client retries a refused POST (non-idempotent)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    url = "http://" * ND.join_host_port("127.0.0.1", Int(laddr.port)) * "/"
+    attempts, conns, accept_task = _rsr_serve!(listener; scenario = :rst)
+    try
+        result = _rsr_request(url; method = "POST", body = "ping")
+        @test attempts[] == 2
+        @test result isa HT.Response
+        result isa HT.Response && @test (result::HT.Response).status == 200
+    finally
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(accept_task)
+    end
+end
+
+@testset "HTTP/2 client retries a POST rejected by GOAWAY" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    url = "http://" * ND.join_host_port("127.0.0.1", Int(laddr.port)) * "/"
+    attempts, conns, accept_task = _rsr_serve!(listener; scenario = :goaway)
+    try
+        result = _rsr_request(url; method = "POST", body = "ping")
+        @test attempts[] == 2
+        @test conns[] == 2
+        @test result isa HT.Response
+        result isa HT.Response && @test (result::HT.Response).status == 200
+    finally
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(accept_task)
+    end
+end
+
+# A cancelled POST has no unprocessed guarantee: no retry, the reset surfaces.
+@testset "HTTP/2 client does not retry a cancelled POST" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    url = "http://" * ND.join_host_port("127.0.0.1", Int(laddr.port)) * "/"
+    attempts, conns, accept_task = _rsr_serve!(listener; scenario = :rst, rst_code = UInt32(0x8))
+    try
+        result = _rsr_request(url; method = "POST", body = "ping")
+        @test attempts[] == 1
+        @test result isa HT.H2StreamResetError
     finally
         HTTP.@try_ignore NC.close(listener)
         HTTP.@try_ignore wait(accept_task)
