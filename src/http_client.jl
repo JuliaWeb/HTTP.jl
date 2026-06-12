@@ -16,6 +16,8 @@ Keyword arguments:
 - `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
 - `max_redirects`: maximum redirect hops before failing
 - `prefer_http2`: whether secure requests should try HTTP/2 when available
+- `http2_settings`: an [`HTTP2Settings`](@ref) configuring HTTP/2 receive
+  flow-control windows for connections this client opens
 - `default_headers`: headers applied to every request issued through this
   client; per-call `headers` are appended on top, and per-call values for the
   same name take precedence
@@ -39,6 +41,7 @@ mutable struct Client{CR}
     cookiejar::Union{Nothing,CookieJar}
     max_redirects::Int
     prefer_http2::Bool
+    http2_settings::HTTP2Settings
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
     default_headers::Headers
@@ -305,6 +308,7 @@ function Client(;
     cookiejar::Union{Nothing,CookieJar}=CookieJar(),
     max_redirects::Integer=10,
     prefer_http2::Bool=true,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     default_headers=Pair{String,String}[],
     default_query=nothing,
     default_basicauth=nothing,
@@ -321,6 +325,7 @@ function Client(;
         cookiejar,
         Int(max_redirects),
         prefer_http2,
+        http2_settings,
         ReentrantLock(),
         Dict{String,Vector{H2Connection}}(),
         _normalize_headers_input(default_headers),
@@ -479,13 +484,21 @@ function _acquire_h2_conn!(
                 host_resolver=connect_host_resolver,
                 tls_config=tls_cfg,
                 connect_deadline_ns=connect_deadline_ns,
+                http2_settings=client.http2_settings,
             )
         elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL || _proxy_plan_is_socks(plan)
             proxy = plan.proxy
             proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
             tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
             try
-                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns)
+                connect_h2!(
+                    tcp,
+                    address;
+                    secure=secure,
+                    tls_config=tls_cfg,
+                    connect_deadline_ns=connect_deadline_ns,
+                    http2_settings=client.http2_settings,
+                )
             catch
                 @try_ignore begin
                     TCP.close(tcp)

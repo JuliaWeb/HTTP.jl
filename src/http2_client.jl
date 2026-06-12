@@ -65,7 +65,7 @@ mutable struct H2StreamState
     stream_error::Union{Nothing,Exception}
 end
 
-function H2StreamState(stream_id::UInt32)
+function H2StreamState(stream_id::UInt32, max_buffered_bytes::Int=_H2_DEFAULT_MAX_BUFFERED_BYTES)
     lock = ReentrantLock()
     return H2StreamState(
         stream_id,
@@ -77,7 +77,7 @@ function H2StreamState(stream_id::UInt32)
         nothing,
         UInt8[],
         1,
-        256 * 1024,
+        max_buffered_bytes,
         false,
         false,
         false,
@@ -122,6 +122,9 @@ mutable struct H2Connection
     peer_goaway_last_stream_id::UInt32
     accepting_new_streams::Bool
     max_header_block_bytes::Int
+    # Per-stream receive buffer cap applied to every `H2StreamState` opened on
+    # this connection. Configured at connect time; defaults to 256 KiB.
+    max_buffered_bytes::Int
     # Concurrent acquirers that have committed to opening a stream on this
     # connection but haven't reached `_register_stream!` yet. Used by
     # `_h2_conn_available` so a second caller doesn't decide a peer-capped
@@ -498,7 +501,7 @@ function _try_register_stream_locked!(conn::H2Connection)::Union{Nothing,H2Strea
         length(conn.streams) < conn.peer_max_concurrent_streams || return nothing
         stream_id = conn.next_stream_id
         conn.next_stream_id += UInt32(2)
-        state = H2StreamState(stream_id)
+        state = H2StreamState(stream_id, conn.max_buffered_bytes)
         conn.streams[stream_id] = state
         conn.stream_send_window[stream_id] = conn.initial_stream_send_window
         # Convert the caller's pending reservation into the real stream entry.
@@ -934,6 +937,7 @@ function _connect_h2_from_tcp!(
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
+    http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
     tls_conn = nothing
     try
@@ -978,12 +982,20 @@ function _connect_h2_from_tcp!(
             typemax(UInt32),
             true,
             _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
+            _h2_buffered_bytes(http2_settings),
             0,
             false,
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)
-        _write_frame_h2_threadsafe!(conn, SettingsFrame(false, Pair{UInt16,UInt32}[]))
+        initial_settings = Pair{UInt16,UInt32}[]
+        if http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
+            push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(http2_settings.initial_window_size))
+        end
+        _write_frame_h2_threadsafe!(conn, SettingsFrame(false, initial_settings))
+        if http2_settings.connection_window_size > _H2_DEFAULT_WINDOW_SIZE
+            _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(UInt32(0), UInt32(http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)))
+        end
         _read_settings_until_ready!(conn)
         if tls_conn !== nothing
             TLS.set_deadline!(tls_conn::TLS.Conn, Int64(0))
@@ -1009,6 +1021,11 @@ Establish an explicit HTTP/2 client connection.
 
 This bypasses the higher-level `Client`/`Transport` pool and returns a reusable
 `H2Connection` for applications that need direct session ownership.
+
+HTTP/2 receive flow control is configurable with `http2_settings`, an
+[`HTTP2Settings`](@ref) carrying the per-stream and connection-level receive
+windows. It defaults to the protocol defaults, leaving existing behavior
+unchanged.
 """
 function connect_h2!(
     tcp::TCP.Conn,
@@ -1016,8 +1033,9 @@ function connect_h2!(
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
+    http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
 end
 
 function connect_h2!(
@@ -1026,9 +1044,10 @@ function connect_h2!(
     host_resolver::HostResolvers.HostResolver=HostResolvers.HostResolver(),
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
+    http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
 end
 
 """

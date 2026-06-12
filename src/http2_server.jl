@@ -20,7 +20,7 @@ mutable struct _H2ServerStreamState
     cancel_kind::UInt8
 end
 
-function _H2ServerStreamState(stream_id::UInt32)
+function _H2ServerStreamState(stream_id::UInt32, max_buffered_bytes::Int=_H2_DEFAULT_MAX_BUFFERED_BYTES)
     lock = ReentrantLock()
     return _H2ServerStreamState(
         stream_id,
@@ -32,7 +32,7 @@ function _H2ServerStreamState(stream_id::UInt32)
         nothing,
         UInt8[],
         1,
-        256 * 1024,
+        max_buffered_bytes,
         Int64(-1),
         Int64(0),
         false,
@@ -107,7 +107,6 @@ mutable struct _H2ServerBody <: AbstractBody
     @atomic closed::Bool
 end
 
-const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
 const _H2_ERROR_PROTOCOL = UInt32(0x1)
 const _H2_ERROR_INTERNAL = UInt32(0x2)
 const _H2_ERROR_CANCEL = UInt32(0x8)
@@ -1561,8 +1560,15 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         client_settings isa SettingsFrame || throw(ProtocolError("expected initial h2 SETTINGS frame"))
         (client_settings::SettingsFrame).ack && throw(ProtocolError("initial h2 SETTINGS frame must not be ACK"))
         _apply_h2_peer_settings!(send_state, write_lock, (client_settings::SettingsFrame).settings)
-        _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
+        initial_settings = Pair{UInt16,UInt32}[]
+        if server.http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
+            push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(server.http2_settings.initial_window_size))
+        end
+        _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, initial_settings), _server_write_deadline_ns(server))
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
+        if server.http2_settings.connection_window_size > _H2_DEFAULT_WINDOW_SIZE
+            _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
+        end
         _clear_deadlines!(conn)
         _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
@@ -1642,7 +1648,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     if haskey(states, hf.stream_id)
                         states[hf.stream_id]
                     else
-                        created = _H2ServerStreamState(hf.stream_id)
+                        created = _H2ServerStreamState(hf.stream_id, _h2_buffered_bytes(server.http2_settings))
                         states[hf.stream_id] = created
                         _register_h2_send_window!(send_state, hf.stream_id)
                         created

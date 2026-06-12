@@ -53,6 +53,13 @@ timeout configuration. Keep it around for lifecycle operations such as
 Timeout fields are stored in nanoseconds. Use the convenience `listen!` and
 `serve!` keywords to configure request-read, header-read, response-write, and
 idle deadlines without constructing a `Server` manually.
+
+HTTP/2 receive flow control is configurable through the `http2_settings` keyword,
+an [`HTTP2Settings`](@ref) carrying the per-stream and connection-level receive
+windows. It defaults to the protocol defaults so existing behavior is unchanged.
+Raising the windows improves single-stream throughput on links with non-trivial
+latency, where the default 64 KiB window would otherwise cap a transfer at roughly
+`window / RTT`.
 """
 mutable struct Server{F}
     network::String
@@ -64,6 +71,7 @@ mutable struct Server{F}
     write_timeout_ns::Int64
     idle_timeout_ns::Int64
     max_header_bytes::Int
+    http2_settings::HTTP2Settings
     listenany::Bool
     reuseaddr::Bool
     backlog::Int
@@ -86,6 +94,7 @@ function Server(;
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -106,6 +115,7 @@ function Server(;
         Int64(write_timeout_ns),
         Int64(idle_timeout_ns),
         Int(max_header_bytes),
+        http2_settings,
         listenany,
         reuseaddr,
         Int(backlog),
@@ -1294,6 +1304,7 @@ function listen!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1311,6 +1322,7 @@ function listen!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1330,6 +1342,7 @@ function listen!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1349,6 +1362,7 @@ function listen!(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1368,6 +1382,7 @@ function listen!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1389,6 +1404,7 @@ function listen!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1445,6 +1461,7 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1466,6 +1483,7 @@ function serve!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1490,6 +1508,7 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1516,6 +1535,7 @@ function serve!(
             readtimeout=readtimeout,
             verbose=verbose,
             max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
             reuseaddr=reuseaddr,
             backlog=backlog,
         )
@@ -1541,6 +1561,7 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1560,6 +1581,7 @@ function serve!(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1585,6 +1607,7 @@ function serve(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1603,6 +1626,7 @@ function serve(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        http2_settings=http2_settings,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,

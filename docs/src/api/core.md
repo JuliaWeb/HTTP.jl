@@ -89,3 +89,9 @@ HTTP.ProxyURL
 HTTP.ProxyFromEnvironment
 HTTP.NoProxy
 ```
+
+## HTTP/2 Configuration
+
+```@docs
+HTTP.HTTP2Settings
+```

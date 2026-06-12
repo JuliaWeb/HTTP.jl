@@ -81,6 +81,33 @@ can select `h2`. Cleartext HTTP/2 is accepted when the peer starts the
 connection with the HTTP/2 prior-knowledge preface; ordinary HTTP/1.1 upgrade
 requests are not a separate public server API.
 
+### Tuning flow-control windows
+
+HTTP/2 flow control caps the in-flight unacknowledged bytes, so single-stream
+throughput is bounded by roughly `window / RTT`. The protocol default window of
+65535 bytes is fine for small requests but throttles large uploads or downloads
+on links with non-trivial latency. Pass an `HTTP.HTTP2Settings` through the
+`http2_settings` keyword on either side to raise the per-stream and
+connection-level receive windows. Uploads depend on the server's receive window
+and downloads on the client's.
+
+```julia
+using HTTP
+
+settings = HTTP.HTTP2Settings(
+    initial_window_size = 1 << 20,     # 1 MiB per-stream receive window
+    connection_window_size = 1 << 21,  # 2 MiB connection-level receive window
+)
+
+client = HTTP.Client(http2_settings = settings)
+server = HTTP.serve!("127.0.0.1", 8080; http2_settings = settings) do request
+    HTTP.Response(200, "ok")
+end
+```
+
+Both windows default to the protocol default of 65535, so omitting
+`http2_settings` leaves behavior unchanged.
+
 Use these higher-level APIs for ordinary HTTP/2 traffic:
 
 - `HTTP.request`, `HTTP.get`, and the other top-level request helpers
