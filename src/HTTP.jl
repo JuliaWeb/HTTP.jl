@@ -59,6 +59,34 @@ using .Handlers
 include("http_sse.jl")
 include("http_websockets.jl")
 
+# Declare the documented, non-exported public API via Julia's `public` mechanism
+# (Julia 1.11+), so tooling and downstream code can distinguish supported entry
+# points (accessed as `HTTP.name`) from internals. Already-exported names
+# (e.g. `WebSockets`, `escape`, `Form`) are public by virtue of `export` and are
+# not repeated here. The version guard keeps the source parseable on Julia 1.10
+# (the `public` keyword does not exist there); `eval(Expr(:public, …))` is valid
+# syntax on all versions, so only the evaluation is gated.
+@static if VERSION >= v"1.11.0-DEV.469"
+    Core.eval(@__MODULE__, Expr(:public,
+        Symbol("@client"),
+        :AbstractBody, :AddressInUseError, :CallbackBody, :CanceledError, :Client,
+        :ConnectError, :DNSError, :DoneEvent, :HTTP2Settings, :HTTPError, :HTTPTimeoutError,
+        :Handlers, :Headers, :NoProxy, :ParseError, :ProtocolError, :ProxyConfig,
+        :ProxyFromEnvironment, :ProxyURL, :RedirectEvent, :Request, :RequestContext,
+        :RequestEvent, :RequestRetryError, :Response, :ResponseHeadEvent, :RetryBucket,
+        :RetryEvent, :SSEEvent, :SSEStream, :Server, :StatusError, :Stream, :TLSHandshakeError,
+        :TimeoutError, :TooManyRedirectsError, :Transport, :addtrailer, :appendheader,
+        :body_close!, :body_closed, :body_read!, :cancel!, :canceled, :canonical_header_key,
+        :close_idle_connections!, :defaultheader!, :delete, :do!, :expired, :fileserver,
+        :forceclose, :get, :get!, :get_request_context, :hasheader, :head, :header,
+        :headercontains, :headers, :idle_connection_count, :isaborted, :isrecoverable,
+        :listen, :listen!, :mkheaders, :nobody, :open, :options, :patch, :port, :post, :put,
+        :read_request, :removeheader, :request, :retry_attempts, :roundtrip!, :serve, :serve!,
+        :servecontent, :servefile, :set_deadline!, :setheader, :setstatus, :sse_stream,
+        :startwrite, :streamhandler, :trailers, :write_request!, :write_response!,
+    ))
+end
+
 if ccall(:jl_generating_output, Cint, ()) == 1
     include("precompile.jl")
 end
