@@ -113,6 +113,7 @@ test_files = [
     "http2_frame_tests.jl",
     "http2_settings_tests.jl",
     "http2_client_tests.jl",
+    "http2_refused_stream_retry_tests.jl",
     "http2_server_tests.jl",
     "http_integration_tests.jl",
     "http_parity_tests.jl",
