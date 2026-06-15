@@ -1057,6 +1057,34 @@ function defaultheader!(headers::Headers, item::Pair)
 end
 
 """
+Adapter that presents an arbitrary caller-provided `IO` for `WebSockets.open(io)`,
+bypassing the connection pool entirely.
+
+The key difference it papers over is read semantics: the HTTP/1 handshake parser
+and the WebSocket read loop use `readbytes!(...; all=false)` and treat a `0`
+return as EOF, relying on Reseau's "block until at least one byte or EOF"
+behavior. A stdlib `TCPSocket` with `all=false` instead returns `0` whenever no
+bytes are buffered *yet*, so we reimplement the blocking contract here on top of
+`eof`/`bytesavailable`.
+"""
+struct _RawIOConn{T<:IO} <: IO
+    io::T
+end
+
+# Block until data is available or EOF, then return whatever is buffered (up to
+# `nb`) — never a spurious `0` while the stream is still open.
+function Base.readbytes!(c::_RawIOConn, b::AbstractVector{UInt8}, nb::Integer=length(b); all::Bool=false)::Int
+    eof(c.io) && return 0
+    n = min(bytesavailable(c.io), Int(nb))
+    return readbytes!(c.io, b, n)
+end
+
+Base.read(c::_RawIOConn, ::Type{UInt8}) = read(c.io, UInt8)
+Base.write(c::_RawIOConn, x::UInt8) = write(c.io, x)
+Base.unsafe_write(c::_RawIOConn, p::Ptr{UInt8}, n::UInt) = unsafe_write(c.io, p, n)
+Base.eof(c::_RawIOConn) = eof(c.io)
+
+"""
 Internal buffered reader that first drains already-read bytes before continuing
 from the underlying TCP or TLS connection.
 """
