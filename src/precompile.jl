@@ -302,7 +302,7 @@ function _run_precompile_workload_inner!()::Nothing
         @assert String(deflate_resp.body) == "deflate:decoded"
 
         _precompile_trace("request tls")
-        tls_resp = get("https://$(tls_address)/secure"; require_ssl_verification=false, protocol=:h1, request_timeouts...)
+        tls_resp = get("https://$(tls_address)/secure"; proxy=ProxyConfig(), require_ssl_verification=false, protocol=:h1, request_timeouts...)
         @assert tls_resp.status == 200
         @assert String(tls_resp.body) == "tls:/secure"
 
