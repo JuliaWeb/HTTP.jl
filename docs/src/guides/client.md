@@ -145,6 +145,28 @@ Important `Client` and `Transport` knobs:
 - explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`;
   proxy URLs may use `http://`, `socks5://`, or `socks5h://`
 - coordinated retries through a shared `RetryBucket`
+- binding outbound connections to a specific source address/interface with `local_addr`
+
+### Binding to a local address
+
+Like Go's `net.Dialer.LocalAddr` (and `curl --interface`), `local_addr` selects the
+source IP — and therefore the outgoing interface — for a client's connections. This
+is useful on multi-homed hosts or to separate traffic by interface. Pass an IP-literal
+string (the kernel chooses an ephemeral source port) or a `Reseau.TCP.SocketAddrV4` /
+`SocketAddrV6` for full control including a fixed source port:
+
+```julia
+# All requests from this client leave via 192.0.2.10.
+client = HTTP.Client(local_addr = "192.0.2.10")
+HTTP.get("http://example.com"; client = client)
+
+# Equivalent, set on the transport (the canonical home — local_addr is a
+# connection-pool property, so each bound client keeps its own pool):
+client = HTTP.Client(transport = HTTP.Transport(local_addr = "192.0.2.10"))
+```
+
+The address must be an IP assigned to a local interface; binding to an unassigned
+address fails fast. Interface *names* are not accepted — resolve them to an IP first.
 
 ### Per-`Client` defaults
 

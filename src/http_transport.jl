@@ -230,6 +230,27 @@ mutable struct H1Body <: AbstractBody
     cancel_callback::Union{Nothing,Function}
 end
 
+# Normalize a user-supplied local bind address into a Reseau `SocketEndpoint`.
+# Modeled on Go's `net.Dialer.LocalAddr`: an IP-literal string binds that source
+# IP with an OS-chosen ephemeral port (the common case — pick the interface, let
+# the kernel pick the port), while a ready-made `TCP.SocketAddrV4`/`SocketAddrV6`
+# gives full control including a fixed source port. Interface *names* (curl's
+# `--interface eth0`) are intentionally not accepted — like Go, the address is
+# an IP, which keeps resolution out of the transport.
+_normalize_local_addr(::Nothing)::Union{Nothing,TCP.SocketEndpoint} = nothing
+_normalize_local_addr(addr::TCP.SocketAddrV4)::TCP.SocketEndpoint = addr
+_normalize_local_addr(addr::TCP.SocketAddrV6)::TCP.SocketEndpoint = addr
+function _normalize_local_addr(addr::AbstractString)::TCP.SocketEndpoint
+    s = String(addr)
+    isempty(s) && throw(ArgumentError("local_addr string must be a non-empty IP literal"))
+    v4 = HostResolvers._parse_ipv4_literal(s)
+    v4 === nothing || return TCP.SocketAddrV4(v4, 0)
+    v6 = HostResolvers._parse_ipv6_literal(s)
+    v6 === nothing || return TCP.SocketAddrV6(v6, 0)
+    throw(ArgumentError("local_addr '$s' is not a valid IPv4 or IPv6 address literal"))
+end
+_normalize_local_addr(addr) = throw(ArgumentError("local_addr must be an IP-literal String or a Reseau TCP.SocketAddrV4/SocketAddrV6, got $(typeof(addr))"))
+
 function Transport(;
     tls_config::Union{Nothing,TLS.Config}=nothing,
     proxy=nothing,
@@ -238,12 +259,13 @@ function Transport(;
     max_idle_total::Integer=64,
     max_conns_per_host::Integer=0,
     idle_timeout_ns::Integer=Int64(90_000_000_000),
+    local_addr=nothing,
 )
     max_idle_per_host > 0 || throw(ArgumentError("max_idle_per_host must be > 0"))
     max_idle_total > 0 || throw(ArgumentError("max_idle_total must be > 0"))
     max_conns_per_host >= 0 || throw(ArgumentError("max_conns_per_host must be >= 0"))
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
-    host_resolver = HostResolvers.HostResolver()
+    host_resolver = HostResolvers.HostResolver(local_addr=_normalize_local_addr(local_addr))
     return Transport(
         host_resolver,
         tls_config,

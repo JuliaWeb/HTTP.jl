@@ -28,6 +28,10 @@ Keyword arguments:
 - `connect_timeout`, `request_timeout`, `response_header_timeout`,
   `read_idle_timeout`, `write_idle_timeout`: defaults applied to every request
   unless the call passes the matching keyword. `0` disables.
+- `local_addr`: bind this client's outbound connections to a source IP/interface
+  (Go's `net.Dialer.LocalAddr` model). Accepts an IP-literal `String` (ephemeral
+  source port) or a `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`. Cannot be combined
+  with an explicit `transport`; set it on the `Transport` in that case.
 
 Pass a `Client` with the `client` keyword to `request`, `get`, `open`, or the
 other verb helpers when you want connection reuse and shared cookies across
@@ -303,7 +307,7 @@ function (trace::_VerboseTrace)(event::DoneEvent)::Nothing
 end
 
 function Client(;
-    transport::Transport=Transport(proxy=ProxyFromEnvironment()),
+    transport::Union{Nothing,Transport}=nothing,
     check_redirect=nothing,
     cookiejar::Union{Nothing,CookieJar}=CookieJar(),
     max_redirects::Integer=10,
@@ -317,8 +321,18 @@ function Client(;
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
+    local_addr=nothing,
 )
     max_redirects >= 0 || throw(ArgumentError("max_redirects must be >= 0"))
+    # `local_addr` is a convenience that binds outbound connections to a source
+    # IP/interface (Go's net.Dialer.LocalAddr model). It belongs to the
+    # transport's connection pool, so it folds into the default transport; if the
+    # caller supplies their own transport, they must set it there instead.
+    if transport === nothing
+        transport = Transport(proxy=ProxyFromEnvironment(), local_addr=local_addr)
+    elseif local_addr !== nothing
+        throw(ArgumentError("local_addr cannot be combined with an explicit `transport`; pass local_addr to Transport(...) instead"))
+    end
     return Client{typeof(check_redirect)}(
         transport,
         check_redirect,
