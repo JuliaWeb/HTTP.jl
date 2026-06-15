@@ -237,19 +237,20 @@ end
 # gives full control including a fixed source port. Interface *names* (curl's
 # `--interface eth0`) are intentionally not accepted — like Go, the address is
 # an IP, which keeps resolution out of the transport.
-_normalize_local_addr(::Nothing)::Union{Nothing,TCP.SocketEndpoint} = nothing
-_normalize_local_addr(addr::TCP.SocketAddrV4)::TCP.SocketEndpoint = addr
-_normalize_local_addr(addr::TCP.SocketAddrV6)::TCP.SocketEndpoint = addr
-function _normalize_local_addr(addr::AbstractString)::TCP.SocketEndpoint
-    s = String(addr)
-    isempty(s) && throw(ArgumentError("local_addr string must be a non-empty IP literal"))
-    v4 = HostResolvers._parse_ipv4_literal(s)
-    v4 === nothing || return TCP.SocketAddrV4(v4, 0)
-    v6 = HostResolvers._parse_ipv6_literal(s)
-    v6 === nothing || return TCP.SocketAddrV6(v6, 0)
-    throw(ArgumentError("local_addr '$s' is not a valid IPv4 or IPv6 address literal"))
+function _normalize_local_addr(addr)::Union{Nothing,TCP.SocketEndpoint}
+    addr === nothing && return nothing
+    addr isa TCP.SocketEndpoint && return addr
+    if addr isa AbstractString
+        s = String(addr)
+        isempty(s) && throw(ArgumentError("local_addr string must be a non-empty IP literal"))
+        v4 = HostResolvers._parse_ipv4_literal(s)
+        v4 === nothing || return TCP.SocketAddrV4(v4, 0)
+        v6 = HostResolvers._parse_ipv6_literal(s)
+        v6 === nothing || return TCP.SocketAddrV6(v6, 0)
+        throw(ArgumentError("local_addr '$s' is not a valid IPv4 or IPv6 address literal"))
+    end
+    throw(ArgumentError("local_addr must be an IP-literal String or a Reseau TCP.SocketAddrV4/SocketAddrV6, got $(typeof(addr))"))
 end
-_normalize_local_addr(addr) = throw(ArgumentError("local_addr must be an IP-literal String or a Reseau TCP.SocketAddrV4/SocketAddrV6, got $(typeof(addr))"))
 
 function Transport(;
     tls_config::Union{Nothing,TLS.Config}=nothing,
