@@ -717,6 +717,73 @@ end
     @test_throws HT.ProtocolError HT._resolve_redirect_target("origin.com:80", false, "ftp://example.com/file", "/")
 end
 
+@testset "HTTP high-level redirect derives TLS server name per hop" begin
+    cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt")
+    key_file = joinpath(@__DIR__, "resources", "localhost-only.key")
+    for api in (:request, :open)
+        plain_listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        tls_listener = TL.listen(
+            "tcp",
+            "127.0.0.1:0",
+            TL.Config(
+                verify_peer = false,
+                cert_file = cert_file,
+                key_file = key_file,
+            );
+            backlog = 8,
+        )
+        plain_addr = NC.addr(plain_listener)::NC.SocketAddrV4
+        tls_addr = TL.addr(tls_listener)::NC.SocketAddrV4
+        plain_address = ND.join_host_port("127.0.0.1", Int(plain_addr.port))
+        tls_address = ND.join_host_port("localhost", Int(tls_addr.port))
+        plain_task = errormonitor(Threads.@spawn begin
+            conn = NC.accept(plain_listener)
+            try
+                req = HT.read_request(HT._ConnReader(conn))
+                headers = HT.Headers()
+                HT.setheader(headers, "Location", "https://$(tls_address)/final")
+                HT.setheader(headers, "Connection", "close")
+                _send_response_client!(conn, req; status = 302, reason = "Found", headers = headers, close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+            return nothing
+        end)
+        tls_server = HT.serve!(tls_listener) do request
+            return HT.Response(200, "ok:" * request.target)
+        end
+        client = HT.Client(
+            transport = HT.Transport(
+                tls_config = TL.Config(verify_peer = false, verify_hostname = true),
+                max_idle_per_host = 4,
+                max_idle_total = 4,
+            ),
+            prefer_http2 = false,
+        )
+        try
+            url = "http://$(plain_address)/start"
+            if api === :request
+                response = HT.get(url; client = client, protocol = :h1)
+                @test response.status == 200
+                @test String(response.body) == "ok:/final"
+            else
+                response = HT.open(:GET, url; client = client, protocol = :h1) do stream
+                    meta = HT.startread(stream)
+                    @test meta.status == 200
+                    @test String(read(stream)) == "ok:/final"
+                end
+                @test response.status == 200
+            end
+            _wait_task_client!(plain_task)
+        finally
+            close(client)
+            HT.forceclose(tls_server)
+            wait(tls_server)
+            HTTP.@try_ignore NC.close(plain_listener)
+        end
+    end
+end
+
 @testset "HTTP high-level request redirect=false and redirect_limit=0 return redirect responses" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -1130,12 +1197,23 @@ end
         @test parsed_query_uri.url == "https://example.com:443/?x=1&y=2"
         @test parsed_query_uri.authorization === nothing
 
+        parsed_tuple_query = HT._parse_http_url("https://example.com/tuple", [("b", 2), "a" => "one"])
+        @test parsed_tuple_query.target == "/tuple?b=2&a=one"
+        @test parsed_tuple_query.url == "https://example.com:443/tuple?b=2&a=one"
+        @test_throws ArgumentError HT._parse_http_url("https://example.com/invalid", [("ok", 1, 2)])
+        @test_throws ArgumentError HT._parse_http_url("https://example.com/invalid", 42)
+
         parsed_ipv6 = HT._parse_http_url("https://[2001:db8::1]/ipv6")
         @test parsed_ipv6.address == "[2001:db8::1]:443"
         @test parsed_ipv6.target == "/ipv6"
         @test parsed_ipv6.server_name == "2001:db8::1"
         @test parsed_ipv6.url == "https://[2001:db8::1]:443/ipv6"
         @test parsed_ipv6.authorization === nothing
+
+        parsed_ipv6_port = HT._parse_http_url("https://[2001:db8::1]:8443/ipv6")
+        @test parsed_ipv6_port.address == "[2001:db8::1]:8443"
+        @test parsed_ipv6_port.server_name == "2001:db8::1"
+        @test parsed_ipv6_port.url == "https://[2001:db8::1]:8443/ipv6"
 
         parsed_ipv6_uri = HT._parse_http_url(HT.URI("https://[2001:db8::1]/ipv6"))
         @test parsed_ipv6_uri.address == "[2001:db8::1]:443"

@@ -185,7 +185,7 @@ function _client_start_stream_read!(stream::Stream{true})::Response
         (stream.parsed::_URLParts).address,
         req,
         (stream.parsed::_URLParts).secure,
-        (stream.parsed::_URLParts).server_name,
+        nothing,
         stream.protocol,
         stream.redirect ? (stream.redirect_policy::_RedirectPolicy) : _redirect_policy(stream.client::Client, 0),
         stream.retry_controller,

@@ -1911,7 +1911,7 @@ function request(
                 parsed.address,
                 req,
                 parsed.secure,
-                parsed.server_name,
+                nothing,
                 protocol,
                 _redirect_policy(req_client, redirect ? redirect_limit : 0, redirect_method, forwardheaders),
                 retry_controller,
