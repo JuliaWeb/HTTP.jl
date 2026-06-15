@@ -101,6 +101,7 @@ test_files = [
     "http_forms_tests.jl",
     "http_handlers_tests.jl",
     "http_websocket_codec_tests.jl",
+    "http_websocket_pmce_tests.jl",
     "http_websocket_client_tests.jl",
     "http_websocket_server_tests.jl",
     "http_websocket_integration_tests.jl",

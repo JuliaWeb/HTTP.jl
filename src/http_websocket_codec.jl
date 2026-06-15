@@ -201,6 +201,13 @@ mutable struct WsDecoder
     expecting_continuation::Bool
     fragment_opcode::UInt8
     text_fragment_payload::Vector{UInt8}
+    # permessage-deflate (RFC 7692): `pmce_enabled` is set when the extension was
+    # negotiated (so RSV1 is allowed); `message_compressed` carries the current
+    # message's RSV1 across its fragments. When a message is compressed the
+    # decoder defers UTF-8 validation — the bytes are compressed until the upper
+    # layer inflates the reassembled message.
+    pmce_enabled::Bool
+    message_compressed::Bool
     # Reused result vector for ws_decoder_process! — contents are valid only
     # until the next process! call on this decoder.
     frames_scratch::Vector{WsFrame{Vector{UInt8}}}
@@ -223,6 +230,8 @@ function ws_decoder_new()::WsDecoder
         false,
         UInt8(0),
         UInt8[],
+        false,
+        false,
         WsFrame{Vector{UInt8}}[],
     )
 end
@@ -266,9 +275,13 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             pos += 1
             dec.fin = (b & 0x80) != 0
             dec.rsv = ((b & 0x40) != 0, (b & 0x20) != 0, (b & 0x10) != 0)
-            (dec.rsv[1] || dec.rsv[2] || dec.rsv[3]) && _ws_throw_protocol_error("unexpected websocket RSV bits without negotiated extensions")
             dec.opcode = b & 0x0f
             dec.opcode in (0x00, 0x01, 0x02, 0x08, 0x09, 0x0a) || _ws_throw_protocol_error("invalid websocket opcode")
+            # RSV2/RSV3 are never valid (no negotiated extension uses them). RSV1
+            # is the permessage-deflate per-message-compressed bit: valid only
+            # when negotiated, and only on the first frame of a data message.
+            (dec.rsv[2] || dec.rsv[3]) && _ws_throw_protocol_error("unexpected websocket RSV bits without negotiated extensions")
+            dec.rsv[1] && !(dec.pmce_enabled && dec.opcode in (0x01, 0x02)) && _ws_throw_protocol_error("unexpected websocket RSV1 bit")
             is_control = ws_is_control_frame(dec.opcode)
             is_control && !dec.fin && _ws_throw_protocol_error("control frames must not be fragmented")
             if !is_control
@@ -278,6 +291,8 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
                     dec.expecting_continuation && _ws_throw_protocol_error("unexpected new data frame while fragmented message is open")
                     empty!(dec.text_fragment_payload)
                     dec.fragment_opcode = dec.fin ? UInt8(0) : dec.opcode
+                    # RSV1 on the first data frame marks the whole message compressed.
+                    dec.message_compressed = dec.rsv[1]
                 end
                 dec.expecting_continuation = !dec.fin
             end
@@ -366,16 +381,19 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             if dec.opcode == UInt8(WsOpcode.CLOSE)
                 ws_validate_close_payload(dec.payload_buf)
             elseif dec.opcode == UInt8(WsOpcode.TEXT)
-                if dec.fin
+                # Compressed text is validated upstream, after decompression.
+                if dec.message_compressed
+                    # nothing to validate here
+                elseif dec.fin
                     isvalid(String, dec.payload_buf) || _ws_throw_invalid_payload("invalid UTF-8 text frame payload")
                 else
                     append!(dec.text_fragment_payload, dec.payload_buf)
                 end
             elseif dec.opcode == UInt8(WsOpcode.CONTINUATION)
                 if dec.fragment_opcode == UInt8(WsOpcode.TEXT)
-                    append!(dec.text_fragment_payload, dec.payload_buf)
+                    dec.message_compressed || append!(dec.text_fragment_payload, dec.payload_buf)
                     if dec.fin
-                        if !isvalid(String, dec.text_fragment_payload)
+                        if !dec.message_compressed && !isvalid(String, dec.text_fragment_payload)
                             dec.expecting_continuation = false
                             dec.fragment_opcode = UInt8(0)
                             empty!(dec.text_fragment_payload)
@@ -470,13 +488,17 @@ mutable struct WSConn
     outgoing_spare::Vector{UInt8}
     max_incoming_payload_length::UInt64
     incoming_message_payload_total::UInt64
+    # permessage-deflate state, or nothing when the extension is not negotiated.
+    pmce::Union{Nothing,PMCEContext}
 end
 
 function WSConn(;
     is_client::Bool=true,
     max_incoming_payload_length::UInt64=UInt64(0),
+    pmce::Union{Nothing,PMCEContext}=nothing,
 )::WSConn
     decoder = ws_decoder_new()
+    decoder.pmce_enabled = pmce !== nothing
     return WSConn(
         is_client,
         true,
@@ -488,6 +510,7 @@ function WSConn(;
         UInt8[],
         max_incoming_payload_length,
         UInt64(0),
+        pmce,
     )
 end
 
@@ -547,7 +570,7 @@ function _ws_append_frame!(out::Vector{UInt8}, frame::WsFrame)::Nothing
     return nothing
 end
 
-function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8}; fin::Bool=true)::Nothing
+function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8}; fin::Bool=true, rsv1::Bool=false)::Nothing
     ws.is_open || throw(ProtocolError("websocket connection is closed"))
     if ws_is_control_frame(opcode)
         !fin && throw(ArgumentError("control frames must not be fragmented"))
@@ -565,6 +588,7 @@ function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8
         fin=fin,
         masked=ws.is_client,
         masking_key=masking_key,
+        rsv=(rsv1, false, false),
     )
     @lock ws.out_lock begin
         _ws_append_frame!(ws.outgoing, frame)
