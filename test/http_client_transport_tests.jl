@@ -1137,3 +1137,51 @@ end
         close(server)
     end
 end
+
+@testset "local_addr binds outbound connections to a source IP (#834)" begin
+    # Normalizer: IP-literal strings become ephemeral-port endpoints; ready-made
+    # SocketEndpoints pass through; junk is rejected (Go net.Dialer.LocalAddr model).
+    n = HT._normalize_local_addr
+    @test n(nothing) === nothing
+    a4 = n("127.0.0.1")
+    @test a4 isa NC.SocketAddrV4 && a4.ip == (0x7f, 0x00, 0x00, 0x01) && a4.port == 0x0000
+    a6 = n("::1")
+    @test a6 isa NC.SocketAddrV6 && a6.port == 0x0000
+    fixed = NC.SocketAddrV4((10, 0, 0, 1), 5555)
+    @test n(fixed) === fixed
+    @test_throws ArgumentError n("not-an-ip")
+    @test_throws ArgumentError n("")
+    @test_throws ArgumentError n(12345)
+
+    server = HTTP.serve!("127.0.0.1", 0) do req
+        return HTTP.Response(200, "bound")
+    end
+    try
+        url = "http://127.0.0.1:$(HTTP.port(server))/"
+
+        # Client-level binding to a valid local source succeeds.
+        client = HTTP.Client(local_addr = "127.0.0.1")
+        resp = HTTP.get(url; client = client)
+        @test resp.status == 200
+        @test String(resp.body) == "bound"
+
+        # Transport-level binding is the canonical form and behaves identically.
+        tclient = HTTP.Client(transport = HTTP.Transport(local_addr = "127.0.0.1"))
+        @test HTTP.get(url; client = tclient).status == 200
+
+        # Binding to an address not assigned to any interface must fail at bind()
+        # (EADDRNOTAVAIL) — proof the source address is actually applied, not ignored.
+        @test_throws Exception HTTP.get(
+            url;
+            client = HTTP.Client(local_addr = "203.0.113.7"),  # TEST-NET-3, never local
+            retry = false,
+            connect_timeout = 5,
+        )
+
+        # local_addr is ambiguous alongside an explicit transport.
+        @test_throws ArgumentError HTTP.Client(transport = HTTP.Transport(), local_addr = "127.0.0.1")
+    finally
+        HTTP.forceclose(server)
+        wait(server)
+    end
+end
