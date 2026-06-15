@@ -315,7 +315,45 @@ handler to inspect file uploads and form fields without re-implementing the
 header/body extraction.
 
 Returns `nothing` when either input is missing or the content type is not a
-multipart form body.
+multipart form body. Each returned `Multipart` exposes the part's `name`,
+optional `filename`, `contenttype`, and a readable `data` stream.
+
+# Examples
+```jldoctest
+julia> body = Vector{UInt8}(
+           "--boundary\\r\\n" *
+           "Content-Disposition: form-data; name=\\"greeting\\"\\r\\n\\r\\n" *
+           "hello\\r\\n" *
+           "--boundary\\r\\n" *
+           "Content-Disposition: form-data; name=\\"file\\"; filename=\\"a.txt\\"\\r\\n" *
+           "Content-Type: text/plain\\r\\n\\r\\n" *
+           "file contents\\r\\n" *
+           "--boundary--\\r\\n");
+
+julia> parts = HTTP.parse_multipart_form("multipart/form-data; boundary=boundary", body);
+
+julia> length(parts)
+2
+
+julia> parts[1].name, String(read(parts[1].data))
+("greeting", "hello")
+
+julia> parts[2].name, parts[2].filename, parts[2].contenttype
+("file", "a.txt", "text/plain")
+
+julia> String(read(parts[2].data))
+"file contents"
+```
+
+Inside a server handler, pass the request directly:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do request
+    parts = HTTP.parse_multipart_form(request)
+    parts === nothing && return HTTP.Response(415, "expected multipart/form-data")
+    return HTTP.Response(200, "received \$(length(parts)) part(s)")
+end
+```
 """
 function parse_multipart_form(
     content_type_header::Union{String,Nothing},
