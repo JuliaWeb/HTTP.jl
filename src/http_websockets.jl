@@ -92,6 +92,7 @@ import .._wrap_transport_timeout
 import ..Stream
 import .._clear_deadlines!
 
+include("http_websocket_pmce.jl")
 include("http_websocket_codec.jl")
 
 const DEFAULT_MAX_FRAG = 1024
@@ -168,6 +169,10 @@ mutable struct WebSocket{S,C}
     fragment_opcode::Union{Nothing,UInt8}
     fragment_payload::Vector{UInt8}
     fragment_count::Int
+    # Whether the in-progress fragmented message is permessage-deflate compressed
+    # (carried from the first frame's RSV1 bit; reassembled bytes are inflated
+    # once the final fragment arrives).
+    fragment_compressed::Bool
     closebody::Union{Nothing,CloseFrameBody}
     read_idle_timeout_ns::Int64
 end
@@ -180,11 +185,12 @@ function WebSocket(
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_idle_timeout_ns::Integer=0,
     is_client::Bool=true,
+    pmce::Union{Nothing,PMCEContext}=nothing,
 ) where {S,C}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
     maxfragmentation > 0 || throw(ArgumentError("maxfragmentation must be > 0"))
     channel = Channel{Union{String,Vector{UInt8}}}(Inf)
-    codec = WSConn(is_client=is_client)
+    codec = WSConn(is_client=is_client, pmce=pmce)
     ws = WebSocket(
         subprotocol === nothing ? nothing : String(subprotocol),
         stream,
@@ -203,6 +209,7 @@ function WebSocket(
         nothing,
         UInt8[],
         0,
+        false,
         nothing,
         Int64(read_idle_timeout_ns),
     )
@@ -353,15 +360,13 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
         append!(ws.fragment_payload, frame_payload)
         if fin
             msg_opcode = ws.fragment_opcode::UInt8
+            compressed = ws.fragment_compressed
             data = copy(ws.fragment_payload)
             ws.fragment_opcode = nothing
+            ws.fragment_compressed = false
             empty!(ws.fragment_payload)
             ws.fragment_count = 0
-            if msg_opcode == UInt8(WsOpcode.TEXT)
-                _enqueue_message!(ws, String(data))
-            else
-                _enqueue_message!(ws, data)
-            end
+            _deliver_data_message!(ws, msg_opcode, data, compressed)
         end
         return nothing
     end
@@ -371,20 +376,47 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
             return nothing
         end
         if fin
-            if op == UInt8(WsOpcode.TEXT)
-                _enqueue_message!(ws, String(frame_payload))
-            else
-                _enqueue_message!(ws, frame_payload)
-            end
+            _deliver_data_message!(ws, op, frame_payload, frame.rsv[1])
             ws.fragment_count = 0
         else
             ws.fragment_opcode = op
             ws.fragment_payload = frame_payload
+            ws.fragment_compressed = frame.rsv[1]
             ws.fragment_count = 1
             if ws.fragment_count > ws.maxfragmentation
                 _queue_close!(ws, CloseFrameBody(1009, "message too large"))
             end
         end
+    end
+    return nothing
+end
+
+# Inflate (if compressed), UTF-8-validate text, and enqueue a completed data
+# message. permessage-deflate decompresses the whole reassembled message, so
+# UTF-8 validation of text necessarily happens here rather than in the decoder.
+function _deliver_data_message!(ws::WebSocket, msg_opcode::UInt8, data::Vector{UInt8}, compressed::Bool)::Nothing
+    if compressed
+        pmce = ws.codec.pmce
+        if pmce === nothing
+            _queue_close!(ws, CloseFrameBody(1002, "compressed frame without negotiated extension"))
+            return nothing
+        end
+        data = try
+            pmce_decompress!(pmce, data; max_size=ws.maxframesize)
+        catch err
+            err isa WebSocketProtocolError || rethrow(err)
+            _queue_close!(ws, CloseFrameBody(1009, "permessage-deflate decode failed"))
+            return nothing
+        end
+    end
+    if msg_opcode == UInt8(WsOpcode.TEXT)
+        isvalid(String, data) || begin
+            _queue_close!(ws, CloseFrameBody(1007, "invalid UTF-8 text payload"))
+            return nothing
+        end
+        _enqueue_message!(ws, String(data))
+    else
+        _enqueue_message!(ws, data)
     end
     return nothing
 end
@@ -475,7 +507,25 @@ returned value is the total payload bytes sent.
 function send(ws::WebSocket, x)
     @lock ws.sendlock begin
         ws.writeclosed && throw(WebSocketError(CloseFrameBody(1006, "websocket is closed")))
+        pmce = ws.codec.pmce
         if !isbinary(x) && !istext(x)
+            # An iterable of chunks. With permessage-deflate the whole logical
+            # message is compressed as one DEFLATE stream, so we gather the
+            # chunks and emit a single compressed frame; otherwise we stream the
+            # chunks as fragments as before.
+            if pmce !== nothing
+                buf = UInt8[]
+                msg_opcode = nothing
+                for item in x
+                    msg_opcode === nothing && (msg_opcode = opcode(item))
+                    append!(buf, _to_bytes(item))
+                end
+                op = msg_opcode === nothing ? UInt8(WsOpcode.TEXT) : UInt8(msg_opcode)
+                comp = pmce_compress!(pmce, buf)
+                ws_send_frame!(ws.codec, op, comp; fin=true, rsv1=true)
+                _flush_ws_output_locked!(ws)
+                return length(buf)
+            end
             first = true
             total = 0
             state = iterate(x)
@@ -498,6 +548,12 @@ function send(ws::WebSocket, x)
             return total
         end
         bytes = _to_bytes(x)
+        if pmce !== nothing
+            comp = pmce_compress!(pmce, bytes)
+            ws_send_frame!(ws.codec, UInt8(opcode(x)), comp; fin=true, rsv1=true)
+            _flush_ws_output_locked!(ws)
+            return length(bytes)
+        end
         ws_send_frame!(ws.codec, UInt8(opcode(x)), bytes; fin=true)
         _flush_ws_output_locked!(ws)
         return length(bytes)
@@ -622,6 +678,7 @@ function _apply_websocket_request_headers!(
     headers::Headers,
     key::String,
     subprotocols::AbstractVector{<:AbstractString}=String[],
+    pmce_offer::Union{Nothing,AbstractString}=nothing,
 )::Nothing
     setheader(headers, "Upgrade", "websocket")
     setheader(headers, "Connection", "Upgrade")
@@ -631,6 +688,11 @@ function _apply_websocket_request_headers!(
         removeheader(headers, "Sec-WebSocket-Protocol")
     else
         setheader(headers, "Sec-WebSocket-Protocol", join(String.(subprotocols), ", "))
+    end
+    if pmce_offer === nothing
+        removeheader(headers, "Sec-WebSocket-Extensions")
+    else
+        setheader(headers, "Sec-WebSocket-Extensions", String(pmce_offer))
     end
     return nothing
 end
@@ -753,7 +815,8 @@ function _open_client_websocket(
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
-    require_ssl_verification::Bool=true
+    require_ssl_verification::Bool=true,
+    compress::Bool=false,
 )::WebSocket
     parsed = _parse_websocket_url(url, query)
     req_headers = _normalize_headers_input(headers)
@@ -761,8 +824,9 @@ function _open_client_websocket(
     if parsed.authorization !== nothing && !hasheader(req_headers, "Authorization")
         setheader(req_headers, "Authorization", parsed.authorization::String)
     end
+    pmce_offer = compress ? _pmce_client_offer_header() : nothing
     key = ws_random_handshake_key()
-    _apply_websocket_request_headers!(req_headers, key, subprotocols)
+    _apply_websocket_request_headers!(req_headers, key, subprotocols, pmce_offer)
     request = Request("GET", parsed.target; headers=req_headers, host=parsed.address, body=EmptyBody(), content_length=0)
     request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
         request_timeout,
@@ -793,8 +857,17 @@ function _open_client_websocket(
         _store_set_cookies!(effective_cookiejar, normalized_cookies, current_secure, host, path, attempt.response.headers)
         response = attempt.response
         if response.status == 101
-            negotiated = try
-                _validate_websocket_upgrade!(response, expected_accept, subprotocols)
+            negotiated, pmce_ctx = try
+                sub = _validate_websocket_upgrade!(response, expected_accept, subprotocols)
+                ctx = nothing
+                if compress
+                    params = _pmce_client_accept(header(response.headers, "Sec-WebSocket-Extensions", nothing))
+                    params === nothing || (ctx = PMCEContext(params, true))
+                elseif header(response.headers, "Sec-WebSocket-Extensions", nothing) !== nothing
+                    # server must not enable an extension we did not offer
+                    throw(WebSocketError(CloseFrameBody(1002, "server enabled an unoffered websocket extension")))
+                end
+                sub, ctx
             catch
                 attempt.conn === nothing || _close_conn!(attempt.conn::TransportConn)
                 owns_client && close(req_client)
@@ -820,6 +893,7 @@ function _open_client_websocket(
                 maxfragmentation=maxfragmentation,
                 read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
                 is_client=true,
+                pmce=pmce_ctx,
             )
             ws.handshake_request = send_request
             ws.handshake_response = response
@@ -855,7 +929,7 @@ function _open_client_websocket(
         current_server_name = _host_for_sni(current_address)
         current_request = _prepare_request_for_redirect(current_request, response.status, next_target, redirect_policy)
         key = ws_random_handshake_key()
-        _apply_websocket_request_headers!(current_request.headers, key, subprotocols)
+        _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
         current_request.host = current_address
         next_ref = _redirect_referer(previous_secure, previous_address, previous_target, current_secure, header(current_request.headers, "Referer", nothing))
         if next_ref === nothing
@@ -865,7 +939,7 @@ function _open_client_websocket(
         end
         if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address)
             _strip_sensitive_redirect_headers!(current_request.headers)
-            _apply_websocket_request_headers!(current_request.headers, key, subprotocols)
+            _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
         end
     end
     owns_client && close(req_client)
@@ -883,8 +957,10 @@ selection, TLS verification, timeout controls, and frame limits.
 `request_timeout` applies an overall handshake deadline, while
 `response_header_timeout` and `write_idle_timeout` configure HTTP handshake
 phases. `read_idle_timeout` bounds both handshake response-header reads and
-post-upgrade inbound WebSocket inactivity. When called with a function, the
-socket is closed automatically with status code `1000` when `f` returns.
+post-upgrade inbound WebSocket inactivity. Pass `compress=true` to offer
+permessage-deflate message compression ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692));
+it is only used when the server also accepts it. When called with a function,
+the socket is closed automatically with status code `1000` when `f` returns.
 """
 function open(
     url::AbstractString;
@@ -987,6 +1063,7 @@ mutable struct Server{F}
     maxframesize::Int
     maxfragmentation::Int
     read_buffer_bytes::Int
+    compress::Bool
     lock::ReentrantLock
     listener::Union{Nothing,TCP.Listener,TLS.Listener}
     serve_task::Union{Nothing,Task}
@@ -1008,6 +1085,7 @@ function Server(;
     maxframesize::Integer=typemax(Int),
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
+    compress::Bool=false,
 ) where {F}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
     maxfragmentation > 0 || throw(ArgumentError("maxfragmentation must be > 0"))
@@ -1022,6 +1100,7 @@ function Server(;
         Int(maxframesize),
         Int(maxfragmentation),
         Int(read_buffer_bytes),
+        compress,
         ReentrantLock(),
         nothing,
         nothing,
@@ -1197,6 +1276,7 @@ function _upgrade_response(
     request::Request;
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
+    compress::Bool=false,
 )::Response
     uppercase(request.method) == "GET" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
@@ -1216,11 +1296,22 @@ function _upgrade_response(
     setheader(headers, "Sec-WebSocket-Accept", ws_compute_accept_key(key::String))
     selected = isempty(subprotocols) ? nothing : ws_select_subprotocol(request, subprotocols)
     selected === nothing || setheader(headers, "Sec-WebSocket-Protocol", selected::String)
+    neg = _pmce_negotiate_for_request(header(request.headers, "Sec-WebSocket-Extensions", nothing), compress)
+    neg === nothing || setheader(headers, "Sec-WebSocket-Extensions", neg[2])
     return Response(101, EmptyBody(); headers=headers, content_length=0, request=request)
 end
 
 _upgrade_response(request::Request, server::Server)::Response =
-    _upgrade_response(request; subprotocols=server.subprotocols, check_origin=server.check_origin)
+    _upgrade_response(request; subprotocols=server.subprotocols, check_origin=server.check_origin, compress=server.compress)
+
+# Build the server-side permessage-deflate context for an accepted upgrade, or
+# nothing. Re-runs the (deterministic) negotiation that produced the response's
+# Sec-WebSocket-Extensions header.
+function _server_pmce_context(request::Request, compress::Bool)::Union{Nothing,PMCEContext}
+    neg = _pmce_negotiate_for_request(header(request.headers, "Sec-WebSocket-Extensions", nothing), compress)
+    neg === nothing && return nothing
+    return PMCEContext(neg[1], false)
+end
 
 """
     upgrade(f, stream::HTTP.Stream; kwargs...)
@@ -1251,7 +1342,8 @@ end
 
 `f` runs synchronously; the connection is closed when it returns. Keyword
 arguments mirror [`listen!`](@ref): `subprotocols`, `check_origin`,
-`maxframesize`, and `maxfragmentation`. WebSocket upgrades over HTTP/2 are not
+`maxframesize`, `maxfragmentation`, and `compress` (opt-in permessage-deflate
+message compression, RFC 7692). WebSocket upgrades over HTTP/2 are not
 supported.
 """
 function upgrade(
@@ -1261,6 +1353,7 @@ function upgrade(
     check_origin::Union{Nothing,Function}=nothing,
     maxframesize::Integer=typemax(Int),
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
+    compress::Bool=false,
 )
     stream.tracked === nothing &&
         throw(WebSocketError(CloseFrameBody(1011, "stream cannot be upgraded: not an HTTP/1.1 server stream")))
@@ -1268,7 +1361,7 @@ function upgrade(
         throw(WebSocketError(CloseFrameBody(1011, "WebSocket upgrade over HTTP/2 is not supported")))
 
     conn = stream.tracked.conn
-    response = _upgrade_response(stream.message; subprotocols=subprotocols, check_origin=check_origin)
+    response = _upgrade_response(stream.message; subprotocols=subprotocols, check_origin=check_origin, compress=compress)
     _write_ws_response!(conn, response)
 
     # We have written the handshake response directly to the connection, so take
@@ -1302,6 +1395,7 @@ function upgrade(
         maxframesize=maxframesize,
         maxfragmentation=maxfragmentation,
         is_client=false,
+        pmce=_server_pmce_context(stream.message, compress),
     )
     ws.handshake_request = stream.message
     ws.handshake_response = response
@@ -1344,6 +1438,7 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
         maxframesize=server.maxframesize,
         maxfragmentation=server.maxfragmentation,
         is_client=false,
+        pmce=_server_pmce_context(request, server.compress),
     )
     ws.handshake_request = request
     ws.handshake_response = response
@@ -1517,7 +1612,10 @@ Start a background WebSocket server and return its [`Server`](@ref) handle.
 Pass `tls_config` to serve `wss://` traffic, `subprotocols` to advertise
 supported subprotocols, and `check_origin` to customize origin validation. Pass
 `listenany=true` to ignore `port` and bind to an OS-assigned ephemeral port;
-read the actual address afterwards with [`server_addr`](@ref).
+read the actual address afterwards with [`server_addr`](@ref). Pass
+`compress=true` to advertise permessage-deflate message compression
+([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)); it is negotiated per
+connection and clients must also opt in.
 """
 function listen!(
     handler::Function,
@@ -1530,6 +1628,7 @@ function listen!(
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     listenany::Bool=false,
+    compress::Bool=false,
 )::Server
     bind_port = listenany ? 0 : Int(port)
     server = Server(
@@ -1542,6 +1641,7 @@ function listen!(
         maxframesize=maxframesize,
         maxfragmentation=maxfragmentation,
         read_buffer_bytes=read_buffer_bytes,
+        compress=compress,
     )
     ready = Threads.Event(true)
     server.serve_task = Threads.@spawn begin

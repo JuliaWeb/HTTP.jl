@@ -15,7 +15,8 @@ if Int === Int64 && !Sys.iswindows() && get(ENV, "HTTP_RUN_WEBSOCKET_AUTOBAHN", 
     _have_docker_autobahn_image() || @warn "Autobahn image not found; skipping websocket interoperability harness"
     if _have_docker_autobahn_image()
         @testset "HTTP.WebSockets Autobahn Server Harness" begin
-            server = W.listen!("127.0.0.1", 9002) do ws
+            # compress=true exercises the permessage-deflate suite (cases 12.*/13.*)
+            server = W.listen!("127.0.0.1", 9002; compress=true) do ws
                 for msg in ws
                     W.send(ws, msg)
                 end

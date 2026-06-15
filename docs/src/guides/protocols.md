@@ -58,6 +58,34 @@ public docstrings.
 - `read_idle_timeout`
 - `write_idle_timeout`
 
+### Message compression (permessage-deflate)
+
+HTTP.jl supports the WebSocket permessage-deflate extension ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)),
+which DEFLATE-compresses each message. It is **opt-in on both ends** via
+`compress = true` and is negotiated during the handshake — if either side
+declines, the connection transparently falls back to uncompressed frames.
+
+```julia
+# server advertises permessage-deflate; clients may negotiate it
+server = HTTP.WebSockets.listen!("127.0.0.1", 0; listenany = true, compress = true) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, msg)
+    end
+end
+
+# client offers compression
+HTTP.WebSockets.open("ws://" * HTTP.WebSockets.server_addr(server); compress = true) do ws
+    HTTP.WebSockets.send(ws, repeat("compress me ", 1000))  # sent compressed
+    HTTP.WebSockets.receive(ws)
+end
+```
+
+`compress` is also accepted by `HTTP.WebSockets.upgrade` for servers that mix
+HTTP and WebSocket routes. Compression is most beneficial for larger, repetitive
+text/JSON payloads; tiny or already-compressed (binary/media) messages gain
+little. Decompressed message size is bounded by `maxframesize`, guarding against
+decompression bombs.
+
 ## HTTP/2 Support
 
 `HTTP.jl` supports HTTP/2 through the normal client and server APIs.
