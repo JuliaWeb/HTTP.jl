@@ -574,3 +574,25 @@ end
     invalid_headers = HT.Headers(["Retry-After" => "nonsense"])
     @test HT._retry_after_delay_ns(invalid_headers) === nothing
 end
+
+@testset "isrecoverable classifies retryable request exceptions (#1245)" begin
+    # recoverable: transient transport / protocol failures
+    @test HT.isrecoverable(EOFError())
+    @test HT.isrecoverable(HT.ParseError("bad"))
+    @test HT.isrecoverable(SystemError("connect"))
+    @test HT.isrecoverable(ND.DialTimeoutError("host:80"))
+
+    # non-recoverable: a deadline being hit, and unrelated exceptions
+    @test !HT.isrecoverable(Reseau.IOPoll.DeadlineExceededError())
+    @test !HT.isrecoverable(ArgumentError("nope"))
+    @test !HT.isrecoverable(ErrorException("boom"))
+
+    # accepts the RequestRetryError wrapper handed to retry_if, unwrapping it
+    @test HT.isrecoverable(HT.RequestRetryError(EOFError()))
+    @test !HT.isrecoverable(HT.RequestRetryError(ArgumentError("nope")))
+
+    # matches the internal classifier the built-in policy uses
+    for err in (EOFError(), HT.ParseError("x"), ArgumentError("y"), Reseau.IOPoll.DeadlineExceededError())
+        @test HT.isrecoverable(err) == HT._retryable_request_error(err)
+    end
+end

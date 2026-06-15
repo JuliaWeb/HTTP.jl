@@ -76,6 +76,26 @@ end
 
 _retryable_request_error(err::RequestRetryError)::Bool = _retryable_request_error(err.err)
 
+"""
+    isrecoverable(err::Exception) -> Bool
+
+Return `true` when `err` represents a transient transport or protocol failure
+that is safe to retry — the same classification HTTP.jl's built-in retry policy
+applies to request-path exceptions. Recoverable cases include connection resets
+and EOFs (`EOFError`, `IOPoll.NetClosingError`), socket errors (`SystemError`),
+malformed responses (`ParseError`), and dial/handshake timeouts
+(`HostResolvers.DialTimeoutError`, `TLS.TLSHandshakeTimeoutError`), including the
+underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions.
+A request *deadline* being exceeded (`IOPoll.DeadlineExceededError`) is treated
+as non-recoverable, as is anything else.
+
+Accepts either the underlying exception or the [`RequestRetryError`](@ref)
+wrapper passed to a `retry_if` callback. This is the public replacement for
+HTTP.jl 1.x's `HTTP.RetryRequest.isrecoverable`, intended for downstream
+packages that implement their own retry/backoff logic.
+"""
+isrecoverable(err::Exception)::Bool = _retryable_request_error(err)
+
 # RFC 9113 §8.7: requests on streams reset with REFUSED_STREAM or rejected by
 # GOAWAY are guaranteed unprocessed, hence safe to retry regardless of method
 # idempotency. The replayable-body gate in `_should_retry_request_attempt`
