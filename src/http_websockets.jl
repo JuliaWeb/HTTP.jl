@@ -31,7 +31,7 @@ import ..CookieJar
 import ..COOKIEJAR
 import ..Cookies
 import .._ConnReader
-import .._RawIOConn
+import .._blocking_readbytes!
 import .._USE_TRANSPORT_PROXY
 import .._close_conn!
 import .._client_for_request
@@ -443,8 +443,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # Read directly into the reusable `buf`. `readavailable` would
             # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
             # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
-            # `readbytes!(...; all=false)` does one socket read into `buf`.
-            n = readbytes!(ws.stream, buf, length(buf); all=false)
+            # `_blocking_readbytes!` does one blocking socket read into `buf`.
+            n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
             ws_on_incoming_data!(on_frame, ws.codec, buf, n)
             _flush_ws_output!(ws)
@@ -1095,21 +1095,20 @@ function _open_client_websocket_io(
     _apply_websocket_request_headers!(req_headers, key, subprotocols)
     request = Request("GET", String(target); headers=req_headers, host=String(host), body=EmptyBody(), content_length=0)
     expected_accept = ws_compute_accept_key(header(request.headers, "Sec-WebSocket-Key")::String)
-    raw = _RawIOConn(io)
 
     # Serialize and write the handshake request to the caller's transport.
     request_buf = IOBuffer()
     write_request!(request_buf, request)
-    write(raw, take!(request_buf))
+    write(io, take!(request_buf))
 
-    incoming = _read_incoming_response(raw, request)
+    incoming = _read_incoming_response(io, request)
     @try_ignore body_close!(incoming.rawbody)
     response = _streaming_response(incoming)
     negotiated = _validate_websocket_upgrade!(response, expected_accept, subprotocols)
 
     # No-op `close_transport!`: the caller retains ownership of `io`.
     return _finish_client_websocket(
-        raw,
+        io,
         () -> nothing,
         request,
         response,
@@ -1139,13 +1138,7 @@ stream's lifetime. As with the URL form, calling `open` with a function closes
 the WebSocket with status code `1000` when `f` returns (the close frame is sent
 over `io`, but `io` itself stays open).
 """
-function open(
-    io::IO;
-    suppress_close_error::Bool=false,
-    kwargs...,
-)
-    return _open_client_websocket_io(io; kwargs...)
-end
+open(io::IO; kwargs...) = _open_client_websocket_io(io; kwargs...)
 
 function open(
     f::Function,
