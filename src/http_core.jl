@@ -1057,6 +1057,27 @@ function defaultheader!(headers::Headers, item::Pair)
 end
 
 """
+Read at least one byte into `b` (up to `nb`), blocking until data is available
+or EOF, and return the number of bytes read (`0` only at EOF).
+
+The WebSocket read loop relies on Reseau's "block until at least one byte or
+EOF" semantics, which `readbytes!(conn; all=false)` provides for Reseau conns.
+A stdlib `TCPSocket` with `all=false` instead returns `0` whenever no bytes are
+buffered *yet*, so for any other `IO` we reimplement the blocking contract on
+top of `eof`/`bytesavailable`. This lets `WebSockets.open(io)` accept an
+arbitrary caller-provided stream that bypasses the connection pool.
+"""
+function _blocking_readbytes!(conn::Union{TCP.Conn,TLS.Conn}, b::AbstractVector{UInt8}, nb::Integer=length(b))
+    readbytes!(conn, b, nb; all=false)
+end
+
+function _blocking_readbytes!(io::IO, b::AbstractVector{UInt8}, nb::Integer=length(b))
+    eof(io) && return 0
+    n = min(bytesavailable(io), Int(nb))
+    return readbytes!(io, b, n)
+end
+
+"""
 Internal buffered reader that first drains already-read bytes before continuing
 from the underlying TCP or TLS connection.
 """

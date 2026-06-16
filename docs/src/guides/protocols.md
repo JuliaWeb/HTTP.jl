@@ -50,6 +50,17 @@ proxy-aware clients without forcing you through internal parser state. The
 [WebSockets API reference](../api/websockets.md) is the canonical home for the
 public docstrings.
 
+`HTTP.WebSockets.open` can also handshake over an already-connected `IO` instead
+of a URL. Pass any byte stream (a raw `TCPSocket`, a TLS stream, etc.) as the
+first argument, and optionally override the request-line `target`/`Host` header.
+This is handy when the transport is established out-of-band or for tunnelling
+WebSockets over a custom stream. The caller retains ownership of the `IO`, `open`
+never closes it.
+
+```julia
+ws = HTTP.WebSockets.open(io; target = "/echo", host = "example.com:80")
+```
+
 `HTTP.WebSockets.open` also accepts the client-side handshake timeout controls:
 
 - `connect_timeout`

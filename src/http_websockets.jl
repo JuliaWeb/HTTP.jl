@@ -31,6 +31,7 @@ import ..CookieJar
 import ..COOKIEJAR
 import ..Cookies
 import .._ConnReader
+import .._blocking_readbytes!
 import .._USE_TRANSPORT_PROXY
 import .._close_conn!
 import .._client_for_request
@@ -442,8 +443,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # Read directly into the reusable `buf`. `readavailable` would
             # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
             # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
-            # `readbytes!(...; all=false)` does one socket read into `buf`.
-            n = readbytes!(ws.stream, buf, length(buf); all=false)
+            # `_blocking_readbytes!` does one blocking socket read into `buf`.
+            n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
             ws_on_incoming_data!(on_frame, ws.codec, buf, n)
             _flush_ws_output!(ws)
@@ -493,6 +494,42 @@ function _start_read_task!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_
     # to preserve task stickiness (it must not reset `task.sticky = false`).
     ws.readtask = @async _ws_read_loop!(ws, buffer_bytes)
     return nothing
+end
+
+# Shared client-side handshake completion for both `open` forms: build the
+# client `WebSocket` over an already-established `stream`, record the handshake
+# messages, replay any early frames the server already sent (`buffered`), and
+# start the read task.
+function _finish_client_websocket(
+    stream,
+    close_transport!,
+    request::Request,
+    response::Response,
+    negotiated::Union{Nothing,String};
+    maxframesize::Integer,
+    maxfragmentation::Integer,
+    read_idle_timeout_ns::Integer=0,
+    buffered::Vector{UInt8}=UInt8[],
+    pmce::Union{Nothing,PMCEContext}=nothing,
+)::WebSocket
+    ws = WebSocket(
+        stream,
+        close_transport!;
+        subprotocol=negotiated,
+        maxframesize=maxframesize,
+        maxfragmentation=maxfragmentation,
+        read_idle_timeout_ns=read_idle_timeout_ns,
+        is_client=true,
+        pmce=pmce,
+    )
+    ws.handshake_request = request
+    ws.handshake_response = response
+    if !isempty(buffered)
+        ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, buffered)
+        _flush_ws_output!(ws)
+    end
+    _start_read_task!(ws)
+    return ws
 end
 
 """
@@ -885,24 +922,18 @@ function _open_client_websocket(
                     return nothing
                 end
             end
-            ws = WebSocket(
+            return _finish_client_websocket(
                 _conn_stream(conn),
                 close_transport!,
-                subprotocol=negotiated,
+                send_request,
+                response,
+                negotiated;
                 maxframesize=maxframesize,
                 maxfragmentation=maxfragmentation,
                 read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
-                is_client=true,
+                buffered=attempt.buffered,
                 pmce=pmce_ctx,
             )
-            ws.handshake_request = send_request
-            ws.handshake_response = response
-            if !isempty(attempt.buffered)
-                ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, attempt.buffered)
-                _flush_ws_output!(ws)
-            end
-            _start_read_task!(ws)
-            return ws
         end
         if !_is_redirect_status(response.status) || redirect_policy.max_redirects == 0
             owns_client && close(req_client)
@@ -1024,6 +1055,98 @@ function open(
     kwargs...,
 )
     ws = open(url; suppress_close_error=suppress_close_error, kwargs...)
+    try
+        return f(ws)
+    catch err
+        if err isa WebSocketError && isok(err)
+            return nothing
+        end
+        rethrow(err)
+    finally
+        if !isclosed(ws)
+            try
+                close(ws, CloseFrameBody(1000, ""))
+            catch err
+                if !(suppress_close_error && err isa WebSocketError)
+                    rethrow(err)
+                end
+            end
+        end
+    end
+end
+
+# Perform the websocket client handshake directly over a caller-provided `io`,
+# bypassing the connection pool and TLS/proxy machinery. The handshake request is
+# serialized and written to `io`, then the 101 response is parsed back off it. The
+# returned WebSocket's `close_transport!` is a no-op: the caller retains ownership
+# of `io` and is responsible for closing it.
+function _open_client_websocket_io(
+    io::IO;
+    target::AbstractString="/",
+    host::AbstractString="",
+    headers=Pair{String,String}[],
+    maxframesize::Integer=typemax(Int),
+    maxfragmentation::Integer=DEFAULT_MAX_FRAG,
+    subprotocols::AbstractVector{<:AbstractString}=String[],
+)::WebSocket
+    req_headers = _normalize_headers_input(headers)
+    isempty(host) || setheader(req_headers, "Host", host)
+    key = ws_random_handshake_key()
+    _apply_websocket_request_headers!(req_headers, key, subprotocols)
+    request = Request("GET", String(target); headers=req_headers, host=String(host), body=EmptyBody(), content_length=0)
+    expected_accept = ws_compute_accept_key(header(request.headers, "Sec-WebSocket-Key")::String)
+
+    # Serialize and write the handshake request to the caller's transport.
+    request_buf = IOBuffer()
+    write_request!(request_buf, request)
+    write(io, take!(request_buf))
+
+    incoming = _read_incoming_response(io, request)
+    @try_ignore body_close!(incoming.rawbody)
+    response = _streaming_response(incoming)
+    negotiated = _validate_websocket_upgrade!(response, expected_accept, subprotocols)
+
+    # No-op `close_transport!`: the caller retains ownership of `io`.
+    return _finish_client_websocket(
+        io,
+        () -> nothing,
+        request,
+        response,
+        negotiated;
+        maxframesize=maxframesize,
+        maxfragmentation=maxfragmentation,
+    )
+end
+
+"""
+    open(io::IO; target="/", host="", kwargs...) -> WebSocket
+    open(f, io::IO; target="/", host="", kwargs...) -> Any
+
+Perform the WebSocket client handshake directly over an already-connected `io`
+(a raw `TCPSocket`, a TLS stream, or any other byte `IO`) instead of dialing a
+new connection from a URL. This is useful when the transport is established
+out-of-band, for testing, or for tunnelling WebSockets over a custom stream.
+
+Because there is no URL to derive them from, the request-line `target` and `Host`
+header default to `"/"` and unset; override them with the `target` and `host`
+keyword arguments. The remaining `headers`, `subprotocols`, `maxframesize`, and
+`maxfragmentation` keywords match the URL-based [`open`](@ref); pool, TLS, proxy,
+redirect, cookie, and timeout options do not apply.
+
+`io` is **not** closed by `open` — the caller retains ownership of the underlying
+stream's lifetime. As with the URL form, calling `open` with a function closes
+the WebSocket with status code `1000` when `f` returns (the close frame is sent
+over `io`, but `io` itself stays open).
+"""
+open(io::IO; kwargs...) = _open_client_websocket_io(io; kwargs...)
+
+function open(
+    f::Function,
+    io::IO;
+    suppress_close_error::Bool=false,
+    kwargs...,
+)
+    ws = open(io; kwargs...)
     try
         return f(ws)
     catch err

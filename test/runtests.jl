@@ -106,6 +106,7 @@ test_files = [
     "http_websocket_client_tests.jl",
     "http_websocket_server_tests.jl",
     "http_websocket_integration_tests.jl",
+    "http_websocket_raw_io_tests.jl",
     "http_retry_tests.jl",
     "http_client_transport_tests.jl",
     "http_client_proxy_tests.jl",
