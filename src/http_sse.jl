@@ -319,6 +319,7 @@ mutable struct _SSEState
     has_data::Bool
     bom_checked::Bool
     saw_evidence::Bool
+    event_bytes::Int
     event_name::Union{Nothing,String}
     last_event_id::Union{Nothing,String}
     last_retry::Union{Nothing,Int}
@@ -326,7 +327,7 @@ mutable struct _SSEState
 end
 
 function _SSEState()
-    return _SSEState(String[], false, false, false, nothing, nothing, nothing, Dict{String,Vector{String}}())
+    return _SSEState(String[], false, false, false, 0, nothing, nothing, nothing, Dict{String,Vector{String}}())
 end
 
 mutable struct _SSEClientStream{F} <: IO
@@ -431,6 +432,21 @@ function _parse_sse_retry(value::String)
     return parsed
 end
 
+@inline function _check_sse_line_bytes!(len::Integer, max_line_bytes::Integer)::Nothing
+    max_line_bytes > 0 && len > max_line_bytes &&
+        throw(ErrorException("SSE line exceeds configured max_sse_line_bytes=$(Int(max_line_bytes))"))
+    return nothing
+end
+
+@inline function _add_sse_event_bytes!(state::_SSEState, len::Integer, max_event_bytes::Integer)::Nothing
+    max_event_bytes <= 0 && return nothing
+    next = state.event_bytes + Int(len)
+    next > max_event_bytes &&
+        throw(ErrorException("SSE event exceeds configured max_sse_event_bytes=$(Int(max_event_bytes))"))
+    state.event_bytes = next
+    return nothing
+end
+
 function _process_sse_field!(state::_SSEState, field::String, value::String)::Nothing
     if field == "data"
         state.saw_evidence = true
@@ -476,6 +492,7 @@ function _reset_sse_event!(state::_SSEState)::Nothing
     empty!(state.data_lines)
     state.has_data = false
     state.event_name = nothing
+    state.event_bytes = 0
     for values in values(state.fields)
         empty!(values)
     end
@@ -497,12 +514,18 @@ function _dispatch_sse_event!(state::_SSEState, callback::Function)::Nothing
     return nothing
 end
 
-function _process_sse_line!(state::_SSEState, raw::AbstractVector{UInt8}, callback::Function)::Nothing
+function _process_sse_line!(
+    state::_SSEState,
+    raw::AbstractVector{UInt8},
+    callback::Function,
+    max_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
+)::Nothing
     line_len = _trim_sse_line_length(raw)
     if line_len == 0
         _dispatch_sse_event!(state, callback)
         return nothing
     end
+    _add_sse_event_bytes!(state, line_len, max_event_bytes)
     line = line_len == length(raw) ? raw : @view raw[1:line_len]
     if !state.bom_checked
         state.bom_checked = true
@@ -528,7 +551,14 @@ function _process_sse_line!(state::_SSEState, raw::AbstractVector{UInt8}, callba
     return nothing
 end
 
-function _process_sse_chunk!(state::_SSEState, partial::Vector{UInt8}, chunk::AbstractVector{UInt8}, callback::Function)::Nothing
+function _process_sse_chunk!(
+    state::_SSEState,
+    partial::Vector{UInt8},
+    chunk::AbstractVector{UInt8},
+    callback::Function,
+    max_line_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_LINE_BYTES,
+    max_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
+)::Nothing
     start = 1
     len = length(chunk)
     while start <= len
@@ -537,24 +567,36 @@ function _process_sse_chunk!(state::_SSEState, partial::Vector{UInt8}, chunk::Ab
         stop = nl - 1
         if isempty(partial)
             if stop >= start
-                _process_sse_line!(state, @view(chunk[start:stop]), callback)
+                _check_sse_line_bytes!(stop - start + 1, max_line_bytes)
+                _process_sse_line!(state, @view(chunk[start:stop]), callback, max_event_bytes)
             else
-                _process_sse_line!(state, UInt8[], callback)
+                _process_sse_line!(state, UInt8[], callback, max_event_bytes)
             end
         else
             if stop >= start
                 append!(partial, @view(chunk[start:stop]))
+                _check_sse_line_bytes!(length(partial), max_line_bytes)
             end
-            _process_sse_line!(state, partial, callback)
+            _process_sse_line!(state, partial, callback, max_event_bytes)
             empty!(partial)
         end
         start = nl + 1
     end
-    start <= len && append!(partial, @view(chunk[start:len]))
+    if start <= len
+        append!(partial, @view(chunk[start:len]))
+        _check_sse_line_bytes!(length(partial), max_line_bytes)
+    end
     return nothing
 end
 
-function _parse_sse_stream!(io::IO, callback::Function)::Int64
+function _parse_sse_stream!(
+    io::IO,
+    callback::Function;
+    max_line_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_LINE_BYTES,
+    max_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
+)::Int64
+    max_line_bytes >= 0 || throw(ArgumentError("max_line_bytes must be >= 0"))
+    max_event_bytes >= 0 || throw(ArgumentError("max_event_bytes must be >= 0"))
     state = _SSEState()
     partial = UInt8[]
     total = Int64(0)
@@ -563,13 +605,13 @@ function _parse_sse_stream!(io::IO, callback::Function)::Int64
         chunk = readavailable(io)
         isempty(chunk) && continue
         total += length(chunk)
-        _process_sse_chunk!(state, partial, chunk, callback)
+        _process_sse_chunk!(state, partial, chunk, callback, max_line_bytes, max_event_bytes)
         if total >= detect_bytes && !state.saw_evidence && !_looks_like_sse_prefix(partial)
             throw(ErrorException("Response does not appear to be a Server-Sent Events stream"))
         end
     end
     if !isempty(partial)
-        _process_sse_line!(state, partial, callback)
+        _process_sse_line!(state, partial, callback, max_event_bytes)
         empty!(partial)
     end
     total > 0 && !state.saw_evidence && throw(ErrorException("Response does not appear to be a Server-Sent Events stream"))
@@ -585,6 +627,8 @@ function _consume_incoming_sse!(
     response::Response,
     callback::Function,
     decompress::Union{Nothing,Bool},
+    max_line_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_LINE_BYTES,
+    max_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
 )::Nothing
     raw_stream = Base.BufferStream()
     reader = if _should_decompress_response(incoming.head.headers, decompress)
@@ -613,7 +657,7 @@ function _consume_incoming_sse!(
     wrapped = _wrap_sse_callback(callback, stream, response)
     parse_err = nothing
     try
-        _parse_sse_stream!(reader, wrapped)
+        _parse_sse_stream!(reader, wrapped; max_line_bytes=max_line_bytes, max_event_bytes=max_event_bytes)
     catch err
         err isa _SSEStop || (parse_err = err)
     finally

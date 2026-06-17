@@ -45,6 +45,9 @@ end
 ProtocolError(msg, err::Exception) = ProtocolError(String(msg), _PROTOCOL_ERROR_GENERIC, err)
 ProtocolError(msg, code::_ProtocolErrorCode=_PROTOCOL_ERROR_GENERIC) = ProtocolError(String(msg), code, nothing)
 
+const _DEFAULT_SSE_CLIENT_MAX_LINE_BYTES = 1 * 1024 * 1024
+const _DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES = 16 * 1024 * 1024
+
 """
     CanceledError
 

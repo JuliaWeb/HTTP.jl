@@ -1850,6 +1850,8 @@ function request(
     decompress::Union{Nothing,Bool}=nothing,
     max_decompressed_size::Integer=_DEFAULT_MAX_DECOMPRESSED_SIZE,
     sse_callback=nothing,
+    max_sse_line_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_LINE_BYTES,
+    max_sse_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
     connect_timeout::Real=30,
@@ -1902,6 +1904,8 @@ function request(
             logtag=logtag,
         )
         max_decompressed_size >= 0 || throw(ArgumentError("max_decompressed_size must be >= 0"))
+        max_sse_line_bytes >= 0 || throw(ArgumentError("max_sse_line_bytes must be >= 0"))
+        max_sse_event_bytes >= 0 || throw(ArgumentError("max_sse_event_bytes must be >= 0"))
         # Merge per-call values with client defaults (per-call wins)
         connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
         request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
@@ -1970,7 +1974,14 @@ function request(
             if sse_callback !== nothing
                 sse_response = _finalize_request_response(incoming, nobody, Int64(0), resolved_request, parsed.url)
                 if !_status_throws(sse_response)
-                    _consume_incoming_sse!(incoming, sse_response, sse_callback::Function, decompress)
+                    _consume_incoming_sse!(
+                        incoming,
+                        sse_response,
+                        sse_callback::Function,
+                        decompress,
+                        Int(max_sse_line_bytes),
+                        Int(max_sse_event_bytes),
+                    )
                     final_response = sse_response
                     return sse_response
                 end
@@ -2049,6 +2060,8 @@ Keyword arguments:
 - `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
+- `max_sse_line_bytes`: cap, in bytes, on one SSE response line. Defaults to 1 MiB; `0` disables the line limit
+- `max_sse_event_bytes`: cap, in bytes, on one accumulated SSE event before a blank-line dispatch. Defaults to 16 MiB; `0` disables the event limit
 - `trace`: optional callback receiving request lifecycle events
 - `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
   request lifecycle lines to `stdout`; `2` also prints request and response

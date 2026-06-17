@@ -1888,7 +1888,7 @@ end
     sse_headers = HT.Headers()
     HT.setheader(sse_headers, "Content-Type", "text/event-stream")
     server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:7
+        for _ in 1:8
             conn = NC.accept(listener)
             try
                 req = HT.read_request(HT._ConnReader(conn))
@@ -1904,6 +1904,8 @@ end
                     headers = copy(sse_headers)
                     HT.setheader(headers, "Content-Encoding", "gzip")
                     _send_response_bytes_client!(conn, req; body_bytes = payload, headers = headers, close_conn = true)
+                elseif req.target == "/sse-long-line"
+                    _send_response_client!(conn, req; body_text = ":\n" * repeat("A", 32), headers = sse_headers, close_conn = true)
                 elseif req.target == "/sse-error"
                     _send_response_client!(conn, req; status = 404, reason = "Not Found", body_text = "missing", close_conn = true)
                 elseif req.target == "/sse-callback-error"
@@ -1957,6 +1959,17 @@ end
         @test resp_gzip.status == 200
         @test resp_gzip.body === HT.nobody
         @test gzip_events == ["gzip-one"]
+
+        long_line_err = try
+            HT.get("$(base_url)/sse-long-line"; sse_callback = event -> event, max_sse_line_bytes = 16)
+            nothing
+        catch err
+            err
+        end
+        @test long_line_err isa ErrorException
+        if long_line_err isa ErrorException
+            @test occursin("max_sse_line_bytes", long_line_err.msg)
+        end
 
         plain_events = HT.SSEEvent[]
         resp_plain = HT.get("$(base_url)/sse-plain"; sse_callback = event -> push!(plain_events, event))
@@ -2067,6 +2080,28 @@ end
     total = HT._parse_sse_stream!(IOBuffer("data: one\n\ndata: tail"), event -> push!(parsed_from_stream, event))
     @test total == ncodeunits("data: one\n\ndata: tail")
     @test [event.data for event in parsed_from_stream] == ["one", "tail"]
+
+    line_limit_err = try
+        HT._parse_sse_stream!(IOBuffer(":\n" * repeat("A", 32)), event -> nothing; max_line_bytes = 16)
+        nothing
+    catch err
+        err
+    end
+    @test line_limit_err isa ErrorException
+    if line_limit_err isa ErrorException
+        @test occursin("max_sse_line_bytes", line_limit_err.msg)
+    end
+
+    event_limit_err = try
+        HT._parse_sse_stream!(IOBuffer("data: abc\ndata: def\n\n"), event -> nothing; max_event_bytes = 12)
+        nothing
+    catch err
+        err
+    end
+    @test event_limit_err isa ErrorException
+    if event_limit_err isa ErrorException
+        @test occursin("max_sse_event_bytes", event_limit_err.msg)
+    end
 
     detect_err = try
         HT._parse_sse_stream!(IOBuffer(repeat("x", 9_000)), event -> nothing)
