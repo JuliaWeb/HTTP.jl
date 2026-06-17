@@ -5,6 +5,11 @@ export parse_multipart_form
 export parse_multipart
 export parse_multipart_mixed
 
+# Batch is public but not exported (Julia 1.11+)
+if VERSION >= v"1.11.0-DEV.469"
+    eval(Meta.parse("public Batch"))
+end
+
 using UUIDs
 
 """
