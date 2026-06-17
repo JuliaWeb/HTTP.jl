@@ -418,6 +418,18 @@ end
     @test parsed.status == 200
     @test parsed.reason == "OK"
 
+    custom = HT.Response(299, HT.EmptyBody(); reason = "Custom Status", content_length = 0)
+    custom_io = IOBuffer()
+    HT.write_response!(custom_io, custom)
+    @test startswith(String(take!(custom_io)), "HTTP/1.1 299 Custom Status\r\n")
+
+    for reason in ("OK\r\nX-Injected: yes", "OK\nX-Injected: yes", "OK\r", "OK\0", "OK\x7f")
+        injected = HT.Response(200, HT.EmptyBody(); reason = reason, content_length = 0)
+        @test_throws HT.ProtocolError HT._write_status_line!(IOBuffer(), injected)
+        @test_throws HT.ProtocolError HT._append_status_line!(IOBuffer(), injected)
+        @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), injected)
+    end
+
     # Parser accepts empty reason phrases from peers.
     raw = "HTTP/1.1 299 \r\nContent-Length: 0\r\n\r\n"
     parsed_raw = HT._read_response(IOBuffer(codeunits(raw)))
