@@ -276,7 +276,7 @@ function _apply_h2_peer_settings!(
         unlock(send_state.state_lock)
     end
     if header_table_size !== nothing
-        size = header_table_size::Int
+        size = min(header_table_size::Int, _MAX_ENCODER_DYNAMIC_TABLE_SIZE)
         lock(write_lock)
         try
             set_max_dynamic_table_size_limit!(send_state.header_encoder, size)

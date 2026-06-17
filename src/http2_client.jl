@@ -362,7 +362,7 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
         unlock(conn.state_lock)
     end
     if header_table_size !== nothing
-        size = header_table_size::Int
+        size = min(header_table_size::Int, _MAX_ENCODER_DYNAMIC_TABLE_SIZE)
         lock(conn.write_lock)
         try
             set_max_dynamic_table_size_limit!(conn.encoder, size)

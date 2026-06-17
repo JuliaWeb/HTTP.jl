@@ -2051,3 +2051,14 @@ end
         cleanup()
     end
 end
+
+@testset "HTTP/2 client clamps peer header table size settings" begin
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        HT._apply_peer_settings!(conn, Pair{UInt16,UInt32}[UInt16(0x1) => typemax(UInt32)])
+        @test conn.encoder.max_table_size_limit == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+        @test conn.encoder.table.max_size == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+    finally
+        cleanup()
+    end
+end

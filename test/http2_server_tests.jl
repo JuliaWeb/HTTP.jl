@@ -673,6 +673,17 @@ end
     end
 end
 
+@testset "HTTP/2 server clamps peer header table size settings" begin
+    send_state = HT._H2SendWindowState()
+    HT._apply_h2_peer_settings!(
+        send_state,
+        ReentrantLock(),
+        Pair{UInt16,UInt32}[UInt16(0x1) => typemax(UInt32)],
+    )
+    @test send_state.header_encoder.max_table_size_limit == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+    @test send_state.header_encoder.table.max_size == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+end
+
 @testset "HTTP/2 server accepts duplicate peer settings in order" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("dup:" * request.target))
