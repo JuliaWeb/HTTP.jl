@@ -95,7 +95,9 @@ end
 HTTP and WebSocket routes. Compression is most beneficial for larger, repetitive
 text/JSON payloads; tiny or already-compressed (binary/media) messages gain
 little. Decompressed message size is bounded by `maxframesize`, guarding against
-decompression bombs.
+decompression bombs. `maxframesize` defaults to 16 MiB for high-level
+WebSocket clients and servers; pass a larger value explicitly if your protocol
+requires larger messages.
 
 ## HTTP/2 Support
 

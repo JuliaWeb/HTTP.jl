@@ -96,6 +96,7 @@ import .._clear_deadlines!
 include("http_websocket_pmce.jl")
 include("http_websocket_codec.jl")
 
+const DEFAULT_MAX_FRAME_SIZE = 16 * 1024 * 1024
 const DEFAULT_MAX_FRAG = 1024
 const DEFAULT_READ_BUFFER_BYTES = 16 * 1024
 
@@ -182,7 +183,7 @@ function WebSocket(
     stream::S,
     close_transport!::C;
     subprotocol::Union{Nothing,AbstractString}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_idle_timeout_ns::Integer=0,
     is_client::Bool=true,
@@ -190,14 +191,15 @@ function WebSocket(
 ) where {S,C}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
     maxfragmentation > 0 || throw(ArgumentError("maxfragmentation must be > 0"))
+    max_frame_size = Int(maxframesize)
     channel = Channel{Union{String,Vector{UInt8}}}(Inf)
-    codec = WSConn(is_client=is_client, pmce=pmce)
+    codec = WSConn(is_client=is_client, max_incoming_payload_length=UInt64(max_frame_size), pmce=pmce)
     ws = WebSocket(
         subprotocol === nothing ? nothing : String(subprotocol),
         stream,
         close_transport!,
         codec,
-        Int(maxframesize),
+        max_frame_size,
         Int(maxfragmentation),
         channel,
         nothing,
@@ -318,12 +320,12 @@ function _flush_ws_output!(ws::WebSocket)::Nothing
     return nothing
 end
 
-# Concurrency invariant: `ws.codec.outgoing_frames` is a plain `Vector`, and
+# Concurrency invariant: `ws.codec.outgoing` is a plain `Vector`, and
 # mutating a Julia `Vector` from two OS threads at once is undefined behavior.
 # `ws_on_incoming_data!` is not purely a parser — the auto-PONG and CLOSE-echo
-# paths `push!` onto `outgoing_frames` — so it must run under the same
+# paths append onto `outgoing` — so it must run under the same
 # `ws.sendlock` that guards application-initiated `send`/`ping`/`pong`/`close`
-# (which `push!`/iterate/`empty!` that buffer). Otherwise the reader task, spawned
+# (which append/flush that buffer). Otherwise the reader task, spawned
 # separately and processing a remote PING flood, races those application sends and
 # can corrupt the array metadata / segfault the process. We take the lock only
 # around the decode + flush, never across the blocking socket read in the reader
@@ -454,6 +456,8 @@ end
 _ws_arm_read_deadline!(stream::TLS.Conn, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
 _ws_arm_read_deadline!(stream::TCP.Conn, deadline_ns::Int64) = TCP.set_read_deadline!(stream, deadline_ns)
 _ws_read_deadline_ns(timeout_ns::Int64)::Int64 = _phase_deadline_ns(timeout_ns, Int64(0))
+_ws_protocol_error_is_too_large(err::WebSocketProtocolError)::Bool =
+    occursin("exceeds configured maximum", err.message)
 
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
@@ -474,7 +478,7 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
             # Decode + flush under `ws.sendlock` so the auto-PONG/CLOSE-echo
-            # frames pushed onto `ws.codec.outgoing_frames` never race a
+            # frames appended onto `ws.codec.outgoing` never race a
             # concurrent application `send`/`ping`/`close` (see
             # `_process_incoming_data!`). The blocking read above runs
             # outside the lock, so concurrent senders cannot deadlock the reader.
@@ -493,6 +497,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             CloseFrameBody(1006, "websocket read idle timeout")
         elseif err isa WebSocketInvalidPayloadError
             CloseFrameBody(1007, "invalid websocket payload")
+        elseif err isa WebSocketProtocolError && _ws_protocol_error_is_too_large(err::WebSocketProtocolError)
+            CloseFrameBody(1009, "message too large")
         elseif err isa WebSocketProtocolError
             CloseFrameBody(1002, "websocket protocol error")
         else
@@ -865,7 +871,7 @@ end
 function _open_client_websocket(
     url::AbstractString;
     headers=Pair{String,String}[],
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     query=nothing,
@@ -1030,7 +1036,8 @@ selection, TLS verification, timeout controls, and frame limits.
 `request_timeout` applies an overall handshake deadline, while
 `response_header_timeout` and `write_idle_timeout` configure HTTP handshake
 phases. `read_idle_timeout` bounds both handshake response-header reads and
-post-upgrade inbound WebSocket inactivity. Pass `compress=true` to offer
+post-upgrade inbound WebSocket inactivity. `maxframesize` defaults to 16 MiB
+and bounds incoming frame/message buffering. Pass `compress=true` to offer
 permessage-deflate message compression ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692));
 it is only used when the server also accepts it. When called with a function,
 the socket is closed automatically with status code `1000` when `f` returns.
@@ -1039,7 +1046,7 @@ function open(
     url::AbstractString;
     suppress_close_error::Bool=false,
     headers=Pair{String,String}[],
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     query=nothing,
@@ -1127,7 +1134,7 @@ function _open_client_websocket_io(
     target::AbstractString="/",
     host::AbstractString="",
     headers=Pair{String,String}[],
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     subprotocols::AbstractVector{<:AbstractString}=String[],
 )::WebSocket
@@ -1247,7 +1254,7 @@ function Server(;
     tls_config::Union{Nothing,TLS.Config}=nothing,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     compress::Bool=false,
@@ -1566,7 +1573,7 @@ function upgrade(
     stream::Stream;
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     compress::Bool=false,
 )
@@ -1836,7 +1843,8 @@ supported subprotocols, and `check_origin` to customize origin validation. Pass
 read the actual address afterwards with [`server_addr`](@ref). Pass
 `compress=true` to advertise permessage-deflate message compression
 ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)); it is negotiated per
-connection and clients must also opt in.
+connection and clients must also opt in. `maxframesize` defaults to 16 MiB
+and bounds incoming frame/message buffering.
 """
 function listen!(
     handler::Function,
@@ -1845,7 +1853,7 @@ function listen!(
     tls_config::Union{Nothing,TLS.Config}=nothing,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     listenany::Bool=false,

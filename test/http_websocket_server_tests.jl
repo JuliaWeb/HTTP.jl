@@ -74,6 +74,17 @@ function _websocket_error_after_frames(frames::Vector{<:W.WsFrame}; maxframesize
 end
 
 @testset "HTTP.WebSockets server frame error branches" begin
+    default_limited = W.WebSocket(IOBuffer(), () -> nothing; is_client = false)
+    @test default_limited.maxframesize == W.DEFAULT_MAX_FRAME_SIZE
+    @test default_limited.codec.max_incoming_payload_length == UInt64(W.DEFAULT_MAX_FRAME_SIZE)
+
+    header_limited = W.WebSocket(IOBuffer(), () -> nothing; maxframesize = 4, is_client = false)
+    @test header_limited.codec.max_incoming_payload_length == UInt64(4)
+    # Header declares a masked 5-byte TEXT frame. The codec should reject as
+    # soon as the payload length is parsed, before any payload bytes are read.
+    @test_throws W.WebSocketProtocolError W._process_incoming_data!(header_limited, UInt8[0x81, 0x85])
+    @test isempty(header_limited.codec.decoder.payload_buf)
+
     too_large = _websocket_error_after_frames([
         _ws_frame(W.WsOpcode.TEXT, "toolong"),
     ]; maxframesize = 3)
