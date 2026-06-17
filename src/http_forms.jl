@@ -6,7 +6,7 @@ export parse_multipart
 export parse_multipart_mixed
 
 # Batch is public but not exported (Julia 1.11+)
-if VERSION >= v"1.11.0-DEV.469"
+@static if Base.VERSION >= v"1.11.0-DEV.469"
     Core.eval(@__MODULE__, Expr(:public, :Batch))
 end
 
