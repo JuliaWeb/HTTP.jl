@@ -485,7 +485,7 @@ getcookies(req) = get(() -> Cookie[], req.context, :cookies)
 
 # `handlertimeout` is documented public API but not exported; mark it public on
 # Julia versions that support the mechanism (the source stays parseable on 1.10).
-@static if VERSION >= v"1.11.0-DEV.469"
+@static if Base.VERSION >= v"1.11.0-DEV.469"
     Core.eval(@__MODULE__, Expr(:public, :handlertimeout))
 end
 

@@ -1795,7 +1795,7 @@ end
 
 # Documented public API of this submodule (accessed as `HTTP.WebSockets.name`).
 # Version-gated like the main module so the source parses on Julia 1.10.
-@static if VERSION >= v"1.11.0-DEV.469"
+@static if Base.VERSION >= v"1.11.0-DEV.469"
     Core.eval(@__MODULE__, Expr(:public,
         :CloseFrameBody, :Conn, :Server, :WebSocket, :WebSocketError, :forceclose,
         :isupgrade, :listen, :listen!, :open, :ping, :pong, :receive, :send, :serve!,
