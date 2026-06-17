@@ -66,7 +66,7 @@ include("http_websockets.jl")
 # not repeated here. The version guard keeps the source parseable on Julia 1.10
 # (the `public` keyword does not exist there); `eval(Expr(:public, …))` is valid
 # syntax on all versions, so only the evaluation is gated.
-@static if VERSION >= v"1.11.0-DEV.469"
+@static if Base.VERSION >= v"1.11.0-DEV.469"
     Core.eval(@__MODULE__, Expr(:public,
         Symbol("@client"),
         :AbstractBody, :AddressInUseError, :CallbackBody, :CanceledError, :Client,
