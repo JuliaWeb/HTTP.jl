@@ -359,6 +359,55 @@ Use the timeout that matches your intent:
 Timeout failures are reported as `HTTP.HTTPTimeoutError`, an alias for
 `HTTP.TimeoutError`.
 
+## Exceptions
+
+In 1.x the client exception types lived in the `HTTP.Exceptions` submodule and were
+re-exported to the top level. 2.x keeps the types at the top level — `HTTP.StatusError`,
+`HTTP.ConnectError`, `HTTP.TimeoutError`, and their `HTTP.HTTPError` supertype — and
+`HTTP.Exceptions` is now a thin deprecated shim. Prefer the top-level names.
+
+Before:
+
+```julia
+catch e
+    e isa HTTP.Exceptions.StatusError && @info "status" e.status
+end
+```
+
+After:
+
+```julia
+catch e
+    e isa HTTP.StatusError && @info "status" e.status
+end
+```
+
+`HTTP.Exceptions.StatusError`, `ConnectError`, `TimeoutError`, and `HTTPError` still
+resolve — forwarding to the top-level names, with a deprecation warning under
+`--depwarn=yes`. The 1.x `@try` macro and `current_exceptions_to_string` helper were
+internal and are removed with no replacement.
+
+`HTTP.RequestError` is also gone. 1.x wrapped request-path failures in a `RequestError`
+(fields `.request`/`.error`); 2.x lets the underlying transport or protocol exception
+propagate directly, and exposes `HTTP.isrecoverable` to classify whether a failure is a
+transient one that is safe to retry.
+
+Before:
+
+```julia
+catch e
+    e isa HTTP.Exceptions.RequestError && @warn "request failed" e.error
+end
+```
+
+After:
+
+```julia
+catch e
+    HTTP.isrecoverable(e) || rethrow()   # otherwise it is a transient transport failure
+end
+```
+
 ## TLS, Sockets, and Proxies
 
 The old `sslconfig` and `socket_type_tls` extension points are retained for
@@ -613,6 +662,7 @@ Treat these as temporary migration aids. New code should use the documented
 - Prefer keyword constructors for `Request` and `Response`.
 - Replace `pool` usage with a long-lived `HTTP.Client`.
 - Replace `readtimeout` with the precise timeout keyword you need.
+- Replace `HTTP.Exceptions.StatusError` & friends with the top-level `HTTP.StatusError`; `HTTP.RequestError` is gone — catch the underlying exception or use `HTTP.isrecoverable`.
 - Replace `HTTP.download` with `Downloads.download` or an explicit
   `HTTP.request(...; response_stream = io)` file stream.
 - Move WebSocket code to `HTTP.WebSockets`.
