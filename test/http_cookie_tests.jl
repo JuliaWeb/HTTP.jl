@@ -180,6 +180,12 @@ end
     @test HT.Cookies.defaultPath("/file") == "/"
     @test HT.Cookies.defaultPath("/dir/file") == "/dir"
 
+    @test HT.Cookies.iscookienamevalid("session_id")
+    for name in ("", "a=b", "a;b", "a b", "a\tb", "a,b", "a/b", "a\rb", "a\nb")
+        @test !HT.Cookies.iscookienamevalid(name)
+        @test HT.Cookies.stringify(HT.Cookie(name, "1"), false) == ""
+    end
+
     @test HT.Cookies.splithostport("example.com:443") == ("example.com", "443", false)
     for hostport in ("example.com", "[::1]:443", "[::1]", "example.com:80:90", "[::1", "[::1]:80:90")
         host, port, err = HT.Cookies.splithostport(hostport)
@@ -222,6 +228,38 @@ end
     bad_trailing = HT.Cookie("bad-trailing", "1"; domain = "example.com.")
     @test !HT.Cookies.domainAndType!(jar, bad_trailing, "example.com")
     @test bad_trailing.domain == ""
+
+    @test HT.Cookies.ispublicsuffix("com")
+    @test HT.Cookies.ispublicsuffix("co.uk")
+    @test HT.Cookies.ispublicsuffix("github.io")
+    @test HT.Cookies.ispublicsuffix("herokuapp.com")
+    @test HT.Cookies.ispublicsuffix("s3.amazonaws.com")
+    @test HT.Cookies.ispublicsuffix("test.ck")
+    @test !HT.Cookies.ispublicsuffix("example.com")
+    @test !HT.Cookies.ispublicsuffix("example.co.uk")
+    @test !HT.Cookies.ispublicsuffix("victim.github.io")
+    @test !HT.Cookies.ispublicsuffix("bucket.s3.amazonaws.com")
+    @test !HT.Cookies.ispublicsuffix("www.ck")
+
+    for (host, domain, sibling) in (
+        ("attacker.co.uk", "co.uk", "bank.co.uk"),
+        ("attacker.github.io", "github.io", "victim.github.io"),
+        ("attacker.herokuapp.com", "herokuapp.com", "victim.herokuapp.com"),
+        ("evil.s3.amazonaws.com", "s3.amazonaws.com", "bucket.s3.amazonaws.com"),
+    )
+        suffix_cookie = HT.Cookie("session", "attacker"; domain = domain, path = "/")
+        @test !HT.Cookies.domainAndType!(jar, suffix_cookie, host)
+        suffix_jar = HT.CookieJar()
+        HT.setcookies!(suffix_jar, "https", host, "/",
+            _set_cookie_headers("session=attacker; Domain=$domain; Path=/"))
+        @test isempty(HT.getcookies!(suffix_jar, "https", sibling, "/"))
+    end
+
+    sibling_jar = HT.CookieJar()
+    HT.setcookies!(sibling_jar, "https", "api.example.com", "/",
+        _set_cookie_headers("session=ok; Domain=example.com; Path=/"))
+    sibling_cookies = HT.getcookies!(sibling_jar, "https", "www.example.com", "/")
+    @test [(c.name, c.value) for c in sibling_cookies] == [("session", "ok")]
 
     seeded = _set_cookie_headers("remember=1; Domain=.Example.com; Path=/docs")
     HT.setcookies!(jar, "https", "Example.com.:443", "/docs/page", seeded)
@@ -331,13 +369,22 @@ end
     @test xsrf.value == "abc123"
 
     # Cookie names that are single chars in the formerly-broken range
-    for ch in ('x', 'y', 'z', '{', '|', '}', '~', 'w')
+    for ch in ('x', 'y', 'z', '|', '~', 'w')
         jar2 = HT.CookieJar()
         HT.setcookies!(jar2, "https", "example.com", "/",
             _set_cookie_headers("$(ch)=1; Path=/"))
         got = HT.getcookies!(jar2, "https", "example.com", "/")
         @test length(got) == 1
         @test got[1].name == string(ch)
+    end
+
+    # Braces were part of the old URL-char table but are not valid RFC token
+    # bytes for cookie names. They should be rejected cleanly, not throw.
+    for ch in ('{', '}')
+        jar2 = HT.CookieJar()
+        HT.setcookies!(jar2, "https", "example.com", "/",
+            _set_cookie_headers("$(ch)=1; Path=/"))
+        @test isempty(HT.getcookies!(jar2, "https", "example.com", "/"))
     end
 end
 

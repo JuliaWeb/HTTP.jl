@@ -16,6 +16,9 @@ import ..Request
 import ..Response
 import ..appendheader
 import ..headers
+import .._valid_header_field_name
+
+include("http_public_suffix_data.jl")
 
 @enum SameSite SameSiteDefaultMode = 1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
@@ -191,7 +194,7 @@ function parsecookievalue(raw, allowdoublequote::Bool)
     return raw, true
 end
 
-iscookienamevalid(raw) = raw == "" ? false : any(isurlchar, raw)
+iscookienamevalid(raw) = _valid_header_field_name(raw)
 
 gmtformat(::DateFormat{S,T}) where {S,T} = Dates.DateFormat(string(S, " G\\MT"))
 const AlternateRFC1123GMTFormat = gmtformat(dateformat"e, dd-uuu-yyyy HH:MM:SS")
@@ -500,6 +503,37 @@ function hasdotsuffix(s, suffix)::Bool
     return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[(length(s)-length(suffix)+1):end] == suffix
 end
 
+function _public_suffix_label_count(domain::String)::Int
+    labels = split(domain, '.'; keepempty=false)
+    n = length(labels)
+    n == 0 && return 0
+    best = 1 # Default "*" rule.
+    for i in 1:n
+        candidate = join(@view(labels[i:n]), ".")
+        candidate_count = n - i + 1
+        if candidate in _PUBLIC_SUFFIX_EXCEPTION_RULES
+            return max(candidate_count - 1, 0)
+        end
+        if candidate in _PUBLIC_SUFFIX_EXACT_RULES
+            best = max(best, candidate_count)
+        end
+        if i < n
+            wildcard_suffix = join(@view(labels[(i + 1):n]), ".")
+            if wildcard_suffix in _PUBLIC_SUFFIX_WILDCARD_RULES
+                best = max(best, candidate_count)
+            end
+        end
+    end
+    return best
+end
+
+function ispublicsuffix(domain::String)::Bool
+    isempty(domain) && return false
+    isIP(domain) && return false
+    labels = split(domain, '.'; keepempty=false)
+    return length(labels) == _public_suffix_label_count(domain)
+end
+
 function pathmatch(cookie::Cookie, requestpath)::Bool
     requestpath == cookie.path && return true
     if startswith(requestpath, cookie.path)
@@ -741,6 +775,11 @@ function domainAndType!(jar::CookieJar, c::Cookie, host::String)
         return false
     end
     if host != domain && !hasdotsuffix(host, domain)
+        c.domain = ""
+        c.hostonly = false
+        return false
+    end
+    if ispublicsuffix(domain)
         c.domain = ""
         c.hostonly = false
         return false
