@@ -412,19 +412,145 @@ end
     end
 end
 
-@testset "_request_body_bytes EmptyBody and AbstractBody" begin
+@testset "_message_body_bytes for Request and Response bodies" begin
     # EmptyBody → nothing
-    # A request with Content-Type but no body has an EmptyBody
+    @test HT._message_body_bytes(HT.EmptyBody()) === nothing
+
+    # BytesBody (Request body type) → view of remaining data
+    bytes_body = HT.BytesBody(Vector{UInt8}("test data"))
+    result = HT._message_body_bytes(bytes_body)
+    @test result isa AbstractVector{UInt8}
+    @test String(result) == "test data"
+
+    # Vector{UInt8} (Response body type) → same vector
+    body_vec = Vector{UInt8}("response body")
+    @test HT._message_body_bytes(body_vec) === body_vec
+
+    # AbstractBody catch-all (any non-BytesBody, non-EmptyBody, non-Vector subtype) → nothing
+    eofbody = HT.EOFBody(IOBuffer(""), false)
+    @test HT._message_body_bytes(eofbody) === nothing
+
+    # Verify parse_multipart_form returns nothing for empty bodies
     form_ct = HT.content_type(HT.Form(Dict("k" => "v")))
     empty_body_request = HT.Request("POST", "/"; headers=["Content-Type" => form_ct])
     @test typeof(empty_body_request.body) == HT.EmptyBody
-    @test HT._request_body_bytes(HT.EmptyBody()) === nothing
-
-    # AbstractBody catch-all (any non-BytesBody, non-EmptyBody subtype) → nothing
-    # EOFBody is the simplest concrete AbstractBody to construct directly
-    eofbody = HT.EOFBody(IOBuffer(""), false)
-    @test HT._request_body_bytes(eofbody) === nothing
-
-    # Ensure parse_multipart_form returns nothing for both
     @test HT.parse_multipart_form(empty_body_request) === nothing
 end
+
+@testset "parse_multipart_mixed with Response" begin
+    boundary = "response_boundary789"
+    body_text = join([
+        "--$boundary",
+        "Content-Type: application/http",
+        "",
+        "HTTP/1.1 200 OK",
+        "Content-Type: application/json",
+        "",
+        "{\"status\":\"success\"}",
+        "--$boundary",
+        "Content-Type: application/http",
+        "",
+        "HTTP/1.1 404 Not Found",
+        "",
+        "--$boundary--",
+        "",
+    ], "\r\n")
+
+    body_bytes = Vector{UInt8}(body_text)
+    ct = "multipart/mixed; boundary=$boundary"
+
+    response = HT.Response(
+        200;
+        headers=["Content-Type" => ct],
+        body=body_bytes,
+    )
+
+    parts = HT.parse_multipart_mixed(response)
+    @test parts !== nothing
+    @test length(parts) == 2
+    @test parts[1].contenttype == "application/http"
+    @test parts[2].contenttype == "application/http"
+    @test occursin("200 OK", String(read(parts[1])))
+    @test occursin("404 Not Found", String(read(parts[2])))
+
+    # Test with wrong content type
+    plain_response = HT.Response(200; headers=["Content-Type" => "text/plain"], body="test")
+    @test HT.parse_multipart_mixed(plain_response) === nothing
+
+    # Test with form-data (should return nothing for parse_multipart_mixed)
+    form = HT.Form(Dict("key" => "value"))
+    form_bytes = read(form)
+    form_response = HT.Response(
+        200;
+        headers=["Content-Type" => HT.content_type(form)],
+        body=form_bytes,
+    )
+    @test HT.parse_multipart_mixed(form_response) === nothing
+end
+
+@testset "parse_multipart with Response" begin
+    boundary = "response_multipart_456"
+    body_text = join([
+        "--$boundary",
+        "Content-Type: text/plain",
+        "",
+        "response data",
+        "--$boundary--",
+        "",
+    ], "\r\n")
+
+    body_bytes = Vector{UInt8}(body_text)
+    ct = "multipart/mixed; boundary=$boundary"
+
+    response = HT.Response(200; headers=["Content-Type" => ct], body=body_bytes)
+
+    # Test generic parse_multipart
+    parts = HT.parse_multipart(response)
+    @test parts !== nothing
+    @test length(parts) == 1
+    @test String(read(parts[1])) == "response data"
+
+    # Test with type filter
+    parts_typed = HT.parse_multipart(response, :mixed)
+    @test parts_typed !== nothing
+    @test length(parts_typed) == 1
+
+    # Test wrong type filter
+    @test HT.parse_multipart(response, :formdata) === nothing
+
+    # Test with no Content-Type header
+    bare_response = HT.Response(200)
+    @test HT.parse_multipart(bare_response) === nothing
+end
+
+@testset "parse_multipart_form with Response" begin
+    boundary = "form_response_boundary"
+    body_text = join([
+        "--$boundary",
+        "Content-Disposition: form-data; name=\"field1\"",
+        "Content-Type: text/plain",
+        "",
+        "value1",
+        "--$boundary",
+        "Content-Disposition: form-data; name=\"field2\"",
+        "Content-Type: application/json",
+        "",
+        "{\"key\":\"value\"}",
+        "--$boundary--",
+        "",
+    ], "\r\n")
+
+    body_bytes = Vector{UInt8}(body_text)
+    ct = "multipart/form-data; boundary=$boundary"
+
+    response = HT.Response(200; headers=["Content-Type" => ct], body=body_bytes)
+
+    parts = HT.parse_multipart_form(response)
+    @test parts !== nothing
+    @test length(parts) == 2
+    @test parts[1].name == "field1"
+    @test String(read(parts[1])) == "value1"
+    @test parts[2].name == "field2"
+    @test String(read(parts[2])) == "{\"key\":\"value\"}"
+end
+

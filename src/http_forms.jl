@@ -381,18 +381,56 @@ end
 
 """
     parse_multipart_form(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
-    parse_multipart_form(request) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_form(message) -> Union{Vector{Multipart}, Nothing}
 
 Parse a `multipart/form-data` payload using the boundary from
 `content_type_header`.
 
-The `Request` overload reads the `Content-Type` header and request body bytes
-out of the incoming request — use it from inside an [`HTTP.serve!`](@ref)
-handler to inspect file uploads and form fields without re-implementing the
-header/body extraction.
+The `message` overload accepts either a `Request` or `Response` and reads the
+`Content-Type` header and body bytes automatically — use it from inside an
+[`HTTP.serve!`](@ref) handler to inspect file uploads and form fields, or when
+processing multipart responses from external APIs.
 
 Returns `nothing` when either input is missing or the content type is not a
-multipart form body.
+multipart form body. Each returned `Multipart` exposes the part's `name`,
+optional `filename`, `contenttype`, and a readable `data` stream.
+
+# Examples
+```jldoctest
+julia> body = Vector{UInt8}(
+           "--boundary\\r\\n" *
+           "Content-Disposition: form-data; name=\\"greeting\\"\\r\\n\\r\\n" *
+           "hello\\r\\n" *
+           "--boundary\\r\\n" *
+           "Content-Disposition: form-data; name=\\"file\\"; filename=\\"a.txt\\"\\r\\n" *
+           "Content-Type: text/plain\\r\\n\\r\\n" *
+           "file contents\\r\\n" *
+           "--boundary--\\r\\n");
+
+julia> parts = HTTP.parse_multipart_form("multipart/form-data; boundary=boundary", body);
+
+julia> length(parts)
+2
+
+julia> parts[1].name, String(read(parts[1].data))
+("greeting", "hello")
+
+julia> parts[2].name, parts[2].filename, parts[2].contenttype
+("file", "a.txt", "text/plain")
+
+julia> String(read(parts[2].data))
+"file contents"
+```
+
+Inside a server handler, pass the request directly:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do request
+    parts = HTTP.parse_multipart_form(request)
+    parts === nothing && return HTTP.Response(415, "expected multipart/form-data")
+    return HTTP.Response(200, "received \$(length(parts)) part(s)")
+end
+```
 """
 function parse_multipart_form(
     content_type_header::Union{String,Nothing},
@@ -406,26 +444,30 @@ function parse_multipart_form(
     return parse_multipart_body(body, boundary_delimiter)
 end
 
-function parse_multipart_form(request::Request)::Union{Vector{Multipart},Nothing}
-    ct = header(request, "Content-Type")
+function parse_multipart_form(message::Union{Request,Response})::Union{Vector{Multipart},Nothing}
+    ct = header(message, "Content-Type")
     isempty(ct) && return nothing
-    bytes = _request_body_bytes(request.body)
+    bytes = _message_body_bytes(message.body)
     bytes === nothing && return nothing
     return parse_multipart_form(ct, bytes)
 end
 
-@inline _request_body_bytes(::EmptyBody) = nothing
-@inline _request_body_bytes(body::BytesBody) =
+@inline _message_body_bytes(::EmptyBody) = nothing
+@inline _message_body_bytes(body::BytesBody) =
     body.next_index > length(body.data) ? UInt8[] :
     @view body.data[body.next_index:end]
-@inline _request_body_bytes(::AbstractBody) = nothing
+@inline _message_body_bytes(body::Vector{UInt8}) = body
+@inline _message_body_bytes(::AbstractBody) = nothing
 
 """
     parse_multipart(content_type_header, body, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
-    parse_multipart(request, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart(message, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
 
 Parse a multipart payload (either `multipart/form-data` or `multipart/mixed`) using the
 boundary from `content_type_header`.
+
+The `message` overload accepts either a `Request` or `Response` and automatically extracts
+the Content-Type header and body bytes.
 
 If `required_type` is specified (e.g., `:formdata` or `:mixed`), only that type will be parsed.
 If `required_type` is `nothing`, any multipart type will be parsed.
@@ -454,23 +496,26 @@ function parse_multipart(
     return parse_multipart_body(body, boundary_delimiter; require_contentdisposition=(type == :formdata))
 end
 
-function parse_multipart(request::Request, required_type::Union{Symbol,Nothing}=nothing)::Union{Vector{Multipart},Nothing}
-    ct = header(request, "Content-Type")
+function parse_multipart(message::Union{Request,Response}, required_type::Union{Symbol,Nothing}=nothing)::Union{Vector{Multipart},Nothing}
+    ct = header(message, "Content-Type")
     isempty(ct) && return nothing
-    bytes = _request_body_bytes(request.body)
+    bytes = _message_body_bytes(message.body)
     bytes === nothing && return nothing
     return parse_multipart(ct, bytes, required_type)
 end
 
 """
     parse_multipart_mixed(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
-    parse_multipart_mixed(request) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_mixed(message) -> Union{Vector{Multipart}, Nothing}
 
 Parse a `multipart/mixed` payload using the boundary from `content_type_header`.
+
+The `message` overload accepts either a `Request` or `Response` and automatically extracts
+the Content-Type header and body bytes.
 
 Returns `nothing` when either input is missing or the content type is not `multipart/mixed`.
 """
 parse_multipart_mixed(content_type_header::Union{String,Nothing}, body::Union{AbstractVector{UInt8},Nothing}) =
     parse_multipart(content_type_header, body, :mixed)
 
-parse_multipart_mixed(request::Request) = parse_multipart(request, :mixed)
+parse_multipart_mixed(message::Union{Request,Response}) = parse_multipart(message, :mixed)
