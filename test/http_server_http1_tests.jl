@@ -1079,6 +1079,18 @@ end
 end
 
 @testset "HTTP server ordinary handlers receive buffered request bodies" begin
+    @test HT.Server(handler = _ -> HT.Response(200), max_body_bytes = 0).max_body_bytes == 0
+    @test_throws ArgumentError HT.Server(handler = _ -> HT.Response(200), max_body_bytes = -1)
+
+    too_large_err = try
+        HT._read_all_server_request_body(HT.BytesBody(collect(codeunits("hello"))), 4)
+        nothing
+    catch err
+        err
+    end
+    @test too_large_err isa HT.ProtocolError
+    @test HT._server_error_status(too_large_err::HT.ProtocolError) == 413
+
     seen_buffered = Channel{Bool}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             put!(seen_buffered, request.body isa HT.BytesBody)
@@ -1108,6 +1120,41 @@ end
         @test take!(seen_buffered)
     finally
         close(client)
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server ordinary handlers reject oversized buffered request bodies" begin
+    called = Channel{Bool}(2)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request
+            _ = request
+            put!(called, true)
+            return HT.Response(200, "handler ran")
+        end
+    address = HT.server_addr(server)
+    try
+        content_length_resp = HT.post(
+            "http://$(address)/too-large";
+            body = "hello",
+            retry = false,
+            status_exception = false,
+        )
+        @test content_length_resp.status == 413
+        @test !isready(called)
+
+        chunked_raw = _raw_http_request(
+            HT.port(server),
+            "POST /chunked HTTP/1.1\r\n" *
+            "Host: $(address)\r\n" *
+            "Transfer-Encoding: chunked\r\n" *
+            "Connection: close\r\n\r\n" *
+            "3\r\nhey\r\n2\r\n!!\r\n0\r\n\r\n";
+            settle_s = 0.1,
+        )
+        @test occursin("HTTP/1.1 413 Content Too Large", chunked_raw)
+        @test !isready(called)
+    finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")
     end

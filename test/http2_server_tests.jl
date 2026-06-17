@@ -467,6 +467,33 @@ end
     end
 end
 
+@testset "HTTP/2 ordinary handlers reject oversized buffered request bodies" begin
+    called = Channel{Bool}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request
+            _ = request
+            put!(called, true)
+            return HT.Response(200, HT.BytesBody(collect(codeunits("handler ran"))); content_length = 11, proto_major = 2, proto_minor = 0)
+        end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        headers = HT.HeaderField[HT.HeaderField("content-length", "5", false)]
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/too-large"; method = "POST", headers = headers, end_stream = false)
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn::NC.Conn, reader)
+        @test (headers_frame::HT.HeadersFrame).stream_id == UInt32(1)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "413", decoded_headers)
+        @test !isready(called)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server accepts legal request trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             buf = Vector{UInt8}(undef, 8)

@@ -112,6 +112,12 @@ server = HTTP.serve!(
 The older `readtimeout` keyword is accepted as a seconds-valued migration alias
 for `read_timeout`.
 
+Ordinary `serve!` request handlers receive a buffered `HTTP.Request` body. That
+buffering is capped by `max_body_bytes`, which defaults to 64 MiB. Raise the
+limit for larger in-memory uploads, pass `max_body_bytes = 0` to restore legacy
+unbounded buffering, or use `listen!`/stream handlers when the application
+should manage large request bodies incrementally.
+
 ## Routing and Middleware
 
 Use `HTTP.Router` when you want route matching without bringing in a

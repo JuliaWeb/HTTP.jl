@@ -68,6 +68,12 @@ latency, where the default 64 KiB window would otherwise cap a transfer at rough
 # A value <= 0 disables the cap (legacy "unlimited" behavior).
 const _H2_DEFAULT_MAX_CONCURRENT_STREAMS = 100
 
+# Default cap for request bodies that the ordinary `serve!` path buffers before
+# dispatching to a Request handler. Set `max_body_bytes=0` to opt back into the
+# legacy unbounded buffering behavior, or use `listen!`/stream handlers for
+# application-managed large uploads.
+const _SERVER_DEFAULT_MAX_BODY_BYTES = Int64(64 * 1024 * 1024)
+
 mutable struct Server{F}
     network::String
     address::String
@@ -78,6 +84,7 @@ mutable struct Server{F}
     write_timeout_ns::Int64
     idle_timeout_ns::Int64
     max_header_bytes::Int
+    max_body_bytes::Int64
     http2_settings::HTTP2Settings
     max_concurrent_streams::Int
     listenany::Bool
@@ -102,6 +109,7 @@ function Server(;
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
     max_header_bytes::Integer=1 * 1024 * 1024,
+    max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
@@ -113,6 +121,7 @@ function Server(;
     write_timeout_ns >= 0 || throw(ArgumentError("write_timeout_ns must be >= 0"))
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     max_header_bytes > 0 || throw(ArgumentError("max_header_bytes must be > 0"))
+    max_body_bytes >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
     # `max_concurrent_streams <= 0` disables the HTTP/2 concurrent-stream cap
     # (the legacy RFC-default "unlimited" behavior); positive values are
     # advertised via SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection.
@@ -127,6 +136,7 @@ function Server(;
         Int64(write_timeout_ns),
         Int64(idle_timeout_ns),
         Int(max_header_bytes),
+        Int64(max_body_bytes),
         http2_settings,
         Int(max_concurrent_streams),
         listenany,
@@ -823,27 +833,52 @@ end
     return headercontains(response.headers, "Connection", "close")
 end
 
-function _read_all_server_request_body(body::AbstractBody)::Vector{UInt8}
+@inline function _server_body_too_large_error(max_body_bytes::Integer)::ProtocolError
+    return ProtocolError("HTTP request body exceeds configured max_body_bytes=$(Int64(max_body_bytes))", _PROTOCOL_ERROR_BODY_TOO_LARGE)
+end
+
+@inline function _check_server_body_size!(received::Int64, max_body_bytes::Int64)::Nothing
+    max_body_bytes > 0 && received > max_body_bytes && throw(_server_body_too_large_error(max_body_bytes))
+    return nothing
+end
+
+function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integer)::Vector{UInt8}
+    limit = Int64(max_body_bytes)
+    limit >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
     body isa EmptyBody && return UInt8[]
-    body isa BytesBody && return _remaining_bytes_body(body::BytesBody)
+    if body isa BytesBody
+        body_bytes = _remaining_bytes_body(body::BytesBody)
+        _check_server_body_size!(Int64(length(body_bytes)), limit)
+        return body_bytes
+    end
     out = IOBuffer()
     buf = Vector{UInt8}(undef, 16 * 1024)
-    try
-        while true
-            n = body_read!(body, buf)
-            n == 0 && break
-            write(out, @view(buf[1:n]))
-        end
-    finally
-        @try_ignore body_close!(body)
+    received = Int64(0)
+    while true
+        n = body_read!(body, buf)
+        n == 0 && break
+        received += Int64(n)
+        _check_server_body_size!(received, limit)
+        write(out, @view(buf[1:n]))
     end
     return take!(out)
 end
 
-function _buffer_server_request(request::Request)::Request
+function _buffer_server_request(request::Request, max_body_bytes::Integer; close_body_on_error::Bool=true)::Request
     body = request.body
     body isa EmptyBody && return request
-    body_bytes = _read_all_server_request_body(body)
+    limit = Int64(max_body_bytes)
+    limit >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
+    body_bytes = try
+        if request.content_length >= 0
+            _check_server_body_size!(Int64(request.content_length), limit)
+        end
+        _read_all_server_request_body(body, limit)
+    catch
+        close_body_on_error && @try_ignore body_close!(body)
+        rethrow()
+    end
+    @try_ignore body_close!(body)
     buffered_body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
     return Request(
         request.method,
@@ -1014,6 +1049,8 @@ function _server_error_status(err::Exception)::Union{Nothing,Int}
         code = err.code
         if code == _PROTOCOL_ERROR_LINE_TOO_LONG || code == _PROTOCOL_ERROR_HEADERS_TOO_LARGE
             return 431
+        elseif code == _PROTOCOL_ERROR_BODY_TOO_LARGE
+            return 413
         end
         return 400
     end
@@ -1145,7 +1182,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             else
                 handler_request = request
                 response = try
-                    handler_request = _buffer_server_request(request)
+                    handler_request = _buffer_server_request(request, server.max_body_bytes)
                     server.handler(handler_request)
                 catch err
                     status = _server_error_status(err::Exception)
@@ -1469,8 +1506,8 @@ end
     serve!(handler, host="127.0.0.1", port=8080;
            read_timeout_ns=0, read_header_timeout_ns=0,
            write_timeout_ns=0, idle_timeout_ns=0,
-           max_header_bytes=1*1024*1024, listenany=false, reuseaddr=true,
-           backlog=128) -> Server
+           max_header_bytes=1*1024*1024, max_body_bytes=64*1024*1024,
+           listenany=false, reuseaddr=true, backlog=128) -> Server
     serve!(handler, port; kwargs...) -> Server
     serve!(handler, listener; kwargs...) -> Server
 
@@ -1480,6 +1517,8 @@ Start an HTTP server and return the running `Server`.
 Use `listen!` for the lower-level `HTTP.Stream` handler path.
 Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
 keyword is accepted as a seconds-valued migration alias for `read_timeout`.
+Ordinary request handlers buffer request bodies before dispatch; `max_body_bytes`
+caps that buffering, and `0` restores the legacy unbounded behavior.
 """
 function serve!(
     handler::F,
@@ -1495,6 +1534,7 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
@@ -1518,6 +1558,7 @@ function serve!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        max_body_bytes=max_body_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         listenany=false,
@@ -1544,6 +1585,7 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
@@ -1572,6 +1614,7 @@ function serve!(
             readtimeout=readtimeout,
             verbose=verbose,
             max_header_bytes=max_header_bytes,
+            max_body_bytes=max_body_bytes,
             http2_settings=http2_settings,
             max_concurrent_streams=max_concurrent_streams,
             reuseaddr=reuseaddr,
@@ -1599,6 +1642,7 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
@@ -1620,6 +1664,7 @@ function serve!(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        max_body_bytes=max_body_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         listenany=listenany,
@@ -1647,6 +1692,7 @@ function serve(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
@@ -1667,6 +1713,7 @@ function serve(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        max_body_bytes=max_body_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         listenany=listenany,

@@ -1489,7 +1489,7 @@ function _handle_h2_stream!(
         else
             handler_request = request
             response = try
-                handler_request = _buffer_server_request(request)
+                handler_request = _buffer_server_request(request, server.max_body_bytes; close_body_on_error=false)
                 server.handler(handler_request)
             catch err
                 status = _server_error_status(err::Exception)
@@ -1507,6 +1507,7 @@ function _handle_h2_stream!(
                     ),
                     _server_write_deadline_ns(server),
                 )
+                @try_ignore body_close!(request.body)
                 return nothing
             end
             if !(response isa Response)
