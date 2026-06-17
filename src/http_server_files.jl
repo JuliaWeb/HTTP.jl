@@ -653,6 +653,15 @@ function _resolve_file_etag(path::String, st, etag)
     return String(etag)
 end
 
+function _finalize_servefile_source!(response::Response, source::IO)::Response
+    if response.body isa _SeekableResponseBody
+        (response.body::_SeekableResponseBody).owns_io = true
+    else
+        @try_ignore close(source)
+    end
+    return response
+end
+
 function _servefile_response(
     request::Request,
     path::String,
@@ -689,20 +698,22 @@ function _servefile_response(
     cache_control === nothing || setheader(response_headers, "Cache-Control", String(cache_control))
     resolved_etag = _resolve_file_etag(path, st, etag)
     source = Base.open(path, "r")
-    response = servecontent(
-        request,
-        source;
-        name=basename(path),
-        size=st.size,
-        modtime=modtime,
-        content_type=_servefile_content_type(path),
-        etag=resolved_etag,
-        headers=response_headers,
-    )
-    if response.body isa _SeekableResponseBody
-        (response.body::_SeekableResponseBody).owns_io = true
+    try
+        response = servecontent(
+            request,
+            source;
+            name=basename(path),
+            size=st.size,
+            modtime=modtime,
+            content_type=_servefile_content_type(path),
+            etag=resolved_etag,
+            headers=response_headers,
+        )
+        return _finalize_servefile_source!(response, source)
+    catch
+        @try_ignore close(source)
+        rethrow()
     end
-    return response
 end
 
 """

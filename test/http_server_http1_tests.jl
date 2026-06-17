@@ -519,6 +519,25 @@ end
             HT.body_close!(blob_resp.body)
         end
 
+        conditional_source = open(hello_path, "r")
+        conditional_resp = HT.Response(304, HT.EmptyBody())
+        @test isopen(conditional_source)
+        @test HT._finalize_servefile_source!(conditional_resp, conditional_source) === conditional_resp
+        @test !isopen(conditional_source)
+
+        streaming_source = open(hello_path, "r")
+        streaming_resp = HT.servecontent(HT.Request("GET", "/hello.txt"), streaming_source; name = "hello.txt", size = filesize(hello_path), content_type = "text/plain; charset=utf-8")
+        @test isopen(streaming_source)
+        @test HT._finalize_servefile_source!(streaming_resp, streaming_source) === streaming_resp
+        @test isopen(streaming_source)
+        HT.body_close!(streaming_resp.body)
+        @test !isopen(streaming_source)
+
+        not_modified_headers = HT.Headers()
+        HT.setheader(not_modified_headers, "If-None-Match", "*")
+        not_modified = HT.servefile(HT.Request("GET", "/hello.txt"; headers = not_modified_headers), hello_path; etag = :weak_stat)
+        @test not_modified.status == 304
+
         server = HT.serve!(HT.fileserver(dir; etag = :weak_stat, cache_control = "public, max-age=60"), "127.0.0.1", 0; listenany = true)
         address = HT.server_addr(server)
         try
