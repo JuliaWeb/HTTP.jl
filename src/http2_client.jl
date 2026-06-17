@@ -880,9 +880,8 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         try
             if update.stream_id == UInt32(0)
                 conn.conn_send_window += increment
-            else
-                current = get(() -> conn.initial_stream_send_window, conn.stream_send_window, update.stream_id)
-                conn.stream_send_window[update.stream_id] = current + increment
+            elseif haskey(conn.stream_send_window, update.stream_id)
+                conn.stream_send_window[update.stream_id] += increment
             end
             notify(conn.window_condition; all=true)
         finally

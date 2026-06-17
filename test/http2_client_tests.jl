@@ -2030,3 +2030,24 @@ end
         cleanup3()
     end
 end
+
+@testset "HTTP/2 client ignores WINDOW_UPDATE for unknown streams" begin
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        @test isempty(conn.stream_send_window)
+        HT._process_incoming_frame!(conn, HT.WindowUpdateFrame(UInt32(99), UInt32(1024)))
+        @test isempty(conn.stream_send_window)
+
+        live = HT._try_register_stream_locked!(conn)::HT.H2StreamState
+        initial = conn.stream_send_window[live.stream_id]
+        HT._process_incoming_frame!(conn, HT.WindowUpdateFrame(live.stream_id, UInt32(1024)))
+        @test conn.stream_send_window[live.stream_id] == initial + 1024
+
+        HT._unregister_stream!(conn, live.stream_id)
+        @test !haskey(conn.stream_send_window, live.stream_id)
+        HT._process_incoming_frame!(conn, HT.WindowUpdateFrame(live.stream_id, UInt32(2048)))
+        @test !haskey(conn.stream_send_window, live.stream_id)
+    finally
+        cleanup()
+    end
+end
