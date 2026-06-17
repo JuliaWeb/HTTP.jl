@@ -37,7 +37,7 @@ const HT = HTTP
     @test startswith(HT.content_type(form_default), "multipart/form-data; boundary=")
 
     # Test invalid type throws error
-    @test_throws AssertionError HT.Form(Dict(); type=:invalid)
+    @test_throws ArgumentError HT.Form(Dict(); type=:invalid)
 end
 
 @testset "multipart/mixed parsing" begin

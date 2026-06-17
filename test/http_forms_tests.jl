@@ -79,9 +79,9 @@ end
     @test HT.Form(Dict(); boundary = "a") isa HT.Form
     @test HT.Form(Dict(); boundary = " Aa1'()+,-.:=?") isa HT.Form
     @test HT.Form(Dict(); boundary = 'a'^70) isa HT.Form
-    @test_throws AssertionError HT.Form(Dict(); boundary = "")
-    @test_throws AssertionError HT.Form(Dict(); boundary = 'a'^71)
-    @test_throws AssertionError HT.Form(Dict(); boundary = "a ")
+    @test_throws ArgumentError HT.Form(Dict(); boundary = "")
+    @test_throws ArgumentError HT.Form(Dict(); boundary = 'a'^71)
+    @test_throws ArgumentError HT.Form(Dict(); boundary = "a ")
 
     body = _multipart_fixture_body()
     parsed = HT.parse_multipart_form(
