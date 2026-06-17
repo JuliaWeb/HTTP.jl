@@ -2517,15 +2517,30 @@ end
     big = zeros(UInt8, 4_000_000)
     gz = transcode(HTTP.CodecZlib.GzipCompressor, big)
     @test length(gz) < 100_000   # confirm the payload really is small on the wire
+    default_bomb = zeros(UInt8, HT._DEFAULT_MAX_DECOMPRESSED_SIZE + 1)
+    default_bomb_gz = transcode(HTTP.CodecZlib.GzipCompressor, default_bomb)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do req
-        return HT.Response(200; headers = ["Content-Encoding" => "gzip"], body = gz)
+        payload = req.target == "/default-bomb" ? default_bomb_gz : gz
+        return HT.Response(200; headers = ["Content-Encoding" => "gzip"], body = payload)
     end
     try
         base = "http://127.0.0.1:$(HT.port(server))/"
 
-        # No limit (default): the full body decompresses.
+        # The default cap allows ordinary compressed bodies below the limit.
         r = HT.get(base)
         @test length(r.body) == length(big)
+
+        # The default cap rejects compressed payloads that inflate past it.
+        default_err = try
+            HT.get("$(base)default-bomb")
+            nothing
+        catch e
+            e
+        end
+        @test default_err isa HTTP.DecompressionLimitError
+        default_err isa HTTP.DecompressionLimitError && @test default_err.limit == HT._DEFAULT_MAX_DECOMPRESSED_SIZE
+
+        @test_throws ArgumentError HT.get(base; max_decompressed_size = -1)
 
         # Limit below the decompressed size: rejected before the bomb inflates.
         err = try
@@ -2550,6 +2565,11 @@ end
             e
         end
         @test err2 isa HTTP.DecompressionLimitError
+
+        # Explicit zero preserves the opt-out for callers that intentionally
+        # manage unbounded decompression risk themselves.
+        r3 = HT.get(base; max_decompressed_size = 0)
+        @test length(r3.body) == length(big)
     finally
         HT.forceclose(server)
     end

@@ -1466,6 +1466,8 @@ struct DecompressionLimitError <: Exception
     limit::Int
 end
 
+const _DEFAULT_MAX_DECOMPRESSED_SIZE = Int(64 * 1024 * 1024)
+
 function Base.showerror(io::IO, err::DecompressionLimitError)
     print(io, "DecompressionLimitError: decompressed response body exceeded max_decompressed_size = ", err.limit, " bytes")
     return nothing
@@ -1846,7 +1848,7 @@ function request(
     query=nothing,
     response_stream=nothing,
     decompress::Union{Nothing,Bool}=nothing,
-    max_decompressed_size::Integer=0,
+    max_decompressed_size::Integer=_DEFAULT_MAX_DECOMPRESSED_SIZE,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
@@ -1899,6 +1901,7 @@ function request(
             logerrors=logerrors,
             logtag=logtag,
         )
+        max_decompressed_size >= 0 || throw(ArgumentError("max_decompressed_size must be >= 0"))
         # Merge per-call values with client defaults (per-call wins)
         connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
         request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
@@ -2043,7 +2046,7 @@ Keyword arguments:
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
-- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. `0` (default) disables the limit
+- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
 - `trace`: optional callback receiving request lifecycle events
