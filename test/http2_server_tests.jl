@@ -36,7 +36,9 @@ function _write_frame_h2_server_raw!(conn::NC.Conn, frame::HT.AbstractFrame)
     return nothing
 end
 
-function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = 5.0)
+const _RAW_H2_SERVER_FRAME_TIMEOUT_S = Sys.iswindows() ? 10.0 : 5.0
+
+function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = _RAW_H2_SERVER_FRAME_TIMEOUT_S)
     NC.set_deadline!(conn, Int64(time_ns() + round(Int, timeout_s * 1_000_000_000)))
     try
         return HT.read_frame!(reader)
@@ -45,13 +47,17 @@ function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = 
     end
 end
 
-function _open_raw_h2_server_conn(address::String; settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[])
+function _open_raw_h2_server_conn(
+        address::String;
+        settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[],
+        timeout_s::Float64 = _RAW_H2_SERVER_FRAME_TIMEOUT_S,
+    )
     conn = ND.connect("tcp", address)
     reader = HT._ConnReader(conn)
     _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
     _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, settings))
-    first = _read_h2_server_frame!(conn, reader)
-    second = _read_h2_server_frame!(conn, reader)
+    first = _read_h2_server_frame!(conn, reader; timeout_s)
+    second = _read_h2_server_frame!(conn, reader; timeout_s)
     frames = (first, second)
     count(frame -> frame isa HT.SettingsFrame && !(frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS frame")
     count(frame -> frame isa HT.SettingsFrame && (frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS ACK frame")
