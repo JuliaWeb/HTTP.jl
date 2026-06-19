@@ -741,9 +741,11 @@ end
 @testset "HTTP client redirect trusted host matching helper" begin
     # Same scheme + same host + same port: sensitive headers may be retained.
     @test HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:443", true, true)
-    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "sub.foo.com:443", true, true)
+    @test HT._should_copy_sensitive_headers_on_redirect("Foo.COM.:443", "foo.com:443", true, true)
     # Bare host vs host:default-port over the same scheme is the same origin.
     @test HT._should_copy_sensitive_headers_on_redirect("foo.com", "foo.com:443", true, true)
+    # A child host is a different origin for caller-supplied credentials.
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "sub.foo.com:443", true, true)
     # Different host is a different origin.
     @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "bar.com:443", true, true)
 end

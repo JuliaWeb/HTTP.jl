@@ -117,12 +117,6 @@ end
     return normalized
 end
 
-function _is_domain_or_subdomain(sub::String, parent::String)::Bool
-    sub == parent && return true
-    (occursin(':', sub) || occursin('%', sub)) && return false
-    return endswith(sub, "." * parent)
-end
-
 @inline function _split_redirect_host_port(address::String)::Tuple{String,String}
     return try
         host, port = HostResolvers.split_host_port(address)
@@ -138,11 +132,14 @@ end
 # credential-bearing headers stripped by `_strip_sensitive_redirect_headers!`)
 # may be retained when a request is redirected. Sensitive headers are only kept
 # when the redirect stays within the SAME security origin, i.e. the scheme, the
-# port, and the host all match. Comparing the host alone (the previous
-# behaviour) leaked credentials across an https->http downgrade or to a
-# different service on another port of the same host (cf. curl CVE-2022-27776,
-# python-requests CVE-2018-18074); the `initial_secure`/`redirect_secure` flags
-# are supplied by the callers, which already track scheme for `Referer`.
+# port, and the host all match exactly after normalization. Go's net/http also
+# trusts subdomains here, but explicit Authorization/Cookie headers are scoped to
+# the caller's request origin in HTTP.jl; domain-scoped cookies remain the cookie
+# jar's job. Comparing the host alone (the previous behaviour) leaked
+# credentials across an https->http downgrade or to a different service on
+# another port of the same host (cf. curl CVE-2022-27776, python-requests
+# CVE-2018-18074); the `initial_secure`/`redirect_secure` flags are supplied by
+# the callers, which already track scheme for `Referer`.
 function _should_copy_sensitive_headers_on_redirect(
     initial_address::String,
     redirect_address::String,
@@ -164,7 +161,7 @@ function _should_copy_sensitive_headers_on_redirect(
     redirect_norm = _normalize_redirect_host(redirect_host)
     isempty(initial_norm) && return false
     isempty(redirect_norm) && return false
-    return _is_domain_or_subdomain(redirect_norm, initial_norm)
+    return redirect_norm == initial_norm
 end
 
 function _strip_sensitive_redirect_headers!(headers::Headers)
