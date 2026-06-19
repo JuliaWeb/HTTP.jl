@@ -41,6 +41,19 @@ end
 Base.hash(conn::_ServerConn, h::UInt) = hash(objectid(conn), h)
 Base.:(==)(a::_ServerConn, b::_ServerConn) = a === b
 
+# Default ceiling on the number of HTTP/2 streams a single connection may have
+# open concurrently. RFC 9113 §6.5.2 recommends a value no smaller than 100 so
+# that legitimate multiplexing keeps working; it is advertised to the peer via
+# SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection in http2_server.jl.
+# A value <= 0 disables the cap (legacy "unlimited" behavior).
+const _H2_DEFAULT_MAX_CONCURRENT_STREAMS = 100
+
+# Default cap for request bodies that the ordinary `serve!` path buffers before
+# dispatching to a Request handler. Set `max_body_bytes=0` to opt back into the
+# legacy unbounded buffering behavior, or use `listen!`/stream handlers for
+# application-managed large uploads.
+const _SERVER_DEFAULT_MAX_BODY_BYTES = Int64(64 * 1024 * 1024)
+
 """
     Server(; network="tcp", address="127.0.0.1:0", handler, stream=false, ...)
 
@@ -61,19 +74,6 @@ Raising the windows improves single-stream throughput on links with non-trivial
 latency, where the default 64 KiB window would otherwise cap a transfer at roughly
 `window / RTT`.
 """
-# Default ceiling on the number of HTTP/2 streams a single connection may have
-# open concurrently. RFC 9113 §6.5.2 recommends a value no smaller than 100 so
-# that legitimate multiplexing keeps working; it is advertised to the peer via
-# SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection in http2_server.jl.
-# A value <= 0 disables the cap (legacy "unlimited" behavior).
-const _H2_DEFAULT_MAX_CONCURRENT_STREAMS = 100
-
-# Default cap for request bodies that the ordinary `serve!` path buffers before
-# dispatching to a Request handler. Set `max_body_bytes=0` to opt back into the
-# legacy unbounded buffering behavior, or use `listen!`/stream handlers for
-# application-managed large uploads.
-const _SERVER_DEFAULT_MAX_BODY_BYTES = Int64(64 * 1024 * 1024)
-
 mutable struct Server{F}
     network::String
     address::String
