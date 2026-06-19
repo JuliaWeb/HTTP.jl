@@ -58,16 +58,17 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
 end
 
 function _write_server_stream_head!(stream::Stream)::Nothing
-    headers = copy(stream.response.headers)
-    response_close = stream.response.close || _should_close_connection(headers, stream.response.proto_major, stream.response.proto_minor)
+    response = stream.response::Response
+    headers = copy(response.headers)
+    response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
     mode = _server_stream_write_mode(stream)
     stream.write_mode = mode
     if _server_stream_live_h2(stream)
         if mode == _ServerStreamWriteMode.NONE
             removeheader(headers, "Content-Length")
-        elseif stream.response.content_length >= 0
-            setheader(headers, "Content-Length", string(stream.response.content_length))
+        elseif response.content_length >= 0
+            setheader(headers, "Content-Length", string(response.content_length))
         end
         removeheader(headers, "Connection")
         removeheader(headers, "Transfer-Encoding")
@@ -75,13 +76,13 @@ function _write_server_stream_head!(stream::Stream)::Nothing
         removeheader(headers, "Proxy-Connection")
         removeheader(headers, "Upgrade")
         removeheader(headers, "Trailer")
-        end_stream = mode == _ServerStreamWriteMode.NONE && isempty(stream.response.trailers)
+        end_stream = mode == _ServerStreamWriteMode.NONE && isempty(response.trailers)
         _write_h2_response_headers!(
             stream.h2_conn::Union{TCP.Conn,TLS.Conn},
             stream.h2_write_lock::ReentrantLock,
             stream.h2_send_state::_H2SendWindowState,
             stream.h2_stream_id,
-            stream.response.status,
+            response.status,
             headers,
             end_stream,
             _server_write_deadline_ns(stream.server::Server),
@@ -94,19 +95,19 @@ function _write_server_stream_head!(stream::Stream)::Nothing
         removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
     elseif mode == _ServerStreamWriteMode.FIXED
-        if stream.response.content_length >= 0
-            setheader(headers, "Content-Length", string(stream.response.content_length))
+        if response.content_length >= 0
+            setheader(headers, "Content-Length", string(response.content_length))
         end
     elseif mode == _ServerStreamWriteMode.CHUNKED
         removeheader(headers, "Content-Length")
         setheader(headers, "Transfer-Encoding", "chunked")
-        _prepare_trailer_header!(headers, stream.response.trailers)
+        _prepare_trailer_header!(headers, response.trailers)
     else
         removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
     end
     io = IOBuffer()
-    _write_status_line!(io, stream.response)
+    _append_status_line!(io, response)
     _write_headers!(io, headers)
     write(io, "\r\n")
     _write_server_stream_bytes!(stream, take!(io), false)
@@ -472,4 +473,3 @@ Adapter that takes a request handler and returns a stream handler.
 function streamhandler(handler)
     return _StreamHandlerAdapter(handler)
 end
-

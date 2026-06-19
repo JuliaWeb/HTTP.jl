@@ -97,8 +97,15 @@ end
     HT.register!(acme_router, "/api/widgets/acme/{id:[a-z]+}", req -> HT.getparam(req, "id"))
     called[] = false
     @test acme_router(HT.Request("GET", "/api/widgets/acme/11")) == 0
+    @test acme_router(HT.Request("GET", "/api/widgets/acme/abc123")) == 0
     @test !called[]
     @test acme_router(HT.Request("GET", "/api/widgets/acme/abc")) == "abc"
+
+    numeric_router = HT.Router(_ -> 0, _ -> -1, middle)
+    HT.register!(numeric_router, "/users/{id:[0-9]+}", req -> HT.getparam(req, "id"))
+    @test numeric_router(HT.Request("GET", "/users/123")) == "123"
+    @test numeric_router(HT.Request("GET", "/users/123abc")) == 0
+    @test numeric_router(HT.Request("GET", "/users/abc123")) == 0
 
     HT.register!(router, "/test/**", _ -> 11)
     @test router(HT.Request("GET", "/test/foo/foobar")) == 11

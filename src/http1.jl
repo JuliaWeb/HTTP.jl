@@ -248,8 +248,16 @@ function _parse_transfer_encoding!(hdrs::Headers, proto_major::UInt8, proto_mino
     values = headers(hdrs, "Transfer-Encoding")
     isempty(values) && return false
     if proto_major < UInt8(1) || (proto_major == UInt8(1) && proto_minor < UInt8(1))
-        removeheader(hdrs, "Transfer-Encoding")
-        return false
+        # RFC 9112 §6.1: an HTTP/1.0 message must not use Transfer-Encoding; a
+        # recipient that receives one has faulty framing. The old behavior
+        # silently dropped the header and fell back to Content-Length while
+        # leaving a keep-alive connection open, so a reverse proxy that framed
+        # the body as chunked could leave the trailing chunked bytes on the
+        # reused connection for HTTP.jl to parse as a smuggled pipelined request
+        # (ANT-2026-YD5QTQDZ). Reject instead: this surfaces as a 400 and the
+        # server closes the connection (Response close=true), so no ambiguous
+        # bytes remain on the transport.
+        throw(ProtocolError("Transfer-Encoding is not allowed in HTTP/1.0 messages"))
     end
     length(values) == 1 || throw(ProtocolError("too many Transfer-Encoding header values"))
     raw = _trim_http_ows(values[1])
@@ -279,6 +287,27 @@ function _validate_request_target!(method::String, target::String)::Nothing
     catch
         throw(ParseError("invalid HTTP target: $(repr(target))"))
     end
+end
+
+# Client-side guard for the HTTP/1 request start line. The method and target
+# flow from caller-constructed `Request` objects (often built by interpolating
+# user-controlled URL components) straight onto the wire via `print`, so we must
+# reject CR/LF and other control bytes here before serialization. Without this an
+# attacker who influences the URL path/query/method could embed `\r\n` to inject
+# headers or smuggle a pipelined request on a pooled keep-alive connection. The
+# server read path already enforces this via `_validate_request_target!`; this is
+# the symmetric check for the client write path (the HTTP/2 client validates
+# `:path`/`:method` analogously). `host`, when present, is the authority used in
+# absolute-form/proxy-forward start lines and must be control-byte-free as well.
+function _validate_request_start_line!(method::String, target::String, host::Union{Nothing,AbstractString}=nothing)::Nothing
+    # An HTTP method is an RFC 7230 token; `_valid_header_field_name` enforces
+    # exactly that grammar (and so excludes spaces, CR, LF and other CTLs).
+    _valid_header_field_name(method) || throw(ParseError("invalid HTTP method: $(repr(method))"))
+    _validate_request_target!(method, target)
+    if host !== nothing
+        _string_contains_ctl_byte(host) && throw(ParseError("invalid HTTP request host: $(repr(host))"))
+    end
+    return nothing
 end
 
 function _validate_request_host!(hdrs::Headers, method::String, proto_major::UInt8, proto_minor::UInt8)::Union{Nothing,String}
@@ -331,19 +360,37 @@ function _consume_crlf(io::IO)
 end
 
 function _parse_chunk_size(line::AbstractString)::Int64
-    trimmed = _trim_http_ows(line)
-    isempty(trimmed) && throw(ParseError("empty chunk size line"))
-    semi = findfirst(';', trimmed)
-    token = semi === nothing ? trimmed : String(SubString(trimmed, firstindex(trimmed), prevind(trimmed, semi)))
-    token = _trim_http_ows(token)
-    isempty(token) && throw(ParseError("empty chunk size"))
-    size = try
-        parse(Int64, token; base=16)
-    catch
-        throw(ParseError("invalid chunk size: $(repr(line))"))
+    # RFC 9112 §7.1: chunk = chunk-size [ chunk-ext ] CRLF, where
+    #   chunk-size = 1*HEXDIG. The chunk-size token must be one or more ASCII
+    # hex digits with no sign, no "0x" prefix, and no surrounding whitespace.
+    # We split off any chunk extension at the first ';' and then validate the
+    # remaining token byte-by-byte instead of using Base.parse(Int64,...;base=16),
+    # which silently tolerates '+'/'-', a "0x" prefix, and isspace padding
+    # (including a trailing bare CR). Accepting those forms lets HTTP.jl disagree
+    # with an RFC-strict front-end proxy about where the chunked body ends, which
+    # enables HTTP request smuggling (ANT-2026-SRPX7DN1). This mirrors the strict
+    # decimal parser used for Content-Length (_parse_int64_decimal_header_value).
+    semi = findfirst(';', line)
+    token = semi === nothing ? line : SubString(line, firstindex(line), prevind(line, semi))
+    units = codeunits(token)
+    isempty(units) && throw(ParseError("empty chunk size"))
+    limit = UInt64(typemax(Int64))
+    total = UInt64(0)
+    @inbounds for b in units
+        if 0x30 <= b <= 0x39          # '0'-'9'
+            digit = UInt64(b - 0x30)
+        elseif 0x41 <= b <= 0x46      # 'A'-'F'
+            digit = UInt64(b - 0x41 + 0x0a)
+        elseif 0x61 <= b <= 0x66      # 'a'-'f'
+            digit = UInt64(b - 0x61 + 0x0a)
+        else
+            throw(ParseError("invalid chunk size: $(repr(line))"))
+        end
+        # Guard against overflow past Int64 range (also keeps the result >= 0).
+        total > ((limit - digit) >> 4) && throw(ParseError("chunk size too large: $(repr(line))"))
+        total = (total << 4) + digit
     end
-    size < 0 && throw(ParseError("negative chunk size"))
-    return size
+    return Int64(total)
 end
 
 function _read_next_chunk!(body::ChunkedBody)
@@ -409,6 +456,8 @@ end
 
 function _write_start_line!(io::IO, request::Request, wire_target::Union{Nothing,AbstractString}=nothing)
     target = wire_target === nothing ? request.target : String(wire_target)
+    # Reject CR/LF/CTL in the method or target before they reach the socket.
+    _validate_request_start_line!(request.method, target)
     print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
     return nothing
 end
@@ -479,14 +528,20 @@ function _status_text(status::Integer)::String
     return ""
 end
 
-function _write_status_line!(io::IO, response::Response)
+@inline function _response_reason_phrase(response::Response)::String
     reason = isempty(response.reason) ? _status_text(response.status) : response.reason
+    _string_contains_ctl_byte(reason) && throw(ProtocolError("invalid HTTP response reason phrase: $(repr(reason))"))
+    return reason
+end
+
+@inline function _write_status_line!(io::IO, response::Response)::Nothing
+    reason = _response_reason_phrase(response)
     print(io, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
     return nothing
 end
 
-function _append_status_line!(buf::IOBuffer, response::Response)
-    reason = isempty(response.reason) ? _status_text(response.status) : response.reason
+@inline function _append_status_line!(buf::IOBuffer, response::Response)::Nothing
+    reason = _response_reason_phrase(response)
     print(buf, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
     return nothing
 end
@@ -698,6 +753,8 @@ end
 
 function _append_start_line!(buf::IOBuffer, request::Request, wire_target::Union{Nothing,AbstractString}=nothing)
     target = wire_target === nothing ? request.target : String(wire_target)
+    # Reject CR/LF/CTL in the method or target before they reach the socket.
+    _validate_request_start_line!(request.method, target)
     print(buf, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
     return nothing
 end
@@ -897,6 +954,15 @@ function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BY
     method, target, proto_major, proto_minor = _parse_request_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
     chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
+    # A request that carries BOTH Transfer-Encoding and Content-Length has
+    # ambiguous framing (RFC 9112 §6.1/§6.3): a front-end proxy may frame by one
+    # header while HTTP.jl frames by the other, leaving trailing bytes on a
+    # reused keep-alive connection that get parsed as a smuggled request
+    # (ANT-2026-YD5QTQDZ). Reject such requests outright (surfaced as 400 with
+    # the connection closed) instead of silently preferring Transfer-Encoding.
+    if chunked && hasheader(headers, "Content-Length")
+        throw(ProtocolError("request must not include both Transfer-Encoding and Content-Length"))
+    end
     content_length = _parse_content_length(headers)
     chunked && removeheader(headers, "Content-Length")
     content_length = chunked ? Int64(-1) : content_length

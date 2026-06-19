@@ -96,6 +96,7 @@ import .._clear_deadlines!
 include("http_websocket_pmce.jl")
 include("http_websocket_codec.jl")
 
+const DEFAULT_MAX_FRAME_SIZE = 16 * 1024 * 1024
 const DEFAULT_MAX_FRAG = 1024
 const DEFAULT_READ_BUFFER_BYTES = 16 * 1024
 
@@ -182,7 +183,7 @@ function WebSocket(
     stream::S,
     close_transport!::C;
     subprotocol::Union{Nothing,AbstractString}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_idle_timeout_ns::Integer=0,
     is_client::Bool=true,
@@ -190,14 +191,15 @@ function WebSocket(
 ) where {S,C}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
     maxfragmentation > 0 || throw(ArgumentError("maxfragmentation must be > 0"))
+    max_frame_size = Int(maxframesize)
     channel = Channel{Union{String,Vector{UInt8}}}(Inf)
-    codec = WSConn(is_client=is_client, pmce=pmce)
+    codec = WSConn(is_client=is_client, max_incoming_payload_length=UInt64(max_frame_size), pmce=pmce)
     ws = WebSocket(
         subprotocol === nothing ? nothing : String(subprotocol),
         stream,
         close_transport!,
         codec,
-        Int(maxframesize),
+        max_frame_size,
         Int(maxfragmentation),
         channel,
         nothing,
@@ -318,6 +320,33 @@ function _flush_ws_output!(ws::WebSocket)::Nothing
     return nothing
 end
 
+# Concurrency invariant: `ws.codec.outgoing` is a plain `Vector`, and
+# mutating a Julia `Vector` from two OS threads at once is undefined behavior.
+# `ws_on_incoming_data!` is not purely a parser — the auto-PONG and CLOSE-echo
+# paths append onto `outgoing` — so it must run under the same
+# `ws.sendlock` that guards application-initiated `send`/`ping`/`pong`/`close`
+# (which append/flush that buffer). Otherwise the reader task, spawned
+# separately and processing a remote PING flood, races those application sends and
+# can corrupt the array metadata / segfault the process. We take the lock only
+# around the decode + flush, never across the blocking socket read in the reader
+# loop, so this cannot deadlock with concurrent senders.
+function _process_incoming_data!(
+    ws::WebSocket,
+    on_frame::Function,
+    data::AbstractVector{UInt8},
+    datalen::Int=lastindex(data),
+)::Nothing
+    @lock ws.sendlock begin
+        ws_on_incoming_data!(on_frame, ws.codec, data, datalen)
+        _flush_ws_output_locked!(ws)
+    end
+    return nothing
+end
+
+function _process_incoming_data!(ws::WebSocket, data::AbstractVector{UInt8}, datalen::Int=lastindex(data))::Nothing
+    return _process_incoming_data!(ws, frame -> _process_incoming_frame!(ws, frame), data, datalen)
+end
+
 function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     frame.payload_length <= ws.maxframesize || begin
         close_body = CloseFrameBody(1009, "frame too large")
@@ -427,6 +456,8 @@ end
 _ws_arm_read_deadline!(stream::TLS.Conn, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
 _ws_arm_read_deadline!(stream::TCP.Conn, deadline_ns::Int64) = TCP.set_read_deadline!(stream, deadline_ns)
 _ws_read_deadline_ns(timeout_ns::Int64)::Int64 = _phase_deadline_ns(timeout_ns, Int64(0))
+_ws_protocol_error_is_too_large(err::WebSocketProtocolError)::Bool =
+    occursin("exceeds configured maximum", err.message)
 
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
@@ -446,8 +477,12 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # `_blocking_readbytes!` does one blocking socket read into `buf`.
             n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
-            ws_on_incoming_data!(on_frame, ws.codec, buf, n)
-            _flush_ws_output!(ws)
+            # Decode + flush under `ws.sendlock` so the auto-PONG/CLOSE-echo
+            # frames appended onto `ws.codec.outgoing` never race a
+            # concurrent application `send`/`ping`/`close` (see
+            # `_process_incoming_data!`). The blocking read above runs
+            # outside the lock, so concurrent senders cannot deadlock the reader.
+            _process_incoming_data!(ws, on_frame, buf, n)
             ws.readclosed && break
         end
         if !ws.readclosed
@@ -462,6 +497,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             CloseFrameBody(1006, "websocket read idle timeout")
         elseif err isa WebSocketInvalidPayloadError
             CloseFrameBody(1007, "invalid websocket payload")
+        elseif err isa WebSocketProtocolError && _ws_protocol_error_is_too_large(err::WebSocketProtocolError)
+            CloseFrameBody(1009, "message too large")
         elseif err isa WebSocketProtocolError
             CloseFrameBody(1002, "websocket protocol error")
         else
@@ -525,8 +562,7 @@ function _finish_client_websocket(
     ws.handshake_request = request
     ws.handshake_response = response
     if !isempty(buffered)
-        ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, buffered)
-        _flush_ws_output!(ws)
+        _process_incoming_data!(ws, buffered)
     end
     _start_read_task!(ws)
     return ws
@@ -835,7 +871,7 @@ end
 function _open_client_websocket(
     url::AbstractString;
     headers=Pair{String,String}[],
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     query=nothing,
@@ -883,6 +919,9 @@ function _open_client_websocket(
     current_server_name = parsed.server_name
     current_request = request
     initial_address = current_address
+    # Remember the original scheme so the sensitive-header same-origin check can
+    # detect an https/wss -> http/ws downgrade across the redirect chain.
+    initial_secure = current_secure
     for redirect_count in 0:redirect_policy.max_redirects
         send_request = _copy_request(current_request)
         host, path = _host_path_from_request(current_address, current_request)
@@ -968,9 +1007,18 @@ function _open_client_websocket(
         else
             setheader(current_request.headers, "Referer", next_ref::String)
         end
-        if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address)
+        # Strip credential headers on any cross-origin hop, where origin is the
+        # full (scheme, host, port) tuple rather than the host alone, so a scheme
+        # downgrade or a port change no longer replays Authorization/Cookie.
+        if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
             _strip_sensitive_redirect_headers!(current_request.headers)
             _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
+            # Stop re-applying caller-supplied explicit cookies once we leave the
+            # original origin; otherwise `_cookie_header` re-attaches them on the
+            # next hop after the Cookie header was just stripped.
+            if normalized_cookies isa Vector{Cookies.Cookie}
+                normalized_cookies = Cookies.Cookie[]
+            end
         end
     end
     owns_client && close(req_client)
@@ -988,7 +1036,8 @@ selection, TLS verification, timeout controls, and frame limits.
 `request_timeout` applies an overall handshake deadline, while
 `response_header_timeout` and `write_idle_timeout` configure HTTP handshake
 phases. `read_idle_timeout` bounds both handshake response-header reads and
-post-upgrade inbound WebSocket inactivity. Pass `compress=true` to offer
+post-upgrade inbound WebSocket inactivity. `maxframesize` defaults to 16 MiB
+and bounds incoming frame/message buffering. Pass `compress=true` to offer
 permessage-deflate message compression ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692));
 it is only used when the server also accepts it. When called with a function,
 the socket is closed automatically with status code `1000` when `f` returns.
@@ -997,7 +1046,7 @@ function open(
     url::AbstractString;
     suppress_close_error::Bool=false,
     headers=Pair{String,String}[],
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     query=nothing,
@@ -1085,7 +1134,7 @@ function _open_client_websocket_io(
     target::AbstractString="/",
     host::AbstractString="",
     headers=Pair{String,String}[],
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     subprotocols::AbstractVector{<:AbstractString}=String[],
 )::WebSocket
@@ -1205,7 +1254,7 @@ function Server(;
     tls_config::Union{Nothing,TLS.Config}=nothing,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     compress::Bool=false,
@@ -1358,7 +1407,44 @@ function _write_ws_response!(conn, response::Response)::Nothing
     return nothing
 end
 
-function _origin_allowed_default(request::Request)::Bool
+# Split a Host header value into (host, port). When the value carries no
+# explicit port (the norm for default-port servers, where browsers omit the
+# port), substitute `default_port` so the server's effective origin is fully
+# determined. Returns `nothing` if the value cannot be parsed as a host[:port].
+function _split_host_with_default_port(value::AbstractString, default_port::Integer)::Union{Nothing,Tuple{String,String}}
+    s = String(value)
+    isempty(s) && return nothing
+    # An IPv6 literal is bracketed (`[::1]`); a port, if present, follows the
+    # closing bracket as `]:port`. For non-bracketed hosts a trailing `:port`
+    # is the only colon. Detect an explicit port without tripping over the
+    # colons inside an IPv6 literal.
+    has_explicit_port = if startswith(s, '[')
+        close_idx = findfirst(==(']'), s)
+        close_idx === nothing && return nothing
+        close_idx < lastindex(s) && s[nextind(s, close_idx)] == ':'
+    else
+        occursin(':', s)
+    end
+    if has_explicit_port
+        return try
+            HostResolvers.split_host_port(s)
+        catch
+            nothing
+        end
+    end
+    host = startswith(s, '[') ? s[nextind(s, firstindex(s)):prevind(s, lastindex(s))] : s
+    return (host, string(default_port))
+end
+
+# Default Origin policy for WebSocket upgrades. The browser same-origin policy
+# is defined over the full (scheme, host, port) triple, so all three must match
+# the server's own origin. `server_secure` indicates whether the server speaks
+# wss/https (true) or ws/http (false) and provides the scheme component plus the
+# default port (443 vs 80) used when the Host header omits the port. Comparing
+# only the host (as a previous version did when the Host header had no port)
+# allowed cross-scheme and cross-port origins on the same hostname to open
+# authenticated WebSockets.
+function _origin_allowed_default(request::Request, server_secure::Bool=false)::Bool
     origin = header(request.headers, "Origin", nothing)
     origin === nothing && return true
     parsed = try
@@ -1366,14 +1452,19 @@ function _origin_allowed_default(request::Request)::Bool
     catch
         return false
     end
+    # The Origin's scheme must match the server's transport: a wss/https server
+    # must not accept ws/http origins (and vice versa).
+    parsed.secure == server_secure || return false
     request_host = request.host === nothing ? header(request.headers, "Host", nothing) : request.host
     request_host === nothing && return false
+    # `parsed.address` always carries a port, defaulting to the Origin scheme's
+    # default (80/443) when the Origin omits it.
     origin_host, origin_port = HostResolvers.split_host_port(parsed.address)
-    if occursin(':', request_host::String)
-        req_host, req_port = HostResolvers.split_host_port(request_host::String)
-        return lowercase(origin_host) == lowercase(req_host) && origin_port == req_port
-    end
-    return lowercase(origin_host) == lowercase(request_host::String)
+    server_default_port = server_secure ? 443 : 80
+    server = _split_host_with_default_port(request_host::String, server_default_port)
+    server === nothing && return false
+    req_host, req_port = server
+    return lowercase(origin_host) == lowercase(req_host) && origin_port == req_port
 end
 
 function _run_origin_check(checker, request::Request)::Bool
@@ -1391,7 +1482,8 @@ end
 
 function _origin_allowed(server::Server, request::Request)::Bool
     checker = server.check_origin
-    checker === nothing && return _origin_allowed_default(request)
+    # A server configured with a TLS config serves wss/https; otherwise ws/http.
+    checker === nothing && return _origin_allowed_default(request, server.tls_config !== nothing)
     return _run_origin_check(checker, request)
 end
 
@@ -1400,6 +1492,7 @@ function _upgrade_response(
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
     compress::Bool=false,
+    server_secure::Bool=false,
 )::Response
     uppercase(request.method) == "GET" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
@@ -1409,7 +1502,7 @@ function _upgrade_response(
     strip(version) == "13" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     raw_key = header(request.headers, "Sec-WebSocket-Key", nothing)
     raw_key === nothing && return Response(400, BytesBody(Vector{UInt8}("missing websocket key")); content_length=21, headers=Headers())
-    allowed = check_origin === nothing ? _origin_allowed_default(request) : _run_origin_check(check_origin, request)
+    allowed = check_origin === nothing ? _origin_allowed_default(request, server_secure) : _run_origin_check(check_origin, request)
     allowed || return Response(403, BytesBody(Vector{UInt8}("websocket origin rejected")); content_length=25, headers=Headers())
     key = ws_get_request_sec_websocket_key(request)
     key === nothing && return Response(400, BytesBody(Vector{UInt8}("invalid websocket key")); content_length=21, headers=Headers())
@@ -1425,7 +1518,13 @@ function _upgrade_response(
 end
 
 _upgrade_response(request::Request, server::Server)::Response =
-    _upgrade_response(request; subprotocols=server.subprotocols, check_origin=server.check_origin, compress=server.compress)
+    _upgrade_response(
+        request;
+        subprotocols=server.subprotocols,
+        check_origin=server.check_origin,
+        compress=server.compress,
+        server_secure=server.tls_config !== nothing,
+    )
 
 # Build the server-side permessage-deflate context for an accepted upgrade, or
 # nothing. Re-runs the (deterministic) negotiation that produced the response's
@@ -1474,7 +1573,7 @@ function upgrade(
     stream::Stream;
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     compress::Bool=false,
 )
@@ -1484,7 +1583,14 @@ function upgrade(
         throw(WebSocketError(CloseFrameBody(1011, "WebSocket upgrade over HTTP/2 is not supported")))
 
     conn = stream.tracked.conn
-    response = _upgrade_response(stream.message; subprotocols=subprotocols, check_origin=check_origin, compress=compress)
+    # A TLS connection means the server speaks wss/https; plain TCP means ws/http.
+    response = _upgrade_response(
+        stream.message;
+        subprotocols=subprotocols,
+        check_origin=check_origin,
+        compress=compress,
+        server_secure=conn isa TLS.Conn,
+    )
     _write_ws_response!(conn, response)
 
     # We have written the handshake response directly to the connection, so take
@@ -1523,8 +1629,7 @@ function upgrade(
     ws.handshake_request = stream.message
     ws.handshake_response = response
     if !isempty(buffered)
-        ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, buffered)
-        _flush_ws_output!(ws)
+        _process_incoming_data!(ws, buffered)
     end
     _start_read_task!(ws)
     try
@@ -1738,7 +1843,8 @@ supported subprotocols, and `check_origin` to customize origin validation. Pass
 read the actual address afterwards with [`server_addr`](@ref). Pass
 `compress=true` to advertise permessage-deflate message compression
 ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)); it is negotiated per
-connection and clients must also opt in.
+connection and clients must also opt in. `maxframesize` defaults to 16 MiB
+and bounds incoming frame/message buffering.
 """
 function listen!(
     handler::Function,
@@ -1747,7 +1853,7 @@ function listen!(
     tls_config::Union{Nothing,TLS.Config}=nothing,
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
-    maxframesize::Integer=typemax(Int),
+    maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     listenany::Bool=false,

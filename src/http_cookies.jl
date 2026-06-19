@@ -16,6 +16,9 @@ import ..Request
 import ..Response
 import ..appendheader
 import ..headers
+import .._valid_header_field_name
+
+include("http_public_suffix.jl")
 
 @enum SameSite SameSiteDefaultMode = 1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
@@ -191,7 +194,7 @@ function parsecookievalue(raw, allowdoublequote::Bool)
     return raw, true
 end
 
-iscookienamevalid(raw) = raw == "" ? false : any(isurlchar, raw)
+iscookienamevalid(raw) = _valid_header_field_name(raw)
 
 gmtformat(::DateFormat{S,T}) where {S,T} = Dates.DateFormat(string(S, " G\\MT"))
 const AlternateRFC1123GMTFormat = gmtformat(dateformat"e, dd-uuu-yyyy HH:MM:SS")
@@ -500,6 +503,12 @@ function hasdotsuffix(s, suffix)::Bool
     return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[(length(s)-length(suffix)+1):end] == suffix
 end
 
+function ispublicsuffix(domain::String)::Bool
+    isempty(domain) && return false
+    isIP(domain) && return false
+    return _public_suffix(domain) == domain
+end
+
 function pathmatch(cookie::Cookie, requestpath)::Bool
     requestpath == cookie.path && return true
     if startswith(requestpath, cookie.path)
@@ -557,6 +566,20 @@ function getcookies!(jar::CookieJar, scheme::String, host::String, path::String,
     return cookies
 end
 
+# ASCII case-insensitive prefix test. Used for the RFC 6265bis cookie-name
+# prefixes ("__Secure-"/"__Host-"), whose match is defined to be
+# case-insensitive (§4.1.3.1/§4.1.3.2). `prefix` must be supplied lowercase.
+function has_prefix(name::AbstractString, prefix::AbstractString)
+    ncodeunits(name) >= ncodeunits(prefix) || return false
+    for i in 1:ncodeunits(prefix)
+        a = codeunit(name, i)
+        # Lowercase ASCII A-Z so the comparison is case-insensitive.
+        ('A' % UInt8) <= a <= ('Z' % UInt8) && (a += 0x20)
+        a == codeunit(prefix, i) || return false
+    end
+    return true
+end
+
 """
     setcookies!(jar, scheme, host, path, headers) -> Nothing
 
@@ -573,14 +596,54 @@ function setcookies!(jar::CookieJar, scheme::String, host::String, path::String,
     key = jarKey(host)
     def_path = defaultPath(path)
     now = Dates.now(Dates.UTC)
+    # Whether the response was delivered over a secure transport. The store path
+    # must mirror the read path (shouldsend), which already withholds Secure
+    # cookies from non-secure requests, so that a plaintext origin cannot plant
+    # or evict Secure cookies (RFC 6265bis §5.5/§5.6).
+    secure_origin = scheme == "https"
     Base.@lock jar.lock begin
         entries = get!(() -> Dict{String,Cookie}(), jar.entries, key)
         for c in cookies
+            # RFC 6265bis §5.6: ignore a Set-Cookie with the Secure attribute
+            # received over a non-secure ("http") scheme. Without this an on-path
+            # attacker on a plaintext hop could fixate a Secure cookie that the
+            # client would then replay over https.
+            if c.secure && !secure_origin
+                continue
+            end
+            # RFC 6265bis §5.4 (cookie name prefixes / §4.1.3): enforce the
+            # "__Secure-" and "__Host-" name prefixes at storage time. The raw
+            # Domain attribute is still available as `c.domain` here (empty means
+            # no Domain attribute was sent) and `c.path` still holds the raw Path
+            # attribute (normalization happens below), so the checks must run
+            # before any mutation. Per RFC 6265bis §4.1.3.1/§4.1.3.2 the prefix
+            # match is ASCII case-insensitive (`has_prefix`), so case variants
+            # such as "__host-" cannot evade the rules.
+            if has_prefix(c.name, "__secure-")
+                # "__Secure-" requires the Secure attribute and a secure origin.
+                (c.secure && secure_origin) || continue
+            elseif has_prefix(c.name, "__host-")
+                # "__Host-" requires Secure, a secure origin, Path exactly "/",
+                # and NO Domain attribute (host-only).
+                (c.secure && secure_origin && c.path == "/" && c.domain == "") || continue
+            end
             if c.path == "" || c.path[1] != '/'
                 c.path = def_path
             end
             domainAndType!(jar, c, host) || continue
             cid = id(c)
+            # RFC 6265bis §5.6: a cookie arriving over a non-secure scheme must
+            # not overwrite or delete an existing stored cookie that carries the
+            # Secure attribute. This prevents a plaintext-origin Set-Cookie (e.g.
+            # injected by an on-path attacker, including via Max-Age=-1) from
+            # clobbering a Secure cookie previously set over https. The check
+            # uses the same domain;path;name identity (`cid`) as storage below.
+            if !secure_origin
+                old = get(entries, cid, nothing)
+                if old !== nothing && old.secure
+                    continue
+                end
+            end
             if c.maxage < 0
                 delete!(entries, cid)
                 continue
@@ -687,6 +750,11 @@ function domainAndType!(jar::CookieJar, c::Cookie, host::String)
         return false
     end
     if host != domain && !hasdotsuffix(host, domain)
+        c.domain = ""
+        c.hostonly = false
+        return false
+    end
+    if ispublicsuffix(domain)
         c.domain = ""
         c.hostonly = false
         return false

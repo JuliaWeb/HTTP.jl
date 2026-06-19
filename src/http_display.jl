@@ -26,6 +26,37 @@ function _render_textual_bytes(bytes::AbstractVector{UInt8})::Union{Nothing,Stri
     end
 end
 
+function _escape_terminal_control_chars(text::AbstractString)::String
+    out = IOBuffer()
+    changed = false
+    for c in text
+        code = UInt32(c)
+        if c == '\n'
+            write(out, "\\n")
+            changed = true
+        elseif c == '\r'
+            write(out, "\\r")
+            changed = true
+        elseif c == '\t'
+            write(out, "\\t")
+            changed = true
+        elseif c == '\e'
+            write(out, "\\e")
+            changed = true
+        elseif code <= 0x1f || 0x7f <= code <= 0x9f
+            if code <= 0xff
+                write(out, "\\x", uppercase(lpad(string(code, base=16), 2, '0')))
+            else
+                write(out, "\\u{", string(code, base=16), "}")
+            end
+            changed = true
+        else
+            print(out, c)
+        end
+    end
+    return changed ? String(take!(out)) : String(text)
+end
+
 function _render_binary_note(total::Int64)::String
     return total == 0 ? "" : string("<", total, "-byte binary body omitted>")
 end
@@ -51,7 +82,7 @@ function _render_message_body_preview(
         return string("<", encoding::String, "-compressed ", body_total, "-byte body omitted>"), false
     end
     text = _render_textual_bytes(body_bytes)
-    return text === nothing ? (_render_binary_note(body_total), false) : (text, true)
+    return text === nothing ? (_render_binary_note(body_total), false) : (_escape_terminal_control_chars(text), true)
 end
 
 @inline function _render_truncation_suffix(rendered::Int, total::Int64)::String
@@ -172,7 +203,7 @@ function Base.summary(io::IO, request::Request)
 end
 
 function Base.summary(io::IO, response::Response)
-    reason = isempty(response.reason) ? "" : string(" ", response.reason)
+    reason = isempty(response.reason) ? "" : string(" ", _escape_terminal_control_chars(response.reason))
     print(io, "HTTP.Response ", response.status, reason)
 end
 
@@ -205,7 +236,7 @@ end
 
 function _show_response_message(io::IO, response::Response, body_limit::Int)::Nothing
     print(io, _http_proto_string(response.proto_major, response.proto_minor), " ", response.status)
-    isempty(response.reason) || print(io, " ", response.reason)
+    isempty(response.reason) || print(io, " ", _escape_terminal_control_chars(response.reason))
     write(io, "\r\n")
     _write_message_headers!(io, response.headers)
     body = _render_message_body(response.body, response.content_length, response.headers; body_limit=body_limit)

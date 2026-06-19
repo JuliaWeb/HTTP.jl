@@ -180,6 +180,12 @@ end
     @test HT.Cookies.defaultPath("/file") == "/"
     @test HT.Cookies.defaultPath("/dir/file") == "/dir"
 
+    @test HT.Cookies.iscookienamevalid("session_id")
+    for name in ("", "a=b", "a;b", "a b", "a\tb", "a,b", "a/b", "a\rb", "a\nb")
+        @test !HT.Cookies.iscookienamevalid(name)
+        @test HT.Cookies.stringify(HT.Cookie(name, "1"), false) == ""
+    end
+
     @test HT.Cookies.splithostport("example.com:443") == ("example.com", "443", false)
     for hostport in ("example.com", "[::1]:443", "[::1]", "example.com:80:90", "[::1", "[::1]:80:90")
         host, port, err = HT.Cookies.splithostport(hostport)
@@ -222,6 +228,38 @@ end
     bad_trailing = HT.Cookie("bad-trailing", "1"; domain = "example.com.")
     @test !HT.Cookies.domainAndType!(jar, bad_trailing, "example.com")
     @test bad_trailing.domain == ""
+
+    @test HT.Cookies.ispublicsuffix("com")
+    @test HT.Cookies.ispublicsuffix("co.uk")
+    @test HT.Cookies.ispublicsuffix("github.io")
+    @test HT.Cookies.ispublicsuffix("herokuapp.com")
+    @test HT.Cookies.ispublicsuffix("s3.amazonaws.com")
+    @test HT.Cookies.ispublicsuffix("test.ck")
+    @test !HT.Cookies.ispublicsuffix("example.com")
+    @test !HT.Cookies.ispublicsuffix("example.co.uk")
+    @test !HT.Cookies.ispublicsuffix("victim.github.io")
+    @test !HT.Cookies.ispublicsuffix("bucket.s3.amazonaws.com")
+    @test !HT.Cookies.ispublicsuffix("www.ck")
+
+    for (host, domain, sibling) in (
+        ("attacker.co.uk", "co.uk", "bank.co.uk"),
+        ("attacker.github.io", "github.io", "victim.github.io"),
+        ("attacker.herokuapp.com", "herokuapp.com", "victim.herokuapp.com"),
+        ("evil.s3.amazonaws.com", "s3.amazonaws.com", "bucket.s3.amazonaws.com"),
+    )
+        suffix_cookie = HT.Cookie("session", "attacker"; domain = domain, path = "/")
+        @test !HT.Cookies.domainAndType!(jar, suffix_cookie, host)
+        suffix_jar = HT.CookieJar()
+        HT.setcookies!(suffix_jar, "https", host, "/",
+            _set_cookie_headers("session=attacker; Domain=$domain; Path=/"))
+        @test isempty(HT.getcookies!(suffix_jar, "https", sibling, "/"))
+    end
+
+    sibling_jar = HT.CookieJar()
+    HT.setcookies!(sibling_jar, "https", "api.example.com", "/",
+        _set_cookie_headers("session=ok; Domain=example.com; Path=/"))
+    sibling_cookies = HT.getcookies!(sibling_jar, "https", "www.example.com", "/")
+    @test [(c.name, c.value) for c in sibling_cookies] == [("session", "ok")]
 
     seeded = _set_cookie_headers("remember=1; Domain=.Example.com; Path=/docs")
     HT.setcookies!(jar, "https", "Example.com.:443", "/docs/page", seeded)
@@ -331,7 +369,7 @@ end
     @test xsrf.value == "abc123"
 
     # Cookie names that are single chars in the formerly-broken range
-    for ch in ('x', 'y', 'z', '{', '|', '}', '~', 'w')
+    for ch in ('x', 'y', 'z', '|', '~', 'w')
         jar2 = HT.CookieJar()
         HT.setcookies!(jar2, "https", "example.com", "/",
             _set_cookie_headers("$(ch)=1; Path=/"))
@@ -339,4 +377,103 @@ end
         @test length(got) == 1
         @test got[1].name == string(ch)
     end
+
+    # Braces were part of the old URL-char table but are not valid RFC token
+    # bytes for cookie names. They should be rejected cleanly, not throw.
+    for ch in ('{', '}')
+        jar2 = HT.CookieJar()
+        HT.setcookies!(jar2, "https", "example.com", "/",
+            _set_cookie_headers("$(ch)=1; Path=/"))
+        @test isempty(HT.getcookies!(jar2, "https", "example.com", "/"))
+    end
+end
+
+@testset "HTTP CookieJar store-path secure/prefix protections (RFC 6265bis)" begin
+    # A plaintext (http) response must not be able to store a Secure cookie.
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("plain=1; Path=/; Secure"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+
+    # The same cookie over https is accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("plain=1; Path=/; Secure"))
+    @test "plain" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+
+    # __Secure- prefix: requires Secure attribute AND https origin.
+    jar = HT.CookieJar()
+    # Missing Secure attribute -> rejected even over https.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Secure-a=1; Path=/"))
+    # Secure but plaintext origin -> rejected.
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("__Secure-a=1; Path=/; Secure"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+    # All requirements satisfied -> accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Secure-a=1; Path=/; Secure"))
+    @test "__Secure-a" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+
+    # __Host- prefix: requires Secure, https, Path=/ and NO Domain attribute.
+    jar = HT.CookieJar()
+    # A Domain attribute disqualifies a __Host- cookie.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Host-a=1; Path=/; Secure; Domain=example.com"))
+    # A non-"/" Path disqualifies a __Host- cookie.
+    HT.setcookies!(jar, "https", "example.com", "/docs/index",
+        _set_cookie_headers("__Host-a=1; Path=/docs; Secure"))
+    # Plaintext origin disqualifies a __Host- cookie.
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("__Host-a=1; Path=/; Secure"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+    # All requirements satisfied -> accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Host-a=1; Path=/; Secure"))
+    @test "__Host-a" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+
+    # A plaintext origin must not overwrite an existing Secure cookie.
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("SESSION=good; Path=/; Secure"))
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("SESSION=attacker; Path=/"))
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    session = only(filter(c -> c.name == "SESSION", stored))
+    @test session.value == "good"
+
+    # A plaintext origin must not delete an existing Secure cookie (Max-Age=-1).
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("SESSION=gone; Path=/; Max-Age=-1"))
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    @test "SESSION" in [c.name for c in stored]
+
+    # A secure origin may still legitimately overwrite a Secure cookie.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("SESSION=rotated; Path=/; Secure"))
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    session = only(filter(c -> c.name == "SESSION", stored))
+    @test session.value == "rotated"
+
+    # RFC 6265bis §4.1.3.1/§4.1.3.2: prefix matching is ASCII case-insensitive,
+    # so case-variant prefixes must be subject to the same rules. A server that
+    # recognizes the prefix case-insensitively would otherwise trust these.
+    jar = HT.CookieJar()
+    # "__secure-" without the Secure attribute over https must be rejected.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__secure-a=evil; Path=/"))
+    # "__SECURE-" carrying Secure but arriving over http must be rejected.
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("__SECURE-b=evil; Path=/; Secure"))
+    # "__host-" without Secure over https must be rejected.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__host-c=evil; Path=/"))
+    # "__Host-" with a Domain attribute (not host-only) must be rejected even
+    # with a mixed-case prefix.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__HoSt-d=evil; Path=/; Secure; Domain=example.com"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+    # A correctly-formed mixed-case "__Host-" cookie is still accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__host-ok=1; Path=/; Secure"))
+    @test "__host-ok" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
 end

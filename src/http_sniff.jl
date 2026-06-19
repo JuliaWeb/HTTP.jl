@@ -2,7 +2,6 @@
 
 const _SNIFF_MAX_LENGTH = 512
 const _SNIFF_WHITESPACE = Set{UInt8}([UInt8('\t'), UInt8('\n'), UInt8('\u000c'), UInt8('\r'), UInt8(' ')])
-const _SNIFF_REF = Vector{Ptr{UInt8}}(undef, 1)
 
 @inline function _sniff_code_units(data)
     return data isa AbstractVector{UInt8} ? data : collect(data)
@@ -33,6 +32,25 @@ function _sniff_rest_of_string(bytes::AbstractVector{UInt8}, i::Int, maxlen::Int
             _ = b
         end
     end
+end
+
+# Copy the numeric slice starting at index `i` (1-based) through the end of the
+# input into a freshly allocated, NUL-terminated buffer. strtod stops at the
+# trailing NUL, so it can never read past the bytes we provide even if the
+# original input is not NUL-terminated. The returned buffer is local to the
+# caller, which (together with a per-call end-pointer Ref) makes number sniffing
+# thread-safe and free of out-of-bounds reads. `maxlen` bounds the byte-by-byte
+# sniff scanning elsewhere, but strtod itself is bounded here by our NUL.
+function _sniff_number_buffer(bytes::AbstractVector{UInt8}, i::Int, maxlen::Int)::Vector{UInt8}
+    _ = maxlen
+    stop = length(bytes)
+    n = stop - i + 1
+    buf = Vector{UInt8}(undef, max(n, 0) + 1)
+    @inbounds for k in 1:n
+        buf[k] = bytes[i + k - 1]
+    end
+    @inbounds buf[end] = 0x00
+    return buf
 end
 
 macro _sniff_expect(ch)
@@ -74,9 +92,22 @@ function isjson(bytes, i::Int=0, maxlen::Int=min(length(bytes), _SNIFF_MAX_LENGT
     elseif b == UInt8('"')
         i = _sniff_rest_of_string(bytes, i, maxlen)
     elseif (UInt8('0') <= b <= UInt8('9')) || b == UInt8('-')
-        ptr = pointer(bytes) + i - 1
-        ccall(:jl_strtod_c, Float64, (Ptr{UInt8}, Ptr{Ptr{UInt8}}), ptr, _SNIFF_REF)
-        i += Int(_SNIFF_REF[1] - ptr - 1)
+        # Parse the number with strtod. Two safety requirements:
+        #  * the end-pointer out-parameter must be per-call (a local Ref), not a
+        #    shared module-global, otherwise concurrent sniffs race on it and
+        #    compute a bogus consumed length (ANT-2026-5FMZ73VG);
+        #  * the bytes handed to strtod must be NUL-terminated, otherwise strtod
+        #    may read past the end of the buffer. We copy the remaining input
+        #    (from the current byte to the end) into a NUL-terminated buffer so
+        #    the scan is bounded by our copy rather than the caller's memory.
+        numbytes = _sniff_number_buffer(bytes, i, maxlen)
+        endref = Ref{Ptr{UInt8}}(C_NULL)
+        GC.@preserve numbytes begin
+            startptr = pointer(numbytes)
+            ccall(:jl_strtod_c, Float64, (Ptr{UInt8}, Ptr{Ptr{UInt8}}), startptr, endref)
+            # Number of bytes consumed by strtod (0 if nothing parsed).
+            i += Int(endref[] - startptr) - 1
+        end
     elseif b == UInt8('n')
         @_sniff_expect UInt8('u')
         @_sniff_expect UInt8('l')
@@ -193,7 +224,13 @@ function _sniff_match(::_SniffMP4Sig, data::AbstractVector{UInt8}, firstnonws::I
     boxsize = Int(_big_endian_u32(data))
     (boxsize % 4 != 0 || length(data) < boxsize) && return false
     _byte_equal(data, 5, _SNIFF_MP4_FTYP) || return false
-    for st in 9:4:(boxsize+1)
+    # The brand scan compares 3-byte windows via `_byte_equal(data, st, _SNIFF_MP4)`
+    # under `@inbounds`, reading data[st .. st+2]. The previous upper bound of
+    # `boxsize+1` allowed `st+2` to exceed `length(data)` when boxsize == length(data)
+    # (a 4-byte/3-byte out-of-bounds heap read; ANT-2026-07KFWYV3, ANT-2026-9PKP3RJA).
+    # Clamp the loop so every comparison window lies fully within the buffer.
+    laststart = min(boxsize + 1, length(data) - length(_SNIFF_MP4) + 1)
+    for st in 9:4:laststart
         st == 13 && continue
         _byte_equal(data, st, _SNIFF_MP4) && return true
     end

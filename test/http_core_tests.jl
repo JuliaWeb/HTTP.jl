@@ -383,6 +383,22 @@ end
     @test occursin("created", response_plain)
     @test !occursin("session=secret", response_plain)
 
+    hostile_response = HT.Response(
+        200,
+        Vector{UInt8}(codeunits("\e[31mred\nnext\a"));
+        reason="\e]0;pwned\aOK",
+        content_length=14,
+    )
+    hostile_compact = sprint(show, hostile_response)
+    @test !occursin('\e', hostile_compact)
+    @test !occursin('\a', hostile_compact)
+    @test occursin("\\e]0;pwned\\x07OK", hostile_compact)
+    hostile_plain = sprint(io -> show(io, MIME"text/plain"(), hostile_response))
+    @test !occursin('\e', hostile_plain)
+    @test !occursin('\a', hostile_plain)
+    @test occursin("HTTP/1.1 200 \\e]0;pwned\\x07OK", hostile_plain)
+    @test occursin("\\e[31mred\\nnext\\x07", hostile_plain)
+
     empty_request = HT.Request("GET", "/"; headers=HT.Headers(["Accept-Encoding" => "gzip, deflate"]), host="example.com", content_length=0)
     empty_request_plain = sprint(io -> show(io, MIME"text/plain"(), empty_request))
     @test !endswith(empty_request_plain, "\r\n")

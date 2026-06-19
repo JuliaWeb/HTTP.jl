@@ -26,6 +26,7 @@ end
     _PROTOCOL_ERROR_GENERIC = 0
     _PROTOCOL_ERROR_LINE_TOO_LONG = 1
     _PROTOCOL_ERROR_HEADERS_TOO_LARGE = 2
+    _PROTOCOL_ERROR_BODY_TOO_LARGE = 3
 end
 
 """
@@ -43,6 +44,9 @@ end
 
 ProtocolError(msg, err::Exception) = ProtocolError(String(msg), _PROTOCOL_ERROR_GENERIC, err)
 ProtocolError(msg, code::_ProtocolErrorCode=_PROTOCOL_ERROR_GENERIC) = ProtocolError(String(msg), code, nothing)
+
+const _DEFAULT_SSE_CLIENT_MAX_LINE_BYTES = 1 * 1024 * 1024
+const _DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES = 16 * 1024 * 1024
 
 """
     CanceledError
@@ -479,6 +483,16 @@ end
 function _string_contains_ctl_byte(value::AbstractString)::Bool
     @inbounds for b in codeunits(value)
         (b < 0x20 || b == 0x7f) && return true
+    end
+    return false
+end
+
+# True if `value` contains an ASCII SP (0x20) or HTAB (0x09). Used to reject
+# interior whitespace in fields (e.g. the HTTP/2 :path pseudo-header) that must
+# not be split when re-serialized into an HTTP/1 request line (RFC 9113 8.3.1).
+function _string_contains_whitespace_byte(value::AbstractString)::Bool
+    @inbounds for b in codeunits(value)
+        (b == 0x20 || b == 0x09) && return true
     end
     return false
 end

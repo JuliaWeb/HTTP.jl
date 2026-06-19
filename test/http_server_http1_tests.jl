@@ -265,6 +265,50 @@ end
     end
 end
 
+@testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
+    # Serialize an event offline by writing it into an SSEStream and reading the
+    # framed bytes back out, so we can assert on the exact wire output.
+    function serialize_sse(event::HT.SSEEvent)
+        stream = HT.SSEStream()
+        write(stream, event)
+        close(stream)
+        return String(_read_all_server_bytes(stream))
+    end
+
+    # Baseline: a well-formed event serializes to exactly one wire event.
+    wire = serialize_sse(HT.SSEEvent("payload"; event = "update", id = "7", retry = 1500))
+    @test wire == "event: update\nid: 7\nretry: 1500\ndata: payload\n\n"
+
+    # The keyword constructor must reject CR/LF in the single-line fields so an
+    # attacker-influenced id/event cannot inject extra SSE fields or a forged
+    # blank-line dispatch boundary.
+    @test_throws ArgumentError HT.SSEEvent("x"; id = "1\ndata: {\"role\":\"admin\"}\n")
+    @test_throws ArgumentError HT.SSEEvent("x"; id = "1\rdata: forged")
+    @test_throws ArgumentError HT.SSEEvent("x"; event = "ok\nevent: forged")
+    @test_throws ArgumentError HT.SSEEvent("x"; event = "ok\rfoo")
+    # NUL in id is rejected (browser EventSource parsers reject such ids).
+    @test_throws ArgumentError HT.SSEEvent("x"; id = "1\0bad")
+    # retry must be non-negative so it can only serialize as digits.
+    @test_throws ArgumentError HT.SSEEvent("x"; retry = -1)
+
+    # Defense-in-depth: even an SSEEvent built via the raw positional
+    # constructor (which bypasses keyword validation) must not be serialized
+    # with line breaks in the single-line fields.
+    forged_id = HT.SSEEvent("x", nothing, "1\ndata: forged", nothing, Dict{String,String}())
+    @test_throws ArgumentError serialize_sse(forged_id)
+    forged_event = HT.SSEEvent("x", "u\nid: 9", nothing, nothing, Dict{String,String}())
+    @test_throws ArgumentError serialize_sse(forged_event)
+
+    # A bare '\r' inside the (multi-line) data field is a valid SSE line
+    # terminator on the wire, so it must be re-prefixed as a new data: line and
+    # must not be emitted verbatim.
+    wire_cr = serialize_sse(HT.SSEEvent("a\rb"))
+    @test wire_cr == "data: a\ndata: b\n\n"
+    @test !occursin('\r', wire_cr)
+    # CRLF and LF in data are likewise normalized to separate data: lines.
+    @test serialize_sse(HT.SSEEvent("a\r\nb\nc")) == "data: a\ndata: b\ndata: c\n\n"
+end
+
 @testset "HTTP server top-level wrapper kwargs and stream abort state" begin
     aborted_states = Channel{Bool}(2)
     server = HT.listen!("127.0.0.1", 0;
@@ -475,6 +519,25 @@ end
             HT.body_close!(blob_resp.body)
         end
 
+        conditional_source = open(hello_path, "r")
+        conditional_resp = HT.Response(304, HT.EmptyBody())
+        @test isopen(conditional_source)
+        @test HT._finalize_servefile_source!(conditional_resp, conditional_source) === conditional_resp
+        @test !isopen(conditional_source)
+
+        streaming_source = open(hello_path, "r")
+        streaming_resp = HT.servecontent(HT.Request("GET", "/hello.txt"), streaming_source; name = "hello.txt", size = filesize(hello_path), content_type = "text/plain; charset=utf-8")
+        @test isopen(streaming_source)
+        @test HT._finalize_servefile_source!(streaming_resp, streaming_source) === streaming_resp
+        @test isopen(streaming_source)
+        HT.body_close!(streaming_resp.body)
+        @test !isopen(streaming_source)
+
+        not_modified_headers = HT.Headers()
+        HT.setheader(not_modified_headers, "If-None-Match", "*")
+        not_modified = HT.servefile(HT.Request("GET", "/hello.txt"; headers = not_modified_headers), hello_path; etag = :weak_stat)
+        @test not_modified.status == 304
+
         server = HT.serve!(HT.fileserver(dir; etag = :weak_stat, cache_control = "public, max-age=60"), "127.0.0.1", 0; listenany = true)
         address = HT.server_addr(server)
         try
@@ -516,6 +579,132 @@ end
             _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
             _run_with_timeout(() -> wait(server); label = "server task completion")
         end
+    end
+end
+
+@testset "HTTP fileserver Windows backslash path traversal" begin
+    # Regression for the Windows path-traversal vector: URL-decoding happens
+    # before splitting the request path on '/', so an encoded backslash (%5c),
+    # a drive specifier ("C:\\..."), or a UNC prefix ("\\\\host\\share")
+    # survives as a single segment that is not equal to '.' or '..'. On Windows
+    # joinpath would then honor those separators / absolute forms and escape the
+    # document root. The hardening below is platform-independent so it is
+    # exercisable on POSIX hosts too. We test the internal segment validator and
+    # the join+containment check directly for determinism.
+
+    # The decoded forms an attacker would produce after %5c / drive / UNC
+    # decoding must all be rejected at validation time.
+    for bad in (
+        "..\\..\\Windows\\win.ini",   # encoded backslash traversal
+        "..\\secret",
+        "C:\\Windows\\win.ini",       # absolute drive path
+        "C:",                          # bare drive specifier
+        "\\\\attacker.example\\share", # UNC path (outbound SMB/NTLM)
+        "\\absolute",                  # leading backslash
+        "foo\\bar",                    # embedded backslash separator
+        "name:stream",                 # colon (drive / alternate data stream)
+    )
+        @test HT._is_unsafe_request_path_segment(bad)
+    end
+
+    # Ordinary single segments must still be accepted.
+    for ok in ("hello.txt", "docs", "app.js", "a.b.c", "win.ini")
+        @test !HT._is_unsafe_request_path_segment(ok)
+    end
+
+    # Full decode path: these request paths must raise (mapped to 400 by the
+    # caller) rather than yielding a path that escapes the root.
+    @test_throws ArgumentError HT._decoded_request_path_segments("/..%5c..%5cWindows%5cwin.ini")
+    @test_throws ArgumentError HT._decoded_request_path_segments("/C:%5cWindows%5cwin.ini")
+    @test_throws ArgumentError HT._decoded_request_path_segments("/%5c%5cattacker.example%5cshare%5cx")
+    @test_throws ArgumentError HT._decoded_request_path_segments("/%2e%2e/secret")
+
+    # A benign path still decodes to its segments.
+    @test HT._decoded_request_path_segments("/docs/index.html") == ["docs", "index.html"]
+
+    # The join+containment backstop keeps resolved paths within the root.
+    mktempdir() do dir
+        root = abspath(dir)
+        @test HT._join_request_path(root, ["docs", "index.html"]) ==
+              normpath(joinpath(root, "docs", "index.html"))
+        @test HT._join_request_path(root, String[]) == normpath(root)
+    end
+
+    # End-to-end: the fileserver handler must return 400 for the traversal
+    # request rather than reading an out-of-root file.
+    mktempdir() do dir
+        write(joinpath(dir, "index.html"), "<p>root</p>")
+        handler = HT.fileserver(dir)
+        for target in (
+            "/..%5c..%5c..%5c..%5cWindows%5cwin.ini",
+            "/C:%5cWindows%5cwin.ini",
+            "/%5c%5cattacker.example%5cshare%5cx",
+        )
+            resp = handler(HT.Request("GET", target))
+            @test resp.status == 400
+        end
+        # Sanity: a normal request is still served (the root resolves to the
+        # index file).
+        ok = handler(HT.Request("GET", "/"))
+        @test ok.status == 200
+        @test String(_read_all_server_bytes(ok.body)) == "<p>root</p>"
+        HT.body_close!(ok.body)
+    end
+end
+
+@testset "HTTP fileserver canonical redirects cannot become network-path references" begin
+    # A request target like "//evil.example/index.html" passes request-target
+    # validation (leading '/', no CTL, no ".." segments), but echoing it verbatim
+    # into a canonical 301 Location yields "//evil.example/", a scheme-relative
+    # network-path reference (RFC 3986 4.2) that browsers resolve to a foreign
+    # authority -- an open redirect. Redirect Location values must stay rooted at
+    # a single '/' so they always refer to this server's own origin.
+
+    # Unit-level: the sanitizer collapses leading separators down to one '/'.
+    @test HT._sanitize_redirect_location("//evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("///evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("/\\evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("\\evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("\\\\evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("//") == "/"
+    @test HT._sanitize_redirect_location("///") == "/"
+    @test HT._sanitize_redirect_location("\\") == "/"
+    @test HT._sanitize_redirect_location("\\\\") == "/"
+    # Legitimate single-rooted paths are left untouched.
+    @test HT._sanitize_redirect_location("/docs/") == "/docs/"
+    @test HT._sanitize_redirect_location("/hello.txt") == "/hello.txt"
+    @test HT._sanitize_redirect_location("/") == "/"
+
+    # Index-file strip branch: handled before any filesystem access, so a
+    # nonexistent path still exercises the redirect deterministically/offline.
+    index_strip = HT.servefile(HT.Request("GET", "//evil.example/index.html"), "/nonexistent")
+    @test index_strip.status == 301
+    index_loc = HT.header(index_strip.headers, "Location")
+    @test index_loc == "/evil.example/"
+    @test !startswith(index_loc, "//")
+    @test !startswith(index_loc, "/\\")
+
+    # Directory trailing-slash-add and file trailing-slash-strip branches.
+    mktempdir() do dir
+        sub = joinpath(dir, "evil.example")
+        mkpath(sub)
+        write(joinpath(sub, "index.html"), "<p>x</p>")
+
+        srv = HT.fileserver(dir)
+
+        dir_redirect = srv(HT.Request("GET", "//evil.example"))
+        @test dir_redirect.status == 301
+        dir_loc = HT.header(dir_redirect.headers, "Location")
+        @test dir_loc == "/evil.example/"
+        @test !startswith(dir_loc, "//")
+
+        file_path = joinpath(dir, "evil.example.txt")
+        write(file_path, "data")
+        strip_redirect = srv(HT.Request("GET", "//evil.example.txt/"))
+        @test strip_redirect.status == 301
+        strip_loc = HT.header(strip_redirect.headers, "Location")
+        @test strip_loc == "/evil.example.txt"
+        @test !startswith(strip_loc, "//")
     end
 end
 
@@ -890,6 +1079,18 @@ end
 end
 
 @testset "HTTP server ordinary handlers receive buffered request bodies" begin
+    @test HT.Server(handler = _ -> HT.Response(200), max_body_bytes = 0).max_body_bytes == 0
+    @test_throws ArgumentError HT.Server(handler = _ -> HT.Response(200), max_body_bytes = -1)
+
+    too_large_err = try
+        HT._read_all_server_request_body(HT.BytesBody(collect(codeunits("hello"))), 4)
+        nothing
+    catch err
+        err
+    end
+    @test too_large_err isa HT.ProtocolError
+    @test HT._server_error_status(too_large_err::HT.ProtocolError) == 413
+
     seen_buffered = Channel{Bool}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             put!(seen_buffered, request.body isa HT.BytesBody)
@@ -919,6 +1120,41 @@ end
         @test take!(seen_buffered)
     finally
         close(client)
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server ordinary handlers reject oversized buffered request bodies" begin
+    called = Channel{Bool}(2)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request
+            _ = request
+            put!(called, true)
+            return HT.Response(200, "handler ran")
+        end
+    address = HT.server_addr(server)
+    try
+        content_length_resp = HT.post(
+            "http://$(address)/too-large";
+            body = "hello",
+            retry = false,
+            status_exception = false,
+        )
+        @test content_length_resp.status == 413
+        @test !isready(called)
+
+        chunked_raw = _raw_http_request(
+            HT.port(server),
+            "POST /chunked HTTP/1.1\r\n" *
+            "Host: $(address)\r\n" *
+            "Transfer-Encoding: chunked\r\n" *
+            "Connection: close\r\n\r\n" *
+            "3\r\nhey\r\n2\r\n!!\r\n0\r\n\r\n";
+            settle_s = 0.1,
+        )
+        @test occursin("HTTP/1.1 413 Content Too Large", chunked_raw)
+        @test !isready(called)
+    finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")
     end
@@ -1221,7 +1457,7 @@ end
         post_response, post_closed = _raw_http_request_until_close(
             HT.port(server),
             "POST /one HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 3\r\n\r\nabc";
-            timeout_s = Sys.iswindows() ? 5.0 : 2.0,
+            timeout_s = 5.0,
         )
         @test occursin("HTTP/1.1 200", post_response)
         @test occursin("ok:/one", post_response)
@@ -1230,7 +1466,7 @@ end
         get_response, get_closed = _raw_http_request_until_close(
             HT.port(server),
             "GET /two HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
-            timeout_s = Sys.iswindows() ? 5.0 : 2.0,
+            timeout_s = 5.0,
         )
         @test occursin("HTTP/1.1 200", get_response)
         @test occursin("ok:/two", get_response)

@@ -752,8 +752,19 @@ function _do_incoming!(
     current_address = String(address)
     initial_address = current_address
     current_secure = secure
-    explicit_server_name = server_name !== nothing
-    current_server_name = explicit_server_name ? String(server_name::AbstractString) : _host_for_sni(current_address)
+    # Remember the original request scheme so the sensitive-header same-origin
+    # check below can detect an https->http downgrade across the redirect chain.
+    initial_secure = secure
+    # `request()` always supplies `server_name` (derived from the initial URL via
+    # `_urlparts_server_name!`), so `server_name !== nothing` is not a reliable
+    # signal of a user-pinned SNI host. Only treat the SNI host as user-pinned
+    # when it does NOT match the host auto-derived from the initial address;
+    # otherwise we must recompute it from the redirect target on every hop so TLS
+    # verifies the peer certificate against the host we actually connect to
+    # (an auto value pinned to the original host would verify the wrong cert).
+    auto_server_name = _host_for_sni(current_address)
+    user_pinned_server_name = server_name !== nothing && String(server_name::AbstractString) != auto_server_name
+    current_server_name = user_pinned_server_name ? String(server_name::AbstractString) : auto_server_name
     current_request = _copy_request_shallow_body(request)
     previous_response = nothing
     retry_attempt = 1
@@ -897,7 +908,11 @@ function _do_incoming!(
             )
             current_address = next_address
             current_secure = next_secure
-            if !explicit_server_name
+            # Recompute the TLS verification host (SNI) from the redirect target
+            # unless the caller genuinely pinned a server_name. Otherwise TLS
+            # would verify the peer certificate against the original host while
+            # the TCP connection is dialed to the redirect target.
+            if !user_pinned_server_name
                 current_server_name = _host_for_sni(current_address)
             end
             current_request = _prepare_request_for_redirect(current_request, response.head.status, next_target, redirect_policy)
@@ -908,8 +923,22 @@ function _do_incoming!(
             else
                 setheader(current_request.headers, "Referer", next_ref::String)
             end
-            if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address)
+            # Compare the FULL origin (scheme + host + port) of the current hop
+            # against the original request origin. On any cross-origin hop, strip
+            # credential headers AND stop re-applying per-call explicit cookies,
+            # which are otherwise re-attached by `_cookie_header` on every hop
+            # even after the Cookie header was stripped here, leaking them to the
+            # redirect target.
+            if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
                 _strip_sensitive_redirect_headers!(current_request.headers)
+                # Drop caller-supplied (`cookies=`) cookies once we leave the
+                # original origin so they are not re-merged into the Cookie
+                # header on subsequent hops. Jar-derived cookies remain
+                # host-scoped via `getcookies!`, so disabling only the explicit
+                # vector is sufficient; `false` keeps the jar active.
+                if cookies isa Vector{Cookie}
+                    cookies = Cookie[]
+                end
             end
             current_request.host = current_address
             break
@@ -1437,6 +1466,8 @@ struct DecompressionLimitError <: Exception
     limit::Int
 end
 
+const _DEFAULT_MAX_DECOMPRESSED_SIZE = Int(64 * 1024 * 1024)
+
 function Base.showerror(io::IO, err::DecompressionLimitError)
     print(io, "DecompressionLimitError: decompressed response body exceeded max_decompressed_size = ", err.limit, " bytes")
     return nothing
@@ -1817,8 +1848,10 @@ function request(
     query=nothing,
     response_stream=nothing,
     decompress::Union{Nothing,Bool}=nothing,
-    max_decompressed_size::Integer=0,
+    max_decompressed_size::Integer=_DEFAULT_MAX_DECOMPRESSED_SIZE,
     sse_callback=nothing,
+    max_sse_line_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_LINE_BYTES,
+    max_sse_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
     connect_timeout::Real=30,
@@ -1870,6 +1903,9 @@ function request(
             logerrors=logerrors,
             logtag=logtag,
         )
+        max_decompressed_size >= 0 || throw(ArgumentError("max_decompressed_size must be >= 0"))
+        max_sse_line_bytes >= 0 || throw(ArgumentError("max_sse_line_bytes must be >= 0"))
+        max_sse_event_bytes >= 0 || throw(ArgumentError("max_sse_event_bytes must be >= 0"))
         # Merge per-call values with client defaults (per-call wins)
         connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
         request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
@@ -1938,7 +1974,14 @@ function request(
             if sse_callback !== nothing
                 sse_response = _finalize_request_response(incoming, nobody, Int64(0), resolved_request, parsed.url)
                 if !_status_throws(sse_response)
-                    _consume_incoming_sse!(incoming, sse_response, sse_callback::Function, decompress)
+                    _consume_incoming_sse!(
+                        incoming,
+                        sse_response,
+                        sse_callback::Function,
+                        decompress,
+                        Int(max_sse_line_bytes),
+                        Int(max_sse_event_bytes),
+                    )
                     final_response = sse_response
                     return sse_response
                 end
@@ -2014,9 +2057,11 @@ Keyword arguments:
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
-- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. `0` (default) disables the limit
+- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
+- `max_sse_line_bytes`: cap, in bytes, on one SSE response line. Defaults to 1 MiB; `0` disables the line limit
+- `max_sse_event_bytes`: cap, in bytes, on one accumulated SSE event before a blank-line dispatch. Defaults to 16 MiB; `0` disables the event limit
 - `trace`: optional callback receiving request lifecycle events
 - `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
   request lifecycle lines to `stdout`; `2` also prints request and response

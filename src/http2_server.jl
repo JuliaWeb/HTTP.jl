@@ -110,6 +110,61 @@ end
 const _H2_ERROR_PROTOCOL = UInt32(0x1)
 const _H2_ERROR_INTERNAL = UInt32(0x2)
 const _H2_ERROR_CANCEL = UInt32(0x8)
+# RFC 9113 error codes used for stream/connection flood protection.
+const _H2_ERROR_REFUSED_STREAM = UInt32(0x7)
+const _H2_ERROR_ENHANCE_YOUR_CALM = UInt32(0xb)
+
+# SETTINGS identifier for SETTINGS_MAX_CONCURRENT_STREAMS (RFC 9113 §6.5.2).
+const _H2_SETTINGS_MAX_CONCURRENT_STREAMS = UInt16(0x3)
+
+# `_H2_DEFAULT_MAX_CONCURRENT_STREAMS` is defined in http_server.jl (which is
+# loaded before this file) because it is used as a Server/listen! keyword
+# default. It is the RFC 9113 §6.5.2-recommended ceiling on the number of
+# concurrently open streams per connection, advertised via
+# SETTINGS_MAX_CONCURRENT_STREAMS and enforced on incoming HEADERS frames.
+
+# Allowance for peer-initiated stream resets before the connection is treated as
+# abusive (the CVE-2023-44487 "Rapid Reset" pattern). Once a connection resets
+# more than `max_concurrent_streams + this` streams it is sent
+# GOAWAY(ENHANCE_YOUR_CALM) and stops accepting new streams. The additive slack
+# keeps a few legitimate client-side cancellations from tripping the limit.
+const _H2_RAPID_RESET_ALLOWANCE = 100
+
+# Outcome of evaluating an incoming HEADERS frame that opens a new stream
+# against the per-connection limits. Kept as a small pure decision so it can be
+# unit-tested offline without a live connection.
+@enum _H2NewStreamDecision::UInt8 begin
+    _H2_NEW_STREAM_ACCEPT = 0
+    _H2_NEW_STREAM_NON_MONOTONIC = 1   # stream id <= highest previously-seen id
+    _H2_NEW_STREAM_REFUSED = 2         # at SETTINGS_MAX_CONCURRENT_STREAMS
+    _H2_NEW_STREAM_ENHANCE_CALM = 3    # Rapid-Reset reset budget exhausted
+end
+
+# Decide how to handle a HEADERS frame that opens a *new* (not-yet-seen) stream.
+# `stream_id`        : the id carried by the HEADERS frame.
+# `max_stream_id`    : the highest client stream id seen so far on the conn.
+# `open_streams`     : number of currently-tracked streams (in `states`).
+# `reset_streams`    : number of streams the peer has opened then RST_STREAM'd.
+# `max_concurrent`   : advertised SETTINGS_MAX_CONCURRENT_STREAMS (<=0 disables).
+# `reset_budget`     : reset count beyond which the connection is abusive.
+@inline function _h2_server_new_stream_decision(
+    stream_id::UInt32,
+    max_stream_id::UInt32,
+    open_streams::Int,
+    reset_streams::Int,
+    max_concurrent::Int,
+    reset_budget::Int,
+)::_H2NewStreamDecision
+    # RFC 9113 §5.1.1: a new client-initiated stream id must be strictly greater
+    # than every id used so far. Rejecting `<=` prevents reopening a closed
+    # (and cleaned-up) stream, including reuse of the highest id after GOAWAY.
+    stream_id <= max_stream_id && return _H2_NEW_STREAM_NON_MONOTONIC
+    # Treat sustained stream resets as a Rapid-Reset flood and stop the conn.
+    reset_budget > 0 && reset_streams > reset_budget && return _H2_NEW_STREAM_ENHANCE_CALM
+    # Enforce the concurrent-stream ceiling before allocating any state.
+    max_concurrent > 0 && open_streams >= max_concurrent && return _H2_NEW_STREAM_REFUSED
+    return _H2_NEW_STREAM_ACCEPT
+end
 
 @inline function _h2_server_available_bytes(state::_H2ServerStreamState)::Int
     available = (length(state.body) - state.body_read_index) + 1
@@ -221,7 +276,7 @@ function _apply_h2_peer_settings!(
         unlock(send_state.state_lock)
     end
     if header_table_size !== nothing
-        size = header_table_size::Int
+        size = min(header_table_size::Int, _MAX_ENCODER_DYNAMIC_TABLE_SIZE)
         lock(write_lock)
         try
             set_max_dynamic_table_size_limit!(send_state.header_encoder, size)
@@ -852,15 +907,32 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
             saw_regular && throw(ProtocolError("HTTP/2 pseudo-headers must precede regular headers"))
             if name == ":method"
                 method === nothing || throw(ProtocolError("duplicate HTTP/2 :method pseudo-header"))
+                # RFC 9113 8.3.1 / RFC 9110 9.1: :method carries an HTTP method,
+                # which is a `token`. `_normalize_strict_header_field_value` only
+                # rejects CR/LF/CTL and permits SP/HTAB, so a value such as
+                # "GET /admin?x=" would otherwise be accepted and smuggled into an
+                # HTTP/1 request line verbatim. Enforce the RFC 9110 token charset
+                # (same check the h1 server and h2 client apply to the method).
+                _valid_header_field_name(normalized) || throw(ProtocolError("invalid HTTP/2 :method pseudo-header: $(repr(normalized))"))
                 method = normalized
             elseif name == ":scheme"
                 scheme === nothing || throw(ProtocolError("duplicate HTTP/2 :scheme pseudo-header"))
                 scheme = normalized
             elseif name == ":path"
                 path === nothing || throw(ProtocolError("duplicate HTTP/2 :path pseudo-header"))
+                # RFC 9113 8.3.1: :path conveys the request-target's path/query and
+                # MUST NOT contain whitespace. Interior SP/HTAB would otherwise be
+                # written verbatim into an HTTP/1 request line, splitting the target
+                # and enabling request smuggling past path-based ACLs.
+                _string_contains_whitespace_byte(normalized) && throw(ProtocolError("invalid HTTP/2 :path pseudo-header: $(repr(normalized))"))
                 path = normalized
             elseif name == ":authority"
                 authority === nothing || throw(ProtocolError("duplicate HTTP/2 :authority pseudo-header"))
+                # RFC 9113 8.3.1: :authority is the request authority (host[:port]).
+                # Validate it with the same host validator used by the h1 server so
+                # interior whitespace / invalid host characters are rejected rather
+                # than forwarded verbatim to an HTTP/1 origin.
+                _valid_host_header(normalized) || throw(ProtocolError("invalid HTTP/2 :authority pseudo-header: $(repr(normalized))"))
                 authority = normalized
             else
                 throw(ProtocolError("unsupported HTTP/2 pseudo-header $(repr(name))"))
@@ -889,6 +961,23 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
         appendheader(out_headers, name, normalized)
     end
     method === nothing && throw(ProtocolError("missing HTTP/2 :method pseudo-header"))
+    # RFC 9113 8.3.1: "If the :authority pseudo-header field is present, the
+    # endpoint MUST NOT generate a request with a Host header field that differs
+    # from the :authority field." Treat an inbound request that carries any
+    # Host header differing from :authority as malformed; otherwise a proxy
+    # could authorize on the benign :authority while a hostile Host header is
+    # forwarded to (and prefers over request.host at) an HTTP/1 origin. Every
+    # Host value must match: a request may carry multiple (possibly
+    # non-adjacent) Host headers, and the HTTP/1 serializer forwards them all
+    # verbatim, so checking only the first value would leave a smuggling path.
+    # (The function parameter is named `headers`, so iterate the stored entries
+    # directly rather than calling the `headers(::Headers, key)` accessor.)
+    if authority !== nothing
+        for (entry_name, entry_value) in out_headers.entries
+            entry_name == "Host" || continue
+            entry_value == authority || throw(ProtocolError("HTTP/2 Host header does not match :authority"))
+        end
+    end
     if method == "CONNECT"
         authority === nothing && throw(ProtocolError("CONNECT requests require :authority"))
         scheme === nothing || throw(ProtocolError("CONNECT requests must not include :scheme"))
@@ -1400,7 +1489,7 @@ function _handle_h2_stream!(
         else
             handler_request = request
             response = try
-                handler_request = _buffer_server_request(request)
+                handler_request = _buffer_server_request(request, server.max_body_bytes; close_body_on_error=false)
                 server.handler(handler_request)
             catch err
                 status = _server_error_status(err::Exception)
@@ -1418,6 +1507,7 @@ function _handle_h2_stream!(
                     ),
                     _server_write_deadline_ns(server),
                 )
+                @try_ignore body_close!(request.body)
                 return nothing
             end
             if !(response isa Response)
@@ -1536,6 +1626,50 @@ function _request_h2_conn_shutdown!(
     return nothing
 end
 
+# Refuse a new HTTP/2 stream without allocating per-stream state or spawning a
+# handler. The header block is still decoded into the connection-wide HPACK
+# decoder so the connection does not desync; CONTINUATION frames belonging to
+# the refused stream are consumed inline using a throwaway buffer. Finally a
+# RST_STREAM(`error_code`) is sent for the refused stream id.
+function _h2_server_refuse_stream!(
+    server::Server,
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    reader::IO,
+    decoder::Decoder,
+    hf::HeadersFrame,
+    max_header_block_bytes::Int,
+    error_code::UInt32,
+)::Nothing
+    block = copy(hf.header_block_fragment)
+    length(block) <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+    end_headers = hf.end_headers
+    while !end_headers
+        # The peer must complete the header block with CONTINUATION frames for
+        # this same stream before any other frame (RFC 9113 §6.10). Reuse the
+        # request-header read deadline so a stalled block cannot hold the slot.
+        _set_read_deadline!(conn, _deadline_after(server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns))
+        frame = read_frame!(reader)
+        frame isa ContinuationFrame || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
+        cf = frame::ContinuationFrame
+        cf.stream_id == hf.stream_id || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
+        length(block) + length(cf.header_block_fragment) <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+        append!(block, cf.header_block_fragment)
+        end_headers = cf.end_headers
+    end
+    # Keep the shared HPACK decoder state consistent with the peer's encoder.
+    decode_header_block(decoder, block)
+    @try_ignore begin
+        _write_frame_h2_server_threadsafe!(
+            write_lock,
+            conn,
+            RSTStreamFrame(hf.stream_id, error_code),
+            _server_write_deadline_ns(server),
+        )
+    end
+    return nothing
+end
+
 function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::Nothing
     conn = tracked.conn
     decoder = Decoder(
@@ -1551,6 +1685,17 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     continuation_stream = UInt32(0)
     max_stream_id = UInt32(0)
     peer_goaway_last_stream_id = typemax(UInt32)
+    # Per-connection stream-flood limits (see ANT-2026 Rapid Reset fix).
+    max_concurrent_streams = server.max_concurrent_streams
+    # Number of streams the peer has opened and then reset/closed via RST_STREAM.
+    # Tracked to detect the CVE-2023-44487 "Rapid Reset" pattern, where the peer
+    # keeps its own concurrent-stream count low by immediately cancelling each
+    # stream it opens.
+    reset_stream_count = 0
+    # Once the peer resets more than this many streams, treat the connection as
+    # abusive: send GOAWAY(ENHANCE_YOUR_CALM) and stop accepting new streams.
+    rapid_reset_budget = max_concurrent_streams > 0 ?
+        max_concurrent_streams + _H2_RAPID_RESET_ALLOWANCE : 0
     close_kind = _H2_CONN_CLOSE_CLEAN
     try
         preface = _read_exact_h2_server!(reader_source, length(_H2_PREFACE))
@@ -1561,6 +1706,9 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         (client_settings::SettingsFrame).ack && throw(ProtocolError("initial h2 SETTINGS frame must not be ACK"))
         _apply_h2_peer_settings!(send_state, write_lock, (client_settings::SettingsFrame).settings)
         initial_settings = Pair{UInt16,UInt32}[]
+        if max_concurrent_streams > 0
+            push!(initial_settings, _H2_SETTINGS_MAX_CONCURRENT_STREAMS => UInt32(max_concurrent_streams))
+        end
         if server.http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
             push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(server.http2_settings.initial_window_size))
         end
@@ -1617,9 +1765,41 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     unlock(states_lock)
                 end
                 state === nothing && continue
+                # Count this as a peer-initiated reset only on the first
+                # OPEN -> RESET transition so duplicate RST_STREAM frames for the
+                # same in-flight stream cannot inflate the Rapid-Reset counter.
+                first_reset = false
+                lock(state.lock)
+                try
+                    first_reset = state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN)
+                finally
+                    unlock(state.lock)
+                end
                 _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
                 _unregister_h2_send_window!(send_state, rst.stream_id)
                 _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
+                if first_reset
+                    reset_stream_count += 1
+                    # Rapid Reset (CVE-2023-44487): a peer that keeps opening and
+                    # immediately resetting streams drives unbounded handler/task
+                    # creation while keeping its own concurrent-stream count low.
+                    # Past the budget, send GOAWAY(ENHANCE_YOUR_CALM) and refuse
+                    # any further new streams by draining the connection.
+                    if rapid_reset_budget > 0 && reset_stream_count > rapid_reset_budget &&
+                        !(@atomic :acquire conn_control.goaway_sent)
+                        @try_ignore begin
+                            _write_frame_h2_server_threadsafe!(
+                                write_lock,
+                                conn,
+                                GoAwayFrame(max_stream_id, _H2_ERROR_ENHANCE_YOUR_CALM, UInt8[]),
+                                _server_write_deadline_ns(server),
+                            )
+                        end
+                        @atomic :release conn_control.goaway_sent = true
+                        @atomic :release conn_control.shutdown_requested = true
+                        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
+                    end
+                end
                 continue
             end
             if frame isa GoAwayFrame
@@ -1636,25 +1816,76 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 if (@atomic :acquire conn_control.shutdown_requested) && hf.stream_id > (@atomic :acquire conn_control.graceful_last_stream_id)
                     throw(ProtocolError("client opened stream after server GOAWAY"))
                 end
+                # A HEADERS frame either continues an already-tracked stream
+                # (e.g. request trailers) or opens a brand-new one. New streams
+                # must pass the stream-id monotonicity check and the
+                # concurrent-stream / Rapid-Reset limits before any state is
+                # allocated or any handler is dispatched.
+                refuse_stream = false
+                refuse_enhance_calm = false
                 lock(states_lock)
                 state = try
-                    if hf.stream_id < max_stream_id && !haskey(states, hf.stream_id)
-                        throw(ProtocolError("HEADERS stream id must increase monotonically"))
-                    end
-                    if hf.stream_id > max_stream_id
-                        max_stream_id = hf.stream_id
-                        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
-                    end
                     if haskey(states, hf.stream_id)
                         states[hf.stream_id]
                     else
-                        created = _H2ServerStreamState(hf.stream_id, _h2_buffered_bytes(server.http2_settings))
-                        states[hf.stream_id] = created
-                        _register_h2_send_window!(send_state, hf.stream_id)
-                        created
+                        decision = _h2_server_new_stream_decision(
+                            hf.stream_id,
+                            max_stream_id,
+                            length(states),
+                            reset_stream_count,
+                            max_concurrent_streams,
+                            rapid_reset_budget,
+                        )
+                        if decision == _H2_NEW_STREAM_NON_MONOTONIC
+                            # RFC 9113 §5.1.1: reusing a closed/old id is a
+                            # connection error, not a per-stream refusal.
+                            throw(ProtocolError("HEADERS stream id must increase monotonically"))
+                        end
+                        # Even when refusing, advance `max_stream_id` so the same
+                        # id can never be retried and HPACK ordering is preserved.
+                        max_stream_id = hf.stream_id
+                        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
+                        if decision == _H2_NEW_STREAM_REFUSED
+                            refuse_stream = true
+                            nothing
+                        elseif decision == _H2_NEW_STREAM_ENHANCE_CALM
+                            refuse_stream = true
+                            refuse_enhance_calm = true
+                            nothing
+                        else
+                            created = _H2ServerStreamState(hf.stream_id, _h2_buffered_bytes(server.http2_settings))
+                            states[hf.stream_id] = created
+                            _register_h2_send_window!(send_state, hf.stream_id)
+                            created
+                        end
                     end
                 finally
                     unlock(states_lock)
+                end
+                if refuse_stream
+                    # Decode the header block to keep the connection-wide HPACK
+                    # decoder in sync, but allocate no per-stream state and spawn
+                    # no handler. Multi-frame header blocks are accumulated in a
+                    # throwaway buffer that is discarded once END_HEADERS arrives.
+                    _h2_server_refuse_stream!(
+                        server, conn, write_lock, reader, decoder,
+                        hf, max_header_block_bytes,
+                        refuse_enhance_calm ? _H2_ERROR_ENHANCE_YOUR_CALM : _H2_ERROR_REFUSED_STREAM,
+                    )
+                    if refuse_enhance_calm && !(@atomic :acquire conn_control.goaway_sent)
+                        @try_ignore begin
+                            _write_frame_h2_server_threadsafe!(
+                                write_lock,
+                                conn,
+                                GoAwayFrame(max_stream_id, _H2_ERROR_ENHANCE_YOUR_CALM, UInt8[]),
+                                _server_write_deadline_ns(server),
+                            )
+                        end
+                        @atomic :release conn_control.goaway_sent = true
+                        @atomic :release conn_control.shutdown_requested = true
+                        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
+                    end
+                    continue
                 end
                 stream_error = false
                 lock(state.lock)

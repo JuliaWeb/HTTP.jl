@@ -36,7 +36,9 @@ function _write_frame_h2_server_raw!(conn::NC.Conn, frame::HT.AbstractFrame)
     return nothing
 end
 
-function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = 5.0)
+const _RAW_H2_SERVER_FRAME_TIMEOUT_S = Sys.iswindows() ? 10.0 : 5.0
+
+function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = _RAW_H2_SERVER_FRAME_TIMEOUT_S)
     NC.set_deadline!(conn, Int64(time_ns() + round(Int, timeout_s * 1_000_000_000)))
     try
         return HT.read_frame!(reader)
@@ -45,13 +47,17 @@ function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = 
     end
 end
 
-function _open_raw_h2_server_conn(address::String; settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[])
+function _open_raw_h2_server_conn(
+        address::String;
+        settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[],
+        timeout_s::Float64 = _RAW_H2_SERVER_FRAME_TIMEOUT_S,
+    )
     conn = ND.connect("tcp", address)
     reader = HT._ConnReader(conn)
     _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
     _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, settings))
-    first = _read_h2_server_frame!(conn, reader)
-    second = _read_h2_server_frame!(conn, reader)
+    first = _read_h2_server_frame!(conn, reader; timeout_s)
+    second = _read_h2_server_frame!(conn, reader; timeout_s)
     frames = (first, second)
     count(frame -> frame isa HT.SettingsFrame && !(frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS frame")
     count(frame -> frame isa HT.SettingsFrame && (frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS ACK frame")
@@ -152,6 +158,41 @@ function _read_h2_server_text_response!(conn::NC.Conn, reader::IO, decoder::HT.D
     end
     @test saw_headers
     return String(body)
+end
+
+# Drain server frames for a set of expected stream ids, decoding *every* HEADERS
+# block (so the shared client HPACK decoder stays in sync across interleaved
+# streams) and accumulating each stream's body until its END_STREAM. Returns a
+# Dict mapping stream id => decoded text body once all expected ids complete.
+function _drain_h2_server_responses!(conn::NC.Conn, reader::IO, decoder::HT.Decoder, expected::Set{UInt32})
+    bodies = Dict{UInt32, Vector{UInt8}}(id => UInt8[] for id in expected)
+    done = Set{UInt32}()
+    NC.set_deadline!(conn, Int64(time_ns() + 5_000_000_000))
+    try
+        while length(done) < length(expected)
+            frame = HT.read_frame!(reader)
+            if frame isa HT.HeadersFrame
+                hf = frame::HT.HeadersFrame
+                # Decode regardless of stream to keep the decoder in sync.
+                decoded = HT.decode_header_block(decoder, hf.header_block_fragment)
+                if hf.stream_id in expected
+                    @test any(field -> field.name == ":status" && field.value == "200", decoded)
+                    hf.end_stream && push!(done, hf.stream_id)
+                end
+            elseif frame isa HT.DataFrame
+                df = frame::HT.DataFrame
+                if df.stream_id in expected
+                    append!(bodies[df.stream_id], df.data)
+                    df.end_stream && push!(done, df.stream_id)
+                end
+            elseif frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id in expected
+                error("unexpected RST_STREAM for stream $((frame::HT.RSTStreamFrame).stream_id)")
+            end
+        end
+    finally
+        NC.set_deadline!(conn, Int64(0))
+    end
+    return Dict(id => String(bodies[id]) for id in expected)
 end
 
 @testset "HTTP/2 server request handling" begin
@@ -432,6 +473,33 @@ end
     end
 end
 
+@testset "HTTP/2 ordinary handlers reject oversized buffered request bodies" begin
+    called = Channel{Bool}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request
+            _ = request
+            put!(called, true)
+            return HT.Response(200, HT.BytesBody(collect(codeunits("handler ran"))); content_length = 11, proto_major = 2, proto_minor = 0)
+        end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        headers = HT.HeaderField[HT.HeaderField("content-length", "5", false)]
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/too-large"; method = "POST", headers = headers, end_stream = false)
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn::NC.Conn, reader)
+        @test (headers_frame::HT.HeadersFrame).stream_id == UInt32(1)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "413", decoded_headers)
+        @test !isready(called)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server accepts legal request trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             buf = Vector{UInt8}(undef, 8)
@@ -636,6 +704,17 @@ end
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
+end
+
+@testset "HTTP/2 server clamps peer header table size settings" begin
+    send_state = HT._H2SendWindowState()
+    HT._apply_h2_peer_settings!(
+        send_state,
+        ReentrantLock(),
+        Pair{UInt16,UInt32}[UInt16(0x1) => typemax(UInt32)],
+    )
+    @test send_state.header_encoder.max_table_size_limit == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+    @test send_state.header_encoder.table.max_size == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
 end
 
 @testset "HTTP/2 server accepts duplicate peer settings in order" begin
@@ -1693,10 +1772,33 @@ end
     end
 end
 
+# Open a raw HTTP/2 connection and return the server's initial (non-ACK)
+# SETTINGS frame so its advertised parameters can be inspected, along with the
+# live connection/reader for further frame exchange.
+function _open_raw_h2_server_conn_with_settings(address::String)
+    conn = ND.connect("tcp", address)
+    reader = HT._ConnReader(conn)
+    _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
+    _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+    server_settings = nothing
+    saw_ack = false
+    for _ in 1:4
+        frame = _read_h2_server_frame!(conn, reader)
+        if frame isa HT.SettingsFrame
+            sf = frame::HT.SettingsFrame
+            sf.ack ? (saw_ack = true) : (server_settings = sf)
+        end
+        server_settings !== nothing && saw_ack && break
+    end
+    server_settings === nothing && error("server did not send initial SETTINGS frame")
+    return conn, reader, server_settings::HT.SettingsFrame
+end
+
 @testset "HTTP/2 server advertises configured flow-control windows" begin
     server = HT.serve!(
         "127.0.0.1", 0;
         listenany = true,
+        max_concurrent_streams = 17,
         http2_settings = HT.HTTP2Settings(
             initial_window_size = 1_048_576,
             connection_window_size = 2_097_152,
@@ -1708,21 +1810,12 @@ end
     address = HT.server_addr(server)
     conn = nothing
     try
-        conn = ND.connect("tcp", address)
-        reader = HT._ConnReader(conn)
-        _write_all_h2_server_raw!(conn::NC.Conn, HT._H2_PREFACE)
-        _write_frame_h2_server_raw!(conn::NC.Conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
-        # The server proactively sends SETTINGS, a SETTINGS ACK, and (because the
-        # connection window is raised) one connection-level WINDOW_UPDATE.
-        frames = HT.AbstractFrame[_read_h2_server_frame!(conn::NC.Conn, reader) for _ in 1:3]
-        settings_idx = findfirst(f -> f isa HT.SettingsFrame && !(f::HT.SettingsFrame).ack, frames)
-        @test settings_idx !== nothing
-        @test (frames[settings_idx]::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1_048_576)]
-        @test count(f -> f isa HT.SettingsFrame && (f::HT.SettingsFrame).ack, frames) == 1
-        wu_idx = findfirst(f -> f isa HT.WindowUpdateFrame, frames)
-        @test wu_idx !== nothing
-        wu = frames[wu_idx]::HT.WindowUpdateFrame
+        conn, reader, server_settings = _open_raw_h2_server_conn_with_settings(address)
+        @test (HT._H2_SETTINGS_MAX_CONCURRENT_STREAMS => UInt32(17)) in server_settings.settings
+        @test (HT._H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(1_048_576)) in server_settings.settings
+        wu = _read_h2_server_frame_until!(conn, reader,
+            f -> f isa HT.WindowUpdateFrame && (f::HT.WindowUpdateFrame).stream_id == UInt32(0);
+            timeout_s = 3.0)::HT.WindowUpdateFrame
         @test wu.stream_id == UInt32(0)
         @test wu.window_size_increment == UInt32(2_097_152 - 65_535)
     finally
@@ -1740,23 +1833,177 @@ end
     address = HT.server_addr(server)
     conn = nothing
     try
-        conn = ND.connect("tcp", address)
-        reader = HT._ConnReader(conn)
-        _write_all_h2_server_raw!(conn::NC.Conn, HT._H2_PREFACE)
-        _write_frame_h2_server_raw!(conn::NC.Conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
-        first = _read_h2_server_frame!(conn::NC.Conn, reader)
-        second = _read_h2_server_frame!(conn::NC.Conn, reader)
-        frames = (first, second)
-        settings_idx = findfirst(f -> f isa HT.SettingsFrame && !(f::HT.SettingsFrame).ack, frames)
-        @test settings_idx !== nothing
-        # With default windows the advertised SETTINGS payload stays empty and no
-        # connection-level WINDOW_UPDATE is sent before any stream opens.
-        @test isempty((frames[settings_idx]::HT.SettingsFrame).settings)
-        @test count(f -> f isa HT.SettingsFrame && (f::HT.SettingsFrame).ack, frames) == 1
-        @test !any(f -> f isa HT.WindowUpdateFrame, frames)
+        conn, reader, server_settings = _open_raw_h2_server_conn_with_settings(address)
+        _ = reader
+        @test (HT._H2_SETTINGS_MAX_CONCURRENT_STREAMS => UInt32(100)) in server_settings.settings
+        @test !any(first(setting) == HT._H2_SETTINGS_INITIAL_WINDOW_SIZE for setting in server_settings.settings)
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
+end
+
+# Regression coverage for the HTTP/2 Rapid-Reset / unbounded-stream hardening
+# (JLSEC-2026-611). Drives the internal decision helper and the live server.
+@testset "HTTP/2 server bounds concurrent streams (Rapid Reset)" begin
+    # --- Pure decision helper: deterministic, offline ---
+    dec = HT._h2_server_new_stream_decision
+    # New id strictly above the max, under all limits, is accepted.
+    @test dec(UInt32(3), UInt32(1), 0, 0, 100, 200) === HT._H2_NEW_STREAM_ACCEPT
+    # Reusing the highest previously-seen id (== max) is rejected as a
+    # connection error, not silently reopened (ANT-2026-7393V1MS).
+    @test dec(UInt32(5), UInt32(5), 0, 0, 100, 200) === HT._H2_NEW_STREAM_NON_MONOTONIC
+    @test dec(UInt32(3), UInt32(5), 0, 0, 100, 200) === HT._H2_NEW_STREAM_NON_MONOTONIC
+    # At the concurrent-stream ceiling, a new stream is refused.
+    @test dec(UInt32(7), UInt32(5), 2, 0, 2, 100) === HT._H2_NEW_STREAM_REFUSED
+    @test dec(UInt32(7), UInt32(5), 1, 0, 2, 100) === HT._H2_NEW_STREAM_ACCEPT
+    # Beyond the reset budget, the connection is told to calm down.
+    @test dec(UInt32(7), UInt32(5), 0, 6, 2, 5) === HT._H2_NEW_STREAM_ENHANCE_CALM
+    @test dec(UInt32(7), UInt32(5), 0, 5, 2, 5) === HT._H2_NEW_STREAM_ACCEPT
+    # A non-positive cap disables refusal entirely (legacy behavior).
+    @test dec(UInt32(7), UInt32(5), 10_000, 0, 0, 0) === HT._H2_NEW_STREAM_ACCEPT
+
+    # --- Server advertises SETTINGS_MAX_CONCURRENT_STREAMS ---
+    # The handler blocks on `release` until the test signals it, so the two
+    # accepted streams stay "open" (filling the cap) deterministically rather
+    # than relying on sleep-based timing.
+    release = Base.Channel{Nothing}(Inf)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_concurrent_streams = 2) do request
+        take!(release)
+        return HT.Response(200, "ok"; proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    try
+        conn, reader, server_settings = _open_raw_h2_server_conn_with_settings(address)
+        try
+            advertised = nothing
+            for (id, value) in server_settings.settings
+                id == HT._H2_SETTINGS_MAX_CONCURRENT_STREAMS && (advertised = value)
+            end
+            @test advertised == UInt32(2)
+
+            encoder = HT.Encoder()
+            decoder = HT.Decoder()
+            # Open two streams that block in the handler (filling the cap).
+            _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/a")
+            _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/b")
+            # A third concurrent stream must be refused with RST_STREAM, and the
+            # error code must be REFUSED_STREAM (0x7), not a normal response.
+            _write_h2_server_request_headers!(conn, encoder, UInt32(5), address, "/c")
+            rst = _read_h2_server_frame_until!(conn, reader,
+                f -> f isa HT.RSTStreamFrame && (f::HT.RSTStreamFrame).stream_id == UInt32(5);
+                timeout_s = 3.0)
+            @test (rst::HT.RSTStreamFrame).error_code == HT._H2_ERROR_REFUSED_STREAM
+            # The refused stream's HPACK header block must still be decoded into
+            # the shared decoder so a later legitimate stream stays in sync. Free
+            # the two open (and any refused) streams, drain their responses so
+            # both streams are cleaned up server-side and the client decoder is
+            # kept in sync, then open stream 7: it must be accepted and decode
+            # correctly. A desynced decoder (refused block not consumed) would
+            # corrupt stream 7's response headers.
+            put!(release, nothing)
+            put!(release, nothing)
+            put!(release, nothing)
+            @test _drain_h2_server_responses!(conn, reader, decoder, Set([UInt32(1), UInt32(3)])) ==
+                Dict(UInt32(1) => "ok", UInt32(3) => "ok")
+            _write_h2_server_request_headers!(conn, encoder, UInt32(7), address, "/d")
+            @test _drain_h2_server_responses!(conn, reader, decoder, Set([UInt32(7)])) ==
+                Dict(UInt32(7) => "ok")
+        finally
+            HTTP.@try_ignore NC.close(conn::NC.Conn)
+        end
+    finally
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server rejects reuse of highest closed stream id" begin
+    # ANT-2026-7393V1MS: once stream N completes and is cleaned up, a HEADERS
+    # frame reusing id N must be a connection error, not a fresh stream.
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        return HT.Response(200, "ok"; proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        # Drive stream 3 to completion so it is removed from `states`.
+        _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/first")
+        _ = _read_h2_server_text_response!(conn, reader, decoder, UInt32(3))
+        # Reusing id 3 (== max_stream_id) must trigger a connection error
+        # (GOAWAY) rather than dispatching the handler again.
+        _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/replay")
+        goaway = _read_h2_server_frame_until!(conn, reader,
+            f -> f isa HT.GoAwayFrame; timeout_s = 3.0)
+        @test goaway isa HT.GoAwayFrame
+        @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_PROTOCOL
+    finally
+        HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server validates request pseudo-headers (JLSEC-2026-623)" begin
+    # Helper: build a minimal pseudo-header set, allowing overrides/extra fields.
+    function _h2_fields(; method="GET", scheme="http", path="/", authority="example.com",
+                          extra::Vector{HT.HeaderField}=HT.HeaderField[])
+        fields = HT.HeaderField[]
+        method === nothing || push!(fields, HT.HeaderField(":method", method, false))
+        scheme === nothing || push!(fields, HT.HeaderField(":scheme", scheme, false))
+        authority === nothing || push!(fields, HT.HeaderField(":authority", authority, false))
+        path === nothing || push!(fields, HT.HeaderField(":path", path, false))
+        append!(fields, extra)
+        return fields
+    end
+
+    # Sanity: a well-formed request still validates and decodes.
+    @test HT._validate_h2_request_headers!(_h2_fields())[1] == "GET"
+    req = HT._decode_h2_request(_h2_fields(), UInt8[])
+    @test req.method == "GET"
+    @test req.host == "example.com"
+
+    # ANT-2026-565042FN: :method must be an RFC 9110 token; embedded space (used
+    # to smuggle a request target into an HTTP/1 request line) is rejected.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(method="GET /admin?x="))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(method="GET\tPOST"))
+
+    # ANT-2026-565042FN: :path must not contain interior whitespace.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/public /admin"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/a\tb"))
+
+    # ANT-2026-565042FN: :authority must pass host validation (no whitespace).
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(authority="allowed.example.com evil"))
+
+    # CWYA87HX: a Host header that disagrees with :authority is malformed.
+    mismatched = _h2_fields(authority="allowed.example.com",
+                            extra=HT.HeaderField[HT.HeaderField("host", "internal-admin", false)])
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(mismatched)
+
+    # CWYA87HX: a Host header that matches :authority is accepted.
+    matched = _h2_fields(authority="allowed.example.com",
+                         extra=HT.HeaderField[HT.HeaderField("host", "allowed.example.com", false)])
+    @test HT._validate_h2_request_headers!(matched)[4] == "allowed.example.com"
+
+    # CWYA87HX: a second, non-adjacent Host header that disagrees with
+    # :authority must still be rejected. A benign first Host (== :authority)
+    # would otherwise pass a first-value-only check while the HTTP/1 serializer
+    # forwards the hostile second Host verbatim.
+    split_hosts = _h2_fields(authority="allowed.example.com",
+                             extra=HT.HeaderField[
+                                 HT.HeaderField("host", "allowed.example.com", false),
+                                 HT.HeaderField("x-sep", "1", false),
+                                 HT.HeaderField("host", "internal-admin", false)])
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(split_hosts)
+
+    # CWYA87HX: two adjacent Host headers are merged into one comma-joined value
+    # which cannot equal a single :authority, so they are also rejected.
+    merged_hosts = _h2_fields(authority="allowed.example.com",
+                              extra=HT.HeaderField[
+                                  HT.HeaderField("host", "allowed.example.com", false),
+                                  HT.HeaderField("host", "internal-admin", false)])
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(merged_hosts)
 end

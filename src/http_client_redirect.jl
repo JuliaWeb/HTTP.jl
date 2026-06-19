@@ -117,28 +117,51 @@ end
     return normalized
 end
 
-function _is_domain_or_subdomain(sub::String, parent::String)::Bool
-    sub == parent && return true
-    (occursin(':', sub) || occursin('%', sub)) && return false
-    return endswith(sub, "." * parent)
+@inline function _split_redirect_host_port(address::String)::Tuple{String,String}
+    return try
+        host, port = HostResolvers.split_host_port(address)
+        (host, port)
+    catch
+        # `address` has no explicit port; treat the whole value as the host and
+        # leave the port unknown so the caller can fall back to the scheme port.
+        (address, "")
+    end
 end
 
-function _should_copy_sensitive_headers_on_redirect(initial_address::String, redirect_address::String)::Bool
-    initial_host = try
-        HostResolvers.split_host_port(initial_address)[1]
-    catch
-        initial_address
-    end
-    redirect_host = try
-        HostResolvers.split_host_port(redirect_address)[1]
-    catch
-        redirect_address
-    end
+# Decide whether Authorization/Cookie/Proxy-Authorization (and the other
+# credential-bearing headers stripped by `_strip_sensitive_redirect_headers!`)
+# may be retained when a request is redirected. Sensitive headers are only kept
+# when the redirect stays within the SAME security origin, i.e. the scheme, the
+# port, and the host all match exactly after normalization. Go's net/http also
+# trusts subdomains here, but explicit Authorization/Cookie headers are scoped to
+# the caller's request origin in HTTP.jl; domain-scoped cookies remain the cookie
+# jar's job. Comparing the host alone (the previous behaviour) leaked
+# credentials across an https->http downgrade or to a different service on
+# another port of the same host (cf. curl CVE-2022-27776, python-requests
+# CVE-2018-18074); the `initial_secure`/`redirect_secure` flags are supplied by
+# the callers, which already track scheme for `Referer`.
+function _should_copy_sensitive_headers_on_redirect(
+    initial_address::String,
+    redirect_address::String,
+    initial_secure::Bool,
+    redirect_secure::Bool,
+)::Bool
+    # A scheme change (in particular an https->http downgrade) always crosses a
+    # security boundary, so never carry credentials across it.
+    initial_secure == redirect_secure || return false
+    initial_host, initial_port = _split_redirect_host_port(initial_address)
+    redirect_host, redirect_port = _split_redirect_host_port(redirect_address)
+    # Resolve missing ports to the scheme default so that e.g. `host` and
+    # `host:443` over https compare equal, while a genuine port change is caught.
+    initial_port = isempty(initial_port) ? (initial_secure ? "443" : "80") : initial_port
+    redirect_port = isempty(redirect_port) ? (redirect_secure ? "443" : "80") : redirect_port
+    # A port change (e.g. :443 -> :8443) reaches a different service; strip.
+    initial_port == redirect_port || return false
     initial_norm = _normalize_redirect_host(initial_host)
     redirect_norm = _normalize_redirect_host(redirect_host)
     isempty(initial_norm) && return false
     isempty(redirect_norm) && return false
-    return _is_domain_or_subdomain(redirect_norm, initial_norm)
+    return redirect_norm == initial_norm
 end
 
 function _strip_sensitive_redirect_headers!(headers::Headers)

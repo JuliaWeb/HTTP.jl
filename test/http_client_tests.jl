@@ -618,6 +618,67 @@ end
     end
 end
 
+@testset "JLSEC redirect does not leak explicit cookies= across origins" begin
+    # Two listeners on different ports of 127.0.0.1: a redirect between them is
+    # cross-origin under the (scheme, host, port) check. The caller passes the
+    # session secret via the `cookies=` kwarg, which the unpatched code
+    # re-attached on every hop via `_cookie_header` even after the Cookie header
+    # was stripped, leaking it to the redirect target. The fix drops the
+    # explicit-kwarg cookies once the origin changes.
+    listener1 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    listener2 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr1 = NC.addr(listener1)::NC.SocketAddrV4
+    laddr2 = NC.addr(listener2)::NC.SocketAddrV4
+    address1 = ND.join_host_port("127.0.0.1", Int(laddr1.port))
+    address2 = ND.join_host_port("127.0.0.1", Int(laddr2.port))
+    seen_cookie_hop1 = Ref{Union{Nothing, String}}(nothing)
+    seen_cookie_hop2 = Ref{Union{Nothing, String}}(nothing)
+    server_task1 = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener1)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            seen_cookie_hop1[] = HT.header(req.headers, "Cookie", nothing)
+            headers = HT.Headers()
+            HT.setheader(headers, "Location", "http://$(address2)/final")
+            HT.setheader(headers, "Connection", "close")
+            _send_response_client!(conn, req; status = 302, reason = "Found", headers = headers, close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    server_task2 = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener2)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            seen_cookie_hop2[] = HT.header(req.headers, "Cookie", nothing)
+            _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    # cookiejar=nothing isolates the test from the shared jar; the secret flows
+    # only through the explicit cookies= kwarg.
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), cookiejar = nothing)
+    try
+        req = HT.Request("GET", "/start"; host = address1, body = HT.EmptyBody(), content_length = 0)
+        response = HT.do!(client, address1, req; cookies = Dict("session" => "s3cr3t"))
+        @test response.status == 200
+        @test String(_read_all_body_bytes_client(response.body)) == "ok"
+        _wait_task_client!(server_task1)
+        _wait_task_client!(server_task2)
+        # Original origin receives the explicit cookie...
+        @test seen_cookie_hop1[] == "session=s3cr3t"
+        # ...but the cross-origin redirect target must NOT.
+        @test seen_cookie_hop2[] === nothing
+    finally
+        close(client.transport)
+        HTTP.@try_ignore NC.close(listener1)
+        HTTP.@try_ignore NC.close(listener2)
+    end
+end
+
 @testset "HTTP client redirect helper strips all duplicate sensitive headers" begin
     headers = HT.Headers()
     push!(headers, "Authorization" => "Bearer one")
@@ -678,9 +739,41 @@ end
 end
 
 @testset "HTTP client redirect trusted host matching helper" begin
-    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:443")
-    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "sub.foo.com:443")
-    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "bar.com:443")
+    # Same scheme + same host + same port: sensitive headers may be retained.
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:443", true, true)
+    @test HT._should_copy_sensitive_headers_on_redirect("Foo.COM.:443", "foo.com:443", true, true)
+    # Bare host vs host:default-port over the same scheme is the same origin.
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com", "foo.com:443", true, true)
+    # A child host is a different origin for caller-supplied credentials.
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "sub.foo.com:443", true, true)
+    # Different host is a different origin.
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "bar.com:443", true, true)
+end
+
+@testset "JLSEC redirect sensitive-header origin (scheme/port/host) and cookie scoping" begin
+    # Scheme downgrade on the same host:port must NOT retain credentials
+    # (https -> http replays Authorization/Cookie over plaintext).
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:80", true, false)
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:443", true, false)
+    # Port change on the same host+scheme must NOT retain credentials
+    # (a different service may listen on the alternate port).
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:8443", true, true)
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:8080", false, false)
+    # Identical full origin retains; same scheme http example.
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:80", false, false)
+    # A scheme upgrade (http -> https) is still a scheme change -> strip.
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:443", false, true)
+
+    # Cross-origin redirect must strip the explicit-kwarg Cookie header so the
+    # caller's cookies are not leaked to an attacker-controlled redirect target.
+    headers = HT.Headers()
+    HT.setheader(headers, "Cookie", "session=secret")
+    HT.setheader(headers, "Authorization", "Bearer t0ken")
+    HT.setheader(headers, "X-Keep", "keep")
+    HT._strip_sensitive_redirect_headers!(headers)
+    @test HT.header(headers, "Cookie", nothing) === nothing
+    @test HT.header(headers, "Authorization", nothing) === nothing
+    @test HT.header(headers, "X-Keep", nothing) == "keep"
 end
 
 @testset "HTTP client redirect absolute location default ports" begin
@@ -1797,7 +1890,7 @@ end
     sse_headers = HT.Headers()
     HT.setheader(sse_headers, "Content-Type", "text/event-stream")
     server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:7
+        for _ in 1:8
             conn = NC.accept(listener)
             try
                 req = HT.read_request(HT._ConnReader(conn))
@@ -1813,6 +1906,8 @@ end
                     headers = copy(sse_headers)
                     HT.setheader(headers, "Content-Encoding", "gzip")
                     _send_response_bytes_client!(conn, req; body_bytes = payload, headers = headers, close_conn = true)
+                elseif req.target == "/sse-long-line"
+                    _send_response_client!(conn, req; body_text = ":\n" * repeat("A", 32), headers = sse_headers, close_conn = true)
                 elseif req.target == "/sse-error"
                     _send_response_client!(conn, req; status = 404, reason = "Not Found", body_text = "missing", close_conn = true)
                 elseif req.target == "/sse-callback-error"
@@ -1866,6 +1961,17 @@ end
         @test resp_gzip.status == 200
         @test resp_gzip.body === HT.nobody
         @test gzip_events == ["gzip-one"]
+
+        long_line_err = try
+            HT.get("$(base_url)/sse-long-line"; sse_callback = event -> event, max_sse_line_bytes = 16)
+            nothing
+        catch err
+            err
+        end
+        @test long_line_err isa ErrorException
+        if long_line_err isa ErrorException
+            @test occursin("max_sse_line_bytes", long_line_err.msg)
+        end
 
         plain_events = HT.SSEEvent[]
         resp_plain = HT.get("$(base_url)/sse-plain"; sse_callback = event -> push!(plain_events, event))
@@ -1976,6 +2082,28 @@ end
     total = HT._parse_sse_stream!(IOBuffer("data: one\n\ndata: tail"), event -> push!(parsed_from_stream, event))
     @test total == ncodeunits("data: one\n\ndata: tail")
     @test [event.data for event in parsed_from_stream] == ["one", "tail"]
+
+    line_limit_err = try
+        HT._parse_sse_stream!(IOBuffer(":\n" * repeat("A", 32)), event -> nothing; max_line_bytes = 16)
+        nothing
+    catch err
+        err
+    end
+    @test line_limit_err isa ErrorException
+    if line_limit_err isa ErrorException
+        @test occursin("max_sse_line_bytes", line_limit_err.msg)
+    end
+
+    event_limit_err = try
+        HT._parse_sse_stream!(IOBuffer("data: abc\ndata: def\n\n"), event -> nothing; max_event_bytes = 12)
+        nothing
+    catch err
+        err
+    end
+    @test event_limit_err isa ErrorException
+    if event_limit_err isa ErrorException
+        @test occursin("max_sse_event_bytes", event_limit_err.msg)
+    end
 
     detect_err = try
         HT._parse_sse_stream!(IOBuffer(repeat("x", 9_000)), event -> nothing)
@@ -2426,15 +2554,30 @@ end
     big = zeros(UInt8, 4_000_000)
     gz = transcode(HTTP.CodecZlib.GzipCompressor, big)
     @test length(gz) < 100_000   # confirm the payload really is small on the wire
+    default_bomb = zeros(UInt8, HT._DEFAULT_MAX_DECOMPRESSED_SIZE + 1)
+    default_bomb_gz = transcode(HTTP.CodecZlib.GzipCompressor, default_bomb)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do req
-        return HT.Response(200; headers = ["Content-Encoding" => "gzip"], body = gz)
+        payload = req.target == "/default-bomb" ? default_bomb_gz : gz
+        return HT.Response(200; headers = ["Content-Encoding" => "gzip"], body = payload)
     end
     try
         base = "http://127.0.0.1:$(HT.port(server))/"
 
-        # No limit (default): the full body decompresses.
+        # The default cap allows ordinary compressed bodies below the limit.
         r = HT.get(base)
         @test length(r.body) == length(big)
+
+        # The default cap rejects compressed payloads that inflate past it.
+        default_err = try
+            HT.get("$(base)default-bomb")
+            nothing
+        catch e
+            e
+        end
+        @test default_err isa HTTP.DecompressionLimitError
+        default_err isa HTTP.DecompressionLimitError && @test default_err.limit == HT._DEFAULT_MAX_DECOMPRESSED_SIZE
+
+        @test_throws ArgumentError HT.get(base; max_decompressed_size = -1)
 
         # Limit below the decompressed size: rejected before the bomb inflates.
         err = try
@@ -2459,6 +2602,11 @@ end
             e
         end
         @test err2 isa HTTP.DecompressionLimitError
+
+        # Explicit zero preserves the opt-out for callers that intentionally
+        # manage unbounded decompression risk themselves.
+        r3 = HT.get(base; max_decompressed_size = 0)
+        @test length(r3.body) == length(big)
     finally
         HT.forceclose(server)
     end

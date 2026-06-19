@@ -74,6 +74,11 @@ function Variable(pattern)
     return Variable(re.captures[1], pat === nothing ? nothing : Regex(pat))
 end
 
+function _route_variable_matches(pattern::Regex, segment::AbstractString)
+    m = Base.match(pattern, segment)
+    return m !== nothing && m.match == segment
+end
+
 struct Leaf{H}
     method::String
     variables::Vector{Tuple{Int,String}}
@@ -176,7 +181,7 @@ function match(node::Node, method, segments, i)
         m !== nothing && return m
     end
     for conditional_node in node.conditional
-        if Base.match(conditional_node.segment.pattern, segment_value) !== nothing
+        if _route_variable_matches(conditional_node.segment.pattern, segment_value)
             m = match(conditional_node, method, segments, i + 1)
             anymissing = m === missing
             m = coalesce(m, nothing)

@@ -2,6 +2,7 @@ using Test
 
 using Base64
 using HTTP
+using Random
 using Reseau
 
 const HT = HTTP
@@ -199,6 +200,63 @@ end
     @test_throws HT.WebSockets.WebSocketProtocolError HT.WebSockets.ws_on_incoming_data!(W.Conn(is_client = true), HT.WebSockets.ws_encode_frame(HT.WebSockets.WsFrame(opcode = UInt8(HT.WebSockets.WsOpcode.TEXT), payload = UInt8[0x41], fin = true, masked = true, masking_key = (0x01, 0x02, 0x03, 0x04))))
 end
 
+# Regression: the reader task processes incoming frames (auto-PONG / CLOSE-echo)
+# concurrently with application send/ping/close. Both paths mutate the shared
+# `ws.codec.outgoing` Vector. Before the fix, the reader path ran the
+# auto-PONG `push!` WITHOUT `ws.sendlock`, racing the application path's
+# `push!`/`empty!` under the lock — concurrent Vector mutation from two OS
+# threads is undefined behavior and could corrupt the array / segfault under a
+# remote PING flood. The fix routes the reader path through
+# `_process_incoming_data!`, which holds `ws.sendlock` around the decode + flush,
+# so all mutations of the buffer are serialized.
+@testset "HTTP websocket outgoing-frame buffer is single-locked" begin
+    # Drive the reader path (auto-PONG via `_process_incoming_data!`) and the
+    # application path (`ping`/`send`) from many tasks at once. With the fix this
+    # runs cleanly; without it, concurrent Vector mutation corrupts/segfaults
+    # under `julia -t N` (N > 1).
+    iobuf = IOBuffer()
+    ws = HT.WebSockets.WebSocket(iobuf, () -> nothing; is_client = false)
+
+    masking_key = (0x01, 0x02, 0x03, 0x04)
+    ping_wire = HT.WebSockets.ws_encode_frame(HT.WebSockets.WsFrame(
+        opcode = UInt8(HT.WebSockets.WsOpcode.PING),
+        payload = Vector{UInt8}("p"),
+        fin = true,
+        masked = true,
+        masking_key = masking_key,
+    ))
+
+    nworkers = 8
+    iters = 2_000
+    failures = Threads.Atomic{Int}(0)
+    tasks = Task[]
+    for w in 1:nworkers
+        push!(tasks, Threads.@spawn begin
+            try
+                for _ in 1:iters
+                    if isodd(w)
+                        # Reader-task path: decode a masked PING -> auto-PONG
+                        # push! onto outgoing_frames, then flush. Must be locked.
+                        HT.WebSockets._process_incoming_data!(ws, copy(ping_wire))
+                    else
+                        # Application path: push! a frame and flush under sendlock.
+                        HT.WebSockets.ping(ws, UInt8[0x61])
+                    end
+                end
+            catch
+                Threads.atomic_add!(failures, 1)
+            end
+        end)
+    end
+    foreach(wait, tasks)
+
+    @test failures[] == 0
+    # The connection was never closed, so the buffer must be fully drained and
+    # the codec still open after all the concurrent flushes.
+    @test isempty(ws.codec.outgoing)
+    @test ws.codec.is_open
+end
+
 @testset "HTTP websocket payload limits" begin
     ws = W.Conn(is_client = false, max_incoming_payload_length = UInt64(4))
     frame = HT.WebSockets.WsFrame(
@@ -334,4 +392,52 @@ end
     dec = W.ws_decoder_new()
     f2 = W.ws_decoder_process!(dec, second_take)
     @test length(f2) == 1 && String(copy(f2[1].payload)) == "two"
+end
+
+# Helper: pull the 4-byte masking key out of a masked client TEXT frame whose
+# payload is < 126 bytes. Wire layout for such a frame is:
+#   byte 1: FIN/opcode, byte 2: MASK bit | payload length, bytes 3..6: masking key.
+function _extract_masking_key(ws::HT.WebSockets.WSConn, payload::Vector{UInt8})
+    HT.WebSockets.ws_send_frame!(ws, UInt8(HT.WebSockets.WsOpcode.TEXT), payload)
+    wire = HT.WebSockets.ws_get_outgoing_data!(ws)
+    @assert (wire[2] & 0x80) != 0 "expected masked client frame"
+    return (wire[3], wire[4], wire[5], wire[6])
+end
+
+# Regression for JLSEC-2026-622: RFC 6455 §5.3 requires the client masking key
+# (and the Sec-WebSocket-Key handshake nonce) to be unpredictable. The fix draws
+# them from a CSPRNG (Random.RandomDevice) instead of the task-local Xoshiro256++
+# PRNG. The defining property of the fix is that these values are independent of
+# the task-local RNG state: re-seeding the default RNG must NOT make the secrets
+# reproducible. On the unpatched code (`rand(UInt8, n)`) seeding the task RNG
+# makes them perfectly reproducible, so these tests fail there.
+@testset "JLSEC-2026-622 websocket secrets use a CSPRNG" begin
+    payload = collect(0x00:0x0f)
+
+    # 1) Masking keys do not depend on the task-local RNG seed.
+    Random.seed!(0xC0FFEE)
+    key_a = _extract_masking_key(HT.WebSockets.WSConn(; is_client = true), payload)
+    Random.seed!(0xC0FFEE)
+    key_b = _extract_masking_key(HT.WebSockets.WSConn(; is_client = true), payload)
+    @test key_a != key_b
+
+    # 2) The Sec-WebSocket-Key handshake nonce likewise ignores the RNG seed.
+    Random.seed!(0xBADF00D)
+    nonce_a = HT.WebSockets.ws_random_handshake_key()
+    Random.seed!(0xBADF00D)
+    nonce_b = HT.WebSockets.ws_random_handshake_key()
+    @test nonce_a != nonce_b
+
+    # 3) Keys still have the right shape and clearly vary across frames (not a
+    #    constant), guarding against a degenerate "always zero" fix.
+    ws = HT.WebSockets.WSConn(; is_client = true)
+    keys = [_extract_masking_key(ws, payload) for _ in 1:32]
+    @test all(k -> length(k) == 4 && eltype(k) == UInt8, keys)
+    @test length(unique(keys)) > 1
+
+    # 4) The handshake nonce decodes to 16 random bytes per RFC 6455 §4.1 and is
+    #    not constant between calls.
+    decoded = Base64.base64decode(HT.WebSockets.ws_random_handshake_key())
+    @test length(decoded) == 16
+    @test HT.WebSockets.ws_random_handshake_key() != HT.WebSockets.ws_random_handshake_key()
 end

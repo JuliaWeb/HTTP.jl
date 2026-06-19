@@ -584,6 +584,8 @@ end
     return 32 + ncodeunits(name) + ncodeunits(value)
 end
 
+const _MAX_ENCODER_DYNAMIC_TABLE_SIZE = 64 * 1024
+
 function DynamicTable(max_size::Integer=4096)
     max_size >= 0 || throw(ArgumentError("dynamic table max_size must be >= 0"))
     return DynamicTable(DynamicTableEntry[], Int(max_size), 0)

@@ -234,15 +234,11 @@ end
     bad_target = "GET foo HTTP/1.1\r\nHost: example.com\r\n\r\n"
     @test_throws HT.ParseError HT.read_request(IOBuffer(codeunits(bad_target)))
 
+    # A request carrying BOTH Transfer-Encoding and Content-Length has ambiguous
+    # framing and is now rejected outright (request smuggling guard,
+    # ANT-2026-YD5QTQDZ) rather than silently preferring Transfer-Encoding.
     stale_cl_chunked = "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
-    stale_req = HT.read_request(IOBuffer(codeunits(stale_cl_chunked)))
-    @test stale_req.content_length == -1
-    @test !HT.hasheader(stale_req.headers, "Content-Length")
-    forwarded = IOBuffer()
-    HT.write_request!(forwarded, stale_req)
-    forwarded_wire = String(take!(forwarded))
-    @test occursin("Transfer-Encoding: chunked\r\n", forwarded_wire)
-    @test !occursin("Content-Length:", forwarded_wire)
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(stale_cl_chunked)))
 
     stale_resp_headers = HT.Headers()
     HT.setheader(stale_resp_headers, "Transfer-Encoding", "chunked")
@@ -253,6 +249,154 @@ end
     response_wire = String(take!(response_io))
     @test occursin("Transfer-Encoding: chunked\r\n", response_wire)
     @test !occursin("Content-Length:", response_wire)
+end
+
+@testset "HTTP/1 request smuggling hardening (JLSEC-2026-618)" begin
+    # --- Bare-LF line termination must be rejected consistently (ANT-2026-CN279YCX,
+    #     ANT-2026-MG2WTZ8Z). The _ConnReader fast/slow paths must agree regardless
+    #     of how bytes are buffered, so a bare LF can never silently merge headers. ---
+    function _conn_reader_for(bytes::Vector{UInt8})
+        listener = Reseau.TCP.listen(Reseau.TCP.loopback_addr(0); backlog = 16)
+        try
+            addr = Reseau.TCP.addr(listener)::Reseau.TCP.SocketAddrV4
+            server_conn = Ref{Union{Nothing,Reseau.TCP.Conn}}(nothing)
+            t = Task(() -> (server_conn[] = Reseau.TCP.accept(listener)))
+            schedule(t)
+            client = Reseau.TCP.connect(Reseau.TCP.loopback_addr(Int(addr.port)))
+            # Send the whole byte stream in a single write so the server-side
+            # _ConnReader pulls it into one buffer fill -> later lines are served
+            # from the buffered fast path.
+            write(client, bytes)
+            Reseau.IOPoll.timedwait(() -> server_conn[] !== nothing, 5.0; pollint = 0.001)
+            return HT._ConnReader(server_conn[]::Reseau.TCP.Conn), client, listener
+        catch
+            HT.@try_ignore close(listener)
+            rethrow()
+        end
+    end
+
+    # A header block terminated by a bare LF must be rejected on the (buffered)
+    # fast path -- previously the fast path tolerated bare LF, which is the
+    # parser differential that enabled smuggling.
+    raw_barelf = collect(codeunits("GET / HTTP/1.1\r\nHost: example.com\nX-Smuggle: 1\r\n\r\n"))
+    reader, client, listener = _conn_reader_for(raw_barelf)
+    try
+        # First line (request line) terminated by CRLF parses fine.
+        @test HT._readline_crlf(reader, 8192) == "GET / HTTP/1.1"
+        # The next "Host: example.com" line is terminated by a bare LF and must
+        # be rejected rather than being merged with the following header.
+        @test_throws HT.ParseError HT._readline_crlf(reader, 8192)
+    finally
+        HT.@try_ignore close(client)
+        HT.@try_ignore close(listener)
+    end
+
+    # End-to-end: a request whose header block contains a bare LF is rejected.
+    reader2, client2, listener2 = _conn_reader_for(
+        collect(codeunits("GET / HTTP/1.1\r\nHost: example.com\nX-Smuggle: 1\r\n\r\n")))
+    try
+        @test_throws HT.ParseError HT.read_request(reader2)
+    finally
+        HT.@try_ignore close(client2)
+        HT.@try_ignore close(listener2)
+    end
+
+    # A well-formed CRLF request still parses (no regression in the common case).
+    reader3, client3, listener3 = _conn_reader_for(
+        collect(codeunits("GET /ok HTTP/1.1\r\nHost: example.com\r\nX-Test: 1\r\n\r\n")))
+    try
+        req_ok = HT.read_request(reader3)
+        @test req_ok.method == "GET"
+        @test req_ok.target == "/ok"
+        @test HT.header(req_ok.headers, "X-Test") == "1"
+    finally
+        HT.@try_ignore close(client3)
+        HT.@try_ignore close(listener3)
+    end
+
+    # The fast and slow paths of _readline_crlf(::_ConnReader) must agree, so the
+    # bare-LF rejection has to hold even when a header line spans several buffer
+    # fills (the *slow* path). Use a tiny _ConnReader buffer and split the bytes
+    # across multiple writes so a single line cannot be served from one fill.
+    function _conn_reader_chunks(chunks::Vector{Vector{UInt8}}; bufbytes::Int=4)
+        listener = Reseau.TCP.listen(Reseau.TCP.loopback_addr(0); backlog = 16)
+        try
+            addr = Reseau.TCP.addr(listener)::Reseau.TCP.SocketAddrV4
+            server_conn = Ref{Union{Nothing,Reseau.TCP.Conn}}(nothing)
+            t = Task(() -> (server_conn[] = Reseau.TCP.accept(listener)))
+            schedule(t)
+            client = Reseau.TCP.connect(Reseau.TCP.loopback_addr(Int(addr.port)))
+            Reseau.IOPoll.timedwait(() -> server_conn[] !== nothing, 5.0; pollint = 0.001)
+            for c in chunks
+                write(client, c)
+            end
+            return HT._ConnReader(server_conn[]::Reseau.TCP.Conn, bufbytes), client, listener
+        catch
+            HT.@try_ignore close(listener)
+            rethrow()
+        end
+    end
+
+    # Slow path: "Host: example.com" terminated by a bare LF, split across writes.
+    reader4, client4, listener4 = _conn_reader_chunks([
+        collect(codeunits("GET / HTTP/1.1\r\n")),
+        collect(codeunits("Host: examp")),
+        collect(codeunits("le.com\nX-Smuggle: 1\r\n\r\n")),
+    ]; bufbytes = 4)
+    try
+        @test HT._readline_crlf(reader4, 8192) == "GET / HTTP/1.1"
+        @test_throws HT.ParseError HT._readline_crlf(reader4, 8192)
+    finally
+        HT.@try_ignore close(client4)
+        HT.@try_ignore close(listener4)
+    end
+
+    # Slow path must still ACCEPT a legitimate CRLF that spans buffer fills,
+    # including a CR at the end of one fill and the LF at the start of the next.
+    reader5, client5, listener5 = _conn_reader_chunks([
+        collect(codeunits("GET /ok HTTP/1.1\r")),
+        collect(codeunits("\nHost: example.com\r\nX-Test: 1\r\n\r\n")),
+    ]; bufbytes = 4)
+    try
+        req_slow = HT.read_request(reader5)
+        @test req_slow.target == "/ok"
+        @test HT.header(req_slow.headers, "X-Test") == "1"
+    finally
+        HT.@try_ignore close(client5)
+        HT.@try_ignore close(listener5)
+    end
+
+    # --- Strict chunk-size parsing (ANT-2026-SRPX7DN1): only 1*HEXDIG is valid. ---
+    @test HT._parse_chunk_size("a") == 10
+    @test HT._parse_chunk_size("FF") == 255
+    @test HT._parse_chunk_size("ff") == 255
+    @test HT._parse_chunk_size("10") == 16
+    @test HT._parse_chunk_size("a;ext=1") == 10           # chunk extension permitted
+    @test HT._parse_chunk_size("0") == 0
+    # Forms that Base.parse(Int64,...;base=16) used to accept but RFC 9112 forbids:
+    @test_throws HT.ParseError HT._parse_chunk_size("+ff")
+    @test_throws HT.ParseError HT._parse_chunk_size("-0")
+    @test_throws HT.ParseError HT._parse_chunk_size("-1")
+    @test_throws HT.ParseError HT._parse_chunk_size("0xff")
+    @test_throws HT.ParseError HT._parse_chunk_size(" ff")
+    @test_throws HT.ParseError HT._parse_chunk_size("ff ")
+    @test_throws HT.ParseError HT._parse_chunk_size("ff\r")   # trailing bare CR
+    @test_throws HT.ParseError HT._parse_chunk_size("")
+    @test_throws HT.ParseError HT._parse_chunk_size("g")
+    # Overflow past Int64 range is rejected, not silently truncated.
+    @test_throws HT.ParseError HT._parse_chunk_size("ffffffffffffffff0")
+
+    # --- HTTP/1.0 + Transfer-Encoding is faulty framing (ANT-2026-YD5QTQDZ). ---
+    h10_te = "POST / HTTP/1.0\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n0\r\n\r\n"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(h10_te)))
+    # Same at the header-parsing helper level.
+    h10_hdrs = HT.Headers()
+    HT.setheader(h10_hdrs, "Transfer-Encoding", "chunked")
+    @test_throws HT.ProtocolError HT._parse_transfer_encoding!(h10_hdrs, UInt8(1), UInt8(0))
+
+    # --- TE + Content-Length on the same request is rejected (ANT-2026-YD5QTQDZ). ---
+    te_cl = "POST / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(te_cl)))
 end
 
 @testset "HTTP/1 response body suppression" begin
@@ -274,9 +418,69 @@ end
     @test parsed.status == 200
     @test parsed.reason == "OK"
 
+    custom = HT.Response(299, HT.EmptyBody(); reason = "Custom Status", content_length = 0)
+    custom_io = IOBuffer()
+    HT.write_response!(custom_io, custom)
+    @test startswith(String(take!(custom_io)), "HTTP/1.1 299 Custom Status\r\n")
+
+    for reason in ("OK\r\nX-Injected: yes", "OK\nX-Injected: yes", "OK\r", "OK\0", "OK\x7f")
+        injected = HT.Response(200, HT.EmptyBody(); reason = reason, content_length = 0)
+        @test_throws HT.ProtocolError HT._write_status_line!(IOBuffer(), injected)
+        @test_throws HT.ProtocolError HT._append_status_line!(IOBuffer(), injected)
+        @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), injected)
+    end
+
     # Parser accepts empty reason phrases from peers.
     raw = "HTTP/1.1 299 \r\nContent-Length: 0\r\n\r\n"
     parsed_raw = HT._read_response(IOBuffer(codeunits(raw)))
     @test parsed_raw.status == 299
     @test parsed_raw.reason == ""
+end
+
+@testset "HTTP/1 client rejects CRLF/CTL in request start line" begin
+    # Direct unit coverage of the client-side start-line validator. CR/LF and
+    # other control bytes in the method, target or host must be rejected before
+    # serialization so a caller-controlled URL cannot inject headers or smuggle a
+    # pipelined request onto the connection.
+    @test HT._validate_request_start_line!("GET", "/a/b?x=1") === nothing
+    @test HT._validate_request_start_line!("POST", "/ok", "example.com") === nothing
+    # CRLF (header injection) and a smuggled pipelined request in the target.
+    @test_throws HT.ParseError HT._validate_request_start_line!(
+        "GET", "/a HTTP/1.1\r\nX-Injected: 1\r\nX:")
+    @test_throws HT.ParseError HT._validate_request_start_line!(
+        "GET", "/a\r\n\r\nGET http://169.254.169.254/ HTTP/1.1\r\nX:")
+    # Bare CR, bare LF and NUL in the target are all control bytes.
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET", "/a\rb")
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET", "/a\nb")
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET", "/a\0b")
+    # A method that is not a valid token (embedded space/CR/LF) is rejected.
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET\r\nFoo: bar", "/")
+    @test_throws HT.ParseError HT._validate_request_start_line!("BAD METHOD", "/")
+    # Control bytes in an absolute-form/proxy host are rejected.
+    @test_throws HT.ParseError HT._validate_request_start_line!(
+        "GET", "/", "example.com\r\nX-Injected: 1")
+
+    # End-to-end origin-form write path: write_request! must refuse to emit a
+    # start line containing the injected CRLF (previously written verbatim).
+    headers = HT.Headers()
+    HT.setheader(headers, "Host", "example.com")
+    smuggled = HT.Request(
+        "GET", "/a HTTP/1.1\r\nX-Injected: 1\r\n\r\nGET /internal HTTP/1.1\r\nX:";
+        headers = headers, body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ParseError HT.write_request!(IOBuffer(), smuggled)
+
+    # A benign request still serializes correctly (no false positives).
+    benign = HT.Request(
+        "GET", "/safe/path?q=1"; headers = headers, body = HT.EmptyBody(), content_length = 0)
+    benign_io = IOBuffer()
+    HT.write_request!(benign_io, benign)
+    @test startswith(String(take!(benign_io)), "GET /safe/path?q=1 HTTP/1.1\r\n")
+
+    # Absolute-form (forward-proxy) write path: a CRLF-laced host must be
+    # rejected before it is concatenated into the absolute target.
+    proxy_plan = HT._ProxyPlan(HT._ProxyPlanMode.HTTP_FORWARD, nothing, "proxy:8080", "proxy-key")
+    poison_host = HT.Request(
+        "GET", "/x"; headers = HT.Headers(),
+        host = "internal\r\nX-Injected: 1", body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ParseError HT._write_request_head!(IOBuffer(), poison_host, proxy_plan)
 end

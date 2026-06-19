@@ -492,6 +492,34 @@ function _request_path_and_query(target::AbstractString)::Tuple{String,String}
     return isempty(path) ? "/" : path, query
 end
 
+# Reject a decoded path segment that could escape the document root once handed
+# to `joinpath`. We split request paths on '/' only, but `joinpath` and the
+# filesystem treat additional forms as separators or as absolute paths --
+# notably on Windows, where '\' is a separator and a leading drive ("C:\") or
+# UNC ("\\host\share") segment is absolute and discards the accumulated root.
+# Because URL-decoding happens before the '/' split, an encoded backslash
+# (%5c) survives inside a single segment and would otherwise pass the plain
+# '.'/'..' check. These checks are deliberately platform-independent (we treat
+# '\' as a separator and reject Windows-absolute forms even on POSIX hosts) so
+# the same hardening applies regardless of where the server runs and so it is
+# testable everywhere.
+@inline function _is_unsafe_request_path_segment(segment::AbstractString)::Bool
+    # Empty segments are filtered out by the caller via keepempty=false.
+    (segment == "." || segment == "..") && return true
+    # Any embedded path separator: '/' can only appear via decoding, '\' is a
+    # Windows separator. A segment that contains a separator is never a single
+    # legitimate path component.
+    ('/' in segment || '\\' in segment) && return true
+    # A colon introduces a Windows drive specifier ("C:...") or an alternate
+    # data stream ("file:...:$DATA"); neither is a valid component name here.
+    (':' in segment) && return true
+    # Absolute paths (POSIX or, when running on Windows, drive/UNC forms) cause
+    # joinpath to discard the root. Guard against the host's own notion of an
+    # absolute path as well as the cross-platform forms covered above.
+    isabspath(segment) && return true
+    return false
+end
+
 function _decoded_request_path_segments(path::AbstractString)::Vector{String}
     decoded = try
         URIs.unescapeuri(String(path))
@@ -500,18 +528,31 @@ function _decoded_request_path_segments(path::AbstractString)::Vector{String}
     end
     segments = String[]
     for segment in split(decoded, '/'; keepempty=false)
-        (segment == "." || segment == "..") && throw(ArgumentError("invalid request path"))
-        push!(segments, segment)
+        _is_unsafe_request_path_segment(segment) && throw(ArgumentError("invalid request path"))
+        push!(segments, String(segment))
     end
     return segments
 end
 
+# Append the (already validated) request-path segments onto the document root
+# and confirm the normalized result stays inside the root. The per-segment
+# checks in `_is_unsafe_request_path_segment` block the known traversal
+# vectors, but we also perform a normalized prefix-containment check as a
+# defense-in-depth backstop so the served path can never escape the root.
 function _join_request_path(root::String, segments::Vector{String})::String
     path = root
     @inbounds for segment in segments
         path = joinpath(path, segment)
     end
-    return path
+    resolved = normpath(path)
+    root_prefix = normpath(root)
+    # Suffix the root with a separator so that a sibling directory sharing a
+    # name prefix (e.g. "<root>_evil") cannot be mistaken for being inside the
+    # root. The root itself is allowed (resolved == root_prefix).
+    if resolved != root_prefix && !startswith(resolved, root_prefix * Base.Filesystem.path_separator)
+        throw(ArgumentError("invalid request path"))
+    end
+    return resolved
 end
 
 function _fileserver_spa_fallback_path(root_path::String, spa_fallback::Union{Nothing,AbstractString})::Union{Nothing,String}
@@ -555,9 +596,41 @@ function _server_response(
     )
 end
 
+# Collapse a same-origin redirect target down to an authority-free, single-rooted
+# path so it can never be parsed by a client as a network-path or absolute-URL
+# reference. A request target such as "//evil.example/" or "/\\evil.example/"
+# passes _validate_request_target! (leading '/', no CTL) and the ".." check, and
+# _decoded_request_path_segments drops the empty segments, yet echoing it verbatim
+# into a Location header yields "//evil.example/" -- a scheme-relative
+# network-path reference (RFC 3986 4.2) that browsers resolve to a foreign
+# authority, i.e. an open redirect. We treat a leading backslash as a slash
+# (browsers do) and collapse any run of leading '/'/'\\' to a single '/'.
+function _sanitize_redirect_location(location::AbstractString)::String
+    raw = String(location)
+    bytes = codeunits(raw)
+    i = 1
+    n = length(bytes)
+    # Count the run of leading slash/backslash separators.
+    @inbounds while i <= n && (bytes[i] == 0x2f || bytes[i] == 0x5c) # '/' or '\\'
+        i += 1
+    end
+    if i > 2
+        # More than one leading separator: re-root at a single '/'.
+        tail = i <= n ? String(SubString(raw, i, lastindex(raw))) : ""
+        return "/" * tail
+    elseif i == 2 && bytes[1] == 0x5c
+        # Single leading backslash (e.g. "\\foo"): normalize to '/'.
+        tail = i <= n ? String(SubString(raw, i, lastindex(raw))) : ""
+        return "/" * tail
+    end
+    return raw
+end
+
 function _redirect_response(request::Request, location::AbstractString)::Response
     headers = Headers()
-    setheader(headers, "Location", String(location))
+    # Always normalize so a canonical redirect Location refers to this server's
+    # own origin and can never set an attacker-controlled authority component.
+    setheader(headers, "Location", _sanitize_redirect_location(location))
     return _server_response(request, 301, headers)
 end
 
@@ -578,6 +651,15 @@ function _resolve_file_etag(path::String, st, etag)
         return String(value)
     end
     return String(etag)
+end
+
+function _finalize_servefile_source!(response::Response, source::IO)::Response
+    if response.body isa _SeekableResponseBody
+        (response.body::_SeekableResponseBody).owns_io = true
+    else
+        @try_ignore close(source)
+    end
+    return response
 end
 
 function _servefile_response(
@@ -616,20 +698,22 @@ function _servefile_response(
     cache_control === nothing || setheader(response_headers, "Cache-Control", String(cache_control))
     resolved_etag = _resolve_file_etag(path, st, etag)
     source = Base.open(path, "r")
-    response = servecontent(
-        request,
-        source;
-        name=basename(path),
-        size=st.size,
-        modtime=modtime,
-        content_type=_servefile_content_type(path),
-        etag=resolved_etag,
-        headers=response_headers,
-    )
-    if response.body isa _SeekableResponseBody
-        (response.body::_SeekableResponseBody).owns_io = true
+    try
+        response = servecontent(
+            request,
+            source;
+            name=basename(path),
+            size=st.size,
+            modtime=modtime,
+            content_type=_servefile_content_type(path),
+            etag=resolved_etag,
+            headers=response_headers,
+        )
+        return _finalize_servefile_source!(response, source)
+    catch
+        @try_ignore close(source)
+        rethrow()
     end
-    return response
 end
 
 """

@@ -156,6 +156,25 @@ mutable struct H2Connection
     # Per-stream receive buffer cap applied to every `H2StreamState` opened on
     # this connection. Configured at connect time; defaults to 256 KiB.
     max_buffered_bytes::Int
+    # CONTINUATION sequencing state, mirroring the server read loop. When a
+    # HEADERS/CONTINUATION frame arrives without END_HEADERS, this records the
+    # stream id whose header block is still open; the next frame on the
+    # connection MUST be a CONTINUATION for the same stream (RFC 7540 6.10).
+    # Touched only from the single-threaded read loop, so it needs no lock.
+    continuation_stream::UInt32
+    # While a header block is open on a live stream, holds that stream's state so
+    # the trailing CONTINUATION frames are still delivered to it even if the
+    # application thread unregisters the stream mid-block (the read loop and
+    # `_unregister_stream!` run concurrently). `nothing` when no live block is
+    # open. Touched only from the single-threaded read loop.
+    open_header_stream::Union{Nothing,H2StreamState}
+    # Scratch buffer that accumulates header block fragments for a header block
+    # belonging to an unknown/closed stream. HPACK's dynamic table is
+    # connection-scoped (RFC 7541 2.3.2 / 4), so even discarded header blocks
+    # must be decoded as a single block to keep the decoder in sync; we buffer
+    # the fragments here until END_HEADERS, decode once, then discard.
+    # Touched only from the single-threaded read loop.
+    orphan_header_block::Vector{UInt8}
     # Concurrent acquirers that have committed to opening a stream on this
     # connection but haven't reached `_register_stream!` yet. Used by
     # `_h2_conn_available` so a second caller doesn't decide a peer-capped
@@ -343,7 +362,7 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
         unlock(conn.state_lock)
     end
     if header_table_size !== nothing
-        size = header_table_size::Int
+        size = min(header_table_size::Int, _MAX_ENCODER_DYNAMIC_TABLE_SIZE)
         lock(conn.write_lock)
         try
             set_max_dynamic_table_size_limit!(conn.encoder, size)
@@ -752,9 +771,65 @@ function _send_window_updates!(conn::H2Connection, stream_id::UInt32, nbytes::In
     return nothing
 end
 
+"""
+    _consume_orphan_header_fragment!(conn, stream_id, fragment, end_headers)
+
+Buffer and (on END_HEADERS) HPACK-decode a header block that belongs to an
+unknown or already-closed stream, discarding the decoded result.
+
+HPACK's dynamic table is connection-scoped and mutated as a side effect of
+decoding each header block (RFC 7541 2.3.2, 4). A header block that is silently
+dropped instead of decoded leaves the client's dynamic table permanently out of
+step with the server's encoder, so every later indexed reference on *any*
+stream of the connection resolves against a stale table. We therefore must still
+feed these bytes through `conn.decoder`. Because HPACK instructions may straddle
+fragment boundaries, the block is accumulated across HEADERS/CONTINUATION frames
+and decoded once when END_HEADERS arrives, exactly as for live streams.
+"""
+function _consume_orphan_header_fragment!(
+    conn::H2Connection,
+    stream_id::UInt32,
+    fragment::Vector{UInt8},
+    end_headers::Bool,
+)
+    remaining = conn.max_header_block_bytes - length(conn.orphan_header_block)
+    if remaining < 0 || length(fragment) > remaining
+        # The peer cannot be allowed to grow this scratch buffer without bound.
+        # An oversized block on an unknown stream is a connection-level fault.
+        empty!(conn.orphan_header_block)
+        conn.continuation_stream = UInt32(0)
+        throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
+    end
+    append!(conn.orphan_header_block, fragment)
+    if end_headers
+        # Decode for the dynamic-table side effect only, then discard the result.
+        try
+            decode_header_block(conn.decoder, conn.orphan_header_block)
+        finally
+            empty!(conn.orphan_header_block)
+            conn.continuation_stream = UInt32(0)
+        end
+    else
+        conn.continuation_stream = stream_id
+    end
+    return nothing
+end
+
 function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     # Frame-local validation already happened in `read_frame!`; this function is
     # responsible for connection- and stream-level state transitions.
+    #
+    # CONTINUATION sequencing (RFC 7540 6.10): a HEADERS/CONTINUATION frame that
+    # does not set END_HEADERS must be followed only by a CONTINUATION frame for
+    # the same stream. Any other frame in that window is a connection error. This
+    # mirrors the enforcement already performed in the server read loop.
+    if conn.continuation_stream != UInt32(0)
+        if !(frame isa ContinuationFrame && (frame::ContinuationFrame).stream_id == conn.continuation_stream)
+            throw(ProtocolError("expected CONTINUATION for stream $(conn.continuation_stream)"))
+        end
+    elseif frame isa ContinuationFrame
+        throw(ProtocolError("unexpected CONTINUATION frame"))
+    end
     if frame isa SettingsFrame
         settings = frame::SettingsFrame
         if !settings.ack
@@ -805,9 +880,8 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         try
             if update.stream_id == UInt32(0)
                 conn.conn_send_window += increment
-            else
-                current = get(() -> conn.initial_stream_send_window, conn.stream_send_window, update.stream_id)
-                conn.stream_send_window[update.stream_id] = current + increment
+            elseif haskey(conn.stream_send_window, update.stream_id)
+                conn.stream_send_window[update.stream_id] += increment
             end
             notify(conn.window_condition; all=true)
         finally
@@ -817,16 +891,48 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     elseif frame isa HeadersFrame
         headers = frame::HeadersFrame
         state = _stream_state(conn, headers.stream_id)
-        state === nothing && return nothing
+        if state === nothing
+            # Unknown or already-closed stream (e.g. trailers racing
+            # `_unregister_stream!`, or a malicious server). The header block is
+            # not delivered to any application stream, but it MUST still pass
+            # through the HPACK decoder to keep the connection's dynamic table
+            # synchronized (RFC 7541 4); otherwise all later streams desync.
+            _consume_orphan_header_fragment!(conn, headers.stream_id, headers.header_block_fragment, headers.end_headers)
+            return nothing
+        end
         _handle_stream_header_fragment!(conn, state::H2StreamState, headers.header_block_fragment, headers.end_headers, headers.end_stream)
+        # Track an open header block so a missing END_HEADERS forces CONTINUATION
+        # (RFC 7540 6.10) and the trailing frames still reach this stream even if
+        # the application thread unregisters it before the block completes.
+        if headers.end_headers
+            conn.continuation_stream = UInt32(0)
+            conn.open_header_stream = nothing
+        else
+            conn.continuation_stream = headers.stream_id
+            conn.open_header_stream = state::H2StreamState
+        end
         return nothing
     elseif frame isa PushPromiseFrame
         throw(ProtocolError("HTTP/2 server push is unsupported"))
     elseif frame isa ContinuationFrame
         cont = frame::ContinuationFrame
-        state = _stream_state(conn, cont.stream_id)
-        state === nothing && return nothing
-        _handle_stream_header_fragment!(conn, state::H2StreamState, cont.header_block_fragment, cont.end_headers, false)
+        open_state = conn.open_header_stream
+        if open_state !== nothing
+            # Continuation of a header block that began on a live stream. Route
+            # it to the captured state even if the stream was unregistered
+            # mid-block so the block is decoded as a single unit.
+            _handle_stream_header_fragment!(conn, open_state::H2StreamState, cont.header_block_fragment, cont.end_headers, false)
+            if cont.end_headers
+                conn.continuation_stream = UInt32(0)
+                conn.open_header_stream = nothing
+            else
+                conn.continuation_stream = cont.stream_id
+            end
+            return nothing
+        end
+        # Otherwise this continues a header block for an unknown/closed stream:
+        # decode for the HPACK side effect and discard, just like HEADERS above.
+        _consume_orphan_header_fragment!(conn, cont.stream_id, cont.header_block_fragment, cont.end_headers)
         return nothing
     elseif frame isa DataFrame
         data = frame::DataFrame
@@ -1014,6 +1120,9 @@ function _connect_h2_from_tcp!(
             true,
             _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
             _h2_buffered_bytes(http2_settings),
+            UInt32(0),
+            nothing,
+            UInt8[],
             0,
             false,
         )
