@@ -528,19 +528,19 @@ function _status_text(status::Integer)::String
     return ""
 end
 
-function _response_reason_phrase(response::Response)::String
+@inline function _response_reason_phrase(response::Response)::String
     reason = isempty(response.reason) ? _status_text(response.status) : response.reason
     _string_contains_ctl_byte(reason) && throw(ProtocolError("invalid HTTP response reason phrase: $(repr(reason))"))
     return reason
 end
 
-function _write_status_line!(io::IO, response::Response)
+@inline function _write_status_line!(io::IO, response::Response)::Nothing
     reason = _response_reason_phrase(response)
     print(io, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
     return nothing
 end
 
-function _append_status_line!(buf::IOBuffer, response::Response)
+@inline function _append_status_line!(buf::IOBuffer, response::Response)::Nothing
     reason = _response_reason_phrase(response)
     print(buf, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
     return nothing

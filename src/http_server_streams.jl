@@ -107,7 +107,7 @@ function _write_server_stream_head!(stream::Stream)::Nothing
         removeheader(headers, "Transfer-Encoding")
     end
     io = IOBuffer()
-    _write_status_line!(io, response)
+    _append_status_line!(io, response)
     _write_headers!(io, headers)
     write(io, "\r\n")
     _write_server_stream_bytes!(stream, take!(io), false)
