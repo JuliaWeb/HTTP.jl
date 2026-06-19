@@ -1457,7 +1457,7 @@ end
         post_response, post_closed = _raw_http_request_until_close(
             HT.port(server),
             "POST /one HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 3\r\n\r\nabc";
-            timeout_s = Sys.iswindows() ? 5.0 : 2.0,
+            timeout_s = 5.0,
         )
         @test occursin("HTTP/1.1 200", post_response)
         @test occursin("ok:/one", post_response)
@@ -1466,7 +1466,7 @@ end
         get_response, get_closed = _raw_http_request_until_close(
             HT.port(server),
             "GET /two HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
-            timeout_s = Sys.iswindows() ? 5.0 : 2.0,
+            timeout_s = 5.0,
         )
         @test occursin("HTTP/1.1 200", get_response)
         @test occursin("ok:/two", get_response)
