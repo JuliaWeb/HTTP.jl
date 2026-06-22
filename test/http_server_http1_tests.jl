@@ -419,6 +419,82 @@ end
     end
 end
 
+@testset "HTTP server peeraddr exposes the client socket address" begin
+    captured = Channel{Any}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        put!(captured, HT.peeraddr(stream))
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        write(stream, "ok")
+        return nothing
+    end
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        addr = take!(captured)
+        @test addr isa NC.SocketAddr
+        # The client connected over IPv4 loopback, so the server sees 127.0.0.1
+        # with the client's ephemeral source port.
+        @test addr.ip == (0x7f, 0x00, 0x00, 0x01)
+        @test addr.port > 0
+
+        # peeraddr is a server-stream operation: a client-side stream must
+        # reject it rather than report a bogus address.
+        HT.open(:GET, "http://$(address)/") do client_stream
+            @test_throws ArgumentError HT.peeraddr(client_stream)
+            _ = HT.startread(client_stream)
+            read(client_stream)
+        end
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+
+    # A server stream with no live connection (e.g. one built from a buffered
+    # request) reports no peer address rather than throwing.
+    @test HT.peeraddr(HT.Stream(HT.Request("GET", "/"))) === nothing
+end
+
+@testset "HTTP server peeraddr exposes the client socket address over TLS" begin
+    cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt")
+    key_file = joinpath(@__DIR__, "resources", "localhost-only.key")
+    captured = Channel{Any}(1)
+    tls_listener = Reseau.TLS.listen(
+        "tcp",
+        "127.0.0.1:0",
+        Reseau.TLS.Config(verify_peer = false, cert_file = cert_file, key_file = key_file);
+        backlog = 8,
+    )
+    server = HT.listen!(tls_listener) do stream
+        put!(captured, HT.peeraddr(stream))
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        write(stream, "ok")
+        return nothing
+    end
+    tls_addr = Reseau.TLS.addr(tls_listener)::NC.SocketAddrV4
+    address = ND.join_host_port("localhost", Int(tls_addr.port))
+    client = HT.Client(
+        transport = HT.Transport(tls_config = Reseau.TLS.Config(verify_peer = false, verify_hostname = true)),
+        prefer_http2 = false,
+    )
+    try
+        resp = HT.get("https://$(address)/"; client = client, retry = false, status_exception = false)
+        @test resp.status == 200
+        addr = take!(captured)
+        @test addr isa NC.SocketAddr
+        @test addr.ip == (0x7f, 0x00, 0x00, 0x01)
+        @test addr.port > 0
+    finally
+        HT.@try_ignore close(client)
+        _run_with_timeout(() -> HT.forceclose(server); label = "tls server forceclose")
+        _run_with_timeout(() -> wait(server); label = "tls server task completion")
+    end
+end
+
 @testset "HTTP servecontent direct conditionals and single ranges" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)

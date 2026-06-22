@@ -29,6 +29,7 @@ HTTP.startwrite
 HTTP.setstatus
 HTTP.addtrailer
 HTTP.closeread
+HTTP.peeraddr
 ```
 
 ## Routing and Middleware

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added `HTTP2Settings` to configure HTTP/2 receive flow-control windows (per-stream `initial_window_size` and connection-level `connection_window_size`). Pass it via the `http2_settings` keyword on `Client`, `Server`, `listen!`, `serve!`, `serve`, and `connect_h2!`. Defaults preserve the protocol-default 65535-byte windows, and the per-stream receive buffer cap is derived from the window. Raising the windows improves single-stream throughput on links with non-trivial latency.
+- Added `HTTP.peeraddr(::HTTP.Stream)`, returning the remote (client) `SocketAddr` of a server stream for both plain-TCP and TLS connections and both HTTP/1 and HTTP/2. This is the supported way to obtain the client IP (for rate limiting, audit logging, and per-client policy) without reaching into transport internals, and restores the capability `Sockets.getpeername(::HTTP.Stream)` provided in HTTP.jl 1.x.
 
 ### Fixed
 - Percent-decode `userinfo` before building the `Basic` auth header (RFC 3986); fixes wrong credentials for request URLs and proxies containing percent-encoded characters.

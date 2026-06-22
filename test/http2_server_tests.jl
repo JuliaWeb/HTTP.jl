@@ -301,6 +301,33 @@ end
     end
 end
 
+@testset "HTTP/2 server peeraddr exposes the client socket address" begin
+    captured = Channel{Any}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        put!(captured, HT.peeraddr(stream))
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        write(stream, "ok")
+        return nothing
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        req = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        res = HT.h2_roundtrip!(conn, req)
+        @test res.status == 200
+        addr = take!(captured)
+        @test addr isa NC.SocketAddr
+        @test addr.ip == (0x7f, 0x00, 0x00, 0x01)
+        @test addr.port > 0
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server writes vector responses with trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
         _ = request

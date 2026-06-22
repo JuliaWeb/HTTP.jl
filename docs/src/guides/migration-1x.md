@@ -398,6 +398,34 @@ SOCKS5 proxies are configured with `socks5://` or `socks5h://` URLs. Both
 schemes follow Go's HTTP transport behavior and pass domain targets to the
 proxy for resolution.
 
+Peer (client) addresses are read through the transport layer rather than
+`Sockets`. In 1.x, `Sockets.getpeername(::HTTP.Stream)` returned the client
+IP and port from a server stream; in 2.0, use `HTTP.peeraddr(stream)`, which
+returns a `SocketAddr` (or `nothing` when unavailable) for both plain-TCP and
+TLS connections.
+
+Before:
+
+```julia
+HTTP.listen("127.0.0.1", 8080) do stream
+    ip, port = Sockets.getpeername(stream)
+    @info "client" ip port
+end
+```
+
+After:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    addr = HTTP.peeraddr(stream)
+    if addr !== nothing
+        # `addr.ip` is an NTuple of octets (not a `Sockets.IPAddr`);
+        # `string(addr)` renders it as "ip:port".
+        @info "client" ip = addr.ip port = addr.port
+    end
+end
+```
+
 ## Servers
 
 Request/response servers still use `HTTP.serve!`:
@@ -616,6 +644,7 @@ Treat these as temporary migration aids. New code should use the documented
 - Replace `HTTP.download` with `Downloads.download` or an explicit
   `HTTP.request(...; response_stream = io)` file stream.
 - Move WebSocket code to `HTTP.WebSockets`.
+- Replace `Sockets.getpeername(stream)` with `HTTP.peeraddr(stream)`.
 - Replace internal parser/connection/HPACK/HTTP2 usage with documented APIs.
 - Run integration tests for redirects, retries, proxy configuration, cookies,
   streaming, WebSockets, SSE, and HTTP/2 after upgrading.
