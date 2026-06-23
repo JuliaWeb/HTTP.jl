@@ -1944,7 +1944,7 @@ function request(
             parsed.target;
             headers=req_headers,
             body=normalized_body.body,
-            host=parsed.address,
+            host=parsed.host_header,
             content_length=normalized_body.content_length,
             context=req_context,
         )

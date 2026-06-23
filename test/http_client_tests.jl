@@ -1281,6 +1281,24 @@ end
         @test parsed_query.server_name == "example.com"
         @test parsed_query.url == "https://example.com:443/?x=1&y=2"
         @test parsed_query.authorization === nothing
+        # `host_header` mirrors the URL authority: the synthesized default port
+        # is never added (so the `Host` header stays `example.com`, matching the
+        # bare host servers like AWS SigV4 sign over), while `address` keeps the
+        # port for dialing.
+        @test parsed_query.host_header == "example.com"
+
+        parsed_default_port = HT._parse_http_url("https://example.com:443/explicit")
+        @test parsed_default_port.address == "example.com:443"
+        # An explicitly-written default port is preserved verbatim (as in Go).
+        @test parsed_default_port.host_header == "example.com:443"
+
+        parsed_http_default = HT._parse_http_url("http://example.com/plain")
+        @test parsed_http_default.address == "example.com:80"
+        @test parsed_http_default.host_header == "example.com"
+
+        parsed_custom_port = HT._parse_http_url("http://minio:9000/bucket/key")
+        @test parsed_custom_port.address == "minio:9000"
+        @test parsed_custom_port.host_header == "minio:9000"
 
         parsed_query_uri = HT._parse_http_url(HT.URI("https://example.com?x=1"), Dict("y" => 2))
         @test parsed_query_uri.secure
@@ -1302,11 +1320,14 @@ end
         @test parsed_ipv6.server_name == "2001:db8::1"
         @test parsed_ipv6.url == "https://[2001:db8::1]:443/ipv6"
         @test parsed_ipv6.authorization === nothing
+        # IPv6 Host headers keep their brackets (unlike `server_name`).
+        @test parsed_ipv6.host_header == "[2001:db8::1]"
 
         parsed_ipv6_port = HT._parse_http_url("https://[2001:db8::1]:8443/ipv6")
         @test parsed_ipv6_port.address == "[2001:db8::1]:8443"
         @test parsed_ipv6_port.server_name == "2001:db8::1"
         @test parsed_ipv6_port.url == "https://[2001:db8::1]:8443/ipv6"
+        @test parsed_ipv6_port.host_header == "[2001:db8::1]:8443"
 
         parsed_ipv6_uri = HT._parse_http_url(HT.URI("https://[2001:db8::1]/ipv6"))
         @test parsed_ipv6_uri.address == "[2001:db8::1]:443"
