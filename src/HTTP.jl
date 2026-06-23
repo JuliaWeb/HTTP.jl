@@ -80,7 +80,7 @@ include("http_websockets.jl")
         :close_idle_connections!, :defaultheader!, :delete, :do!, :expired, :fileserver,
         :forceclose, :get, :get!, :get_request_context, :hasheader, :head, :header,
         :headercontains, :headers, :idle_connection_count, :isaborted, :isrecoverable,
-        :listen, :listen!, :mkheaders, :nobody, :open, :options, :patch, :port, :post, :put,
+        :listen, :listen!, :mkheaders, :nobody, :open, :options, :patch, :peeraddr, :port, :post, :put,
         :read_request, :removeheader, :request, :retry_attempts, :roundtrip!, :serve, :serve!,
         :servecontent, :servefile, :set_deadline!, :setheader, :setstatus, :sse_stream,
         :startwrite, :streamhandler, :trailers, :write_request!, :write_response!,

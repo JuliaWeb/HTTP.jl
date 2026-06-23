@@ -394,6 +394,46 @@ function _server_close(stream::Stream)::Nothing
     return nothing
 end
 
+"""
+    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
+
+Return the remote (client) socket address of a server `stream`, or `nothing`
+when the peer endpoint is unavailable.
+
+The returned `SocketAddr` carries the client IP and port: render it with
+`string(addr)` to get `"ip:port"`, or read `addr.ip` (an `NTuple` of octets)
+and `addr.port`. Works for both plain-TCP and TLS connections and for HTTP/1
+and HTTP/2 server streams.
+
+This is the supported way to obtain the client IP for rate limiting, audit
+logging, and other per-client policy; it avoids reaching into transport
+internals and restores the capability `Sockets.getpeername(::HTTP.Stream)`
+provided in HTTP.jl 1.x.
+
+Throws `ArgumentError` when called on a client-side stream.
+"""
+function peeraddr(stream::Stream)
+    _require_server_stream(stream)
+    conn = _server_stream_transport_conn(stream)
+    conn === nothing && return nothing
+    return _conn_remote_addr(conn)
+end
+
+# Live server streams track their connection in `tracked` for both HTTP/1 and
+# HTTP/2 (an h2 stream is constructed with `tracked` and a shared `h2_conn`
+# pointing at the same connection); `h2_conn` is a defensive fallback. The
+# connection may be plain-TCP or TLS, and both transports expose a public
+# `remote_addr`. A server stream without a live connection (e.g. one built from
+# a buffered request) yields `nothing`.
+@inline function _server_stream_transport_conn(stream::Stream)
+    tracked = stream.tracked
+    tracked === nothing || return tracked.conn
+    return stream.h2_conn
+end
+
+@inline _conn_remote_addr(conn::TCP.Conn) = TCP.remote_addr(conn)
+@inline _conn_remote_addr(conn::TLS.Conn) = TLS.remote_addr(conn)
+
 function _write_response_body_to_stream!(stream::Stream, body)::Nothing
     body === nothing && return nothing
     if body isa EmptyBody
