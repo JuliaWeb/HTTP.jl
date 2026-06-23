@@ -87,6 +87,21 @@ include("http_websockets.jl")
     ))
 end
 
+# Backward-compatibility shim for the 1.x `HTTP.Exceptions` submodule. In 1.x these
+# exception types were defined in `HTTP.Exceptions` and re-exported to the top level;
+# 2.x keeps them at the top level (`HTTP.StatusError` etc.) but dropped the submodule,
+# breaking downstream code that reached in via `HTTP.Exceptions.StatusError`. Re-add a
+# thin deprecated `Exceptions` module forwarding to the canonical names — see #1314.
+# (`@try`, `current_exceptions_to_string` and `RequestError` are not reinstated; see the
+# migration guide.)
+module Exceptions
+    import ..HTTP
+    Base.@deprecate_binding HTTPError    HTTP.HTTPError    false
+    Base.@deprecate_binding StatusError  HTTP.StatusError  false
+    Base.@deprecate_binding ConnectError HTTP.ConnectError false
+    Base.@deprecate_binding TimeoutError HTTP.TimeoutError false
+end
+
 if ccall(:jl_generating_output, Cint, ()) == 1
     include("precompile.jl")
 end
