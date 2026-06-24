@@ -900,7 +900,7 @@ function _open_client_websocket(
     pmce_offer = compress ? _pmce_client_offer_header() : nothing
     key = ws_random_handshake_key()
     _apply_websocket_request_headers!(req_headers, key, subprotocols, pmce_offer)
-    request = Request("GET", parsed.target; headers=req_headers, host=parsed.address, body=EmptyBody(), content_length=0)
+    request = Request("GET", parsed.target; headers=req_headers, host=parsed.host_header, body=EmptyBody(), content_length=0)
     request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
         request_timeout,
         connect_timeout,
@@ -990,17 +990,18 @@ function _open_client_websocket(
         previous_secure = current_secure
         previous_address = current_address
         previous_target = current_request.target
-        current_address, current_secure, next_target = _resolve_redirect_target(
+        current_address, current_secure, next_target, next_host_header = _resolve_redirect_target(
             current_address,
             current_secure,
             _normalize_websocket_redirect_location(location::String),
             current_request.target,
+            current_request.host,
         )
         current_server_name = _host_for_sni(current_address)
         current_request = _prepare_request_for_redirect(current_request, response.status, next_target, redirect_policy)
         key = ws_random_handshake_key()
         _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
-        current_request.host = current_address
+        current_request.host = next_host_header
         next_ref = _redirect_referer(previous_secure, previous_address, previous_target, current_secure, header(current_request.headers, "Referer", nothing))
         if next_ref === nothing
             removeheader(current_request.headers, "Referer")

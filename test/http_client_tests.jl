@@ -777,37 +777,73 @@ end
 end
 
 @testset "HTTP client redirect absolute location default ports" begin
-    address_h2, secure_h2, target_h2 = HT._resolve_redirect_target("origin.com:443", true, "https://www.google.com/search", "/")
+    # `_resolve_redirect_target` returns `(address, secure, target, host_header)`.
+    # `address` keeps the dial port; `host_header` mirrors the next hop's authority
+    # as written (default port never synthesized), so it feeds `request.host` on a
+    # redirect just as `parsed.host_header` does on the initial request.
+    address_h2, secure_h2, target_h2, host_h2 = HT._resolve_redirect_target("origin.com:443", true, "https://www.google.com/search", "/", "origin.com")
     @test address_h2 == "www.google.com:443"
     @test secure_h2
     @test target_h2 == "/search"
+    @test host_h2 == "www.google.com"
 
-    address_h1, secure_h1, target_h1 = HT._resolve_redirect_target("origin.com:80", false, "http://example.com/next", "/")
+    address_h1, secure_h1, target_h1, host_h1 = HT._resolve_redirect_target("origin.com:80", false, "http://example.com/next", "/", "origin.com")
     @test address_h1 == "example.com:80"
     @test !secure_h1
     @test target_h1 == "/next"
+    @test host_h1 == "example.com"
 
-    address_rel, secure_rel, target_rel = HT._resolve_redirect_target("origin.com:443", true, "//cdn.example.com/assets", "/")
+    # An explicit default port in the Location is preserved in the Host header.
+    address_exp, secure_exp, target_exp, host_exp = HT._resolve_redirect_target("origin.com:443", true, "https://example.com:443/next", "/", "origin.com")
+    @test address_exp == "example.com:443"
+    @test host_exp == "example.com:443"
+
+    address_rel, secure_rel, target_rel, host_rel = HT._resolve_redirect_target("origin.com:443", true, "//cdn.example.com/assets", "/", "origin.com")
     @test address_rel == "cdn.example.com:443"
     @test secure_rel
     @test target_rel == "/assets"
+    @test host_rel == "cdn.example.com"
 
-    address_dot, secure_dot, target_dot = HT._resolve_redirect_target("origin.com:80", false, "../next", "/a/b/c")
+    # A same-authority relative redirect carries the current host header through
+    # verbatim (it must not regress a bare host back to a default-port form).
+    address_dot, secure_dot, target_dot, host_dot = HT._resolve_redirect_target("origin.com:80", false, "../next", "/a/b/c", "origin.com")
     @test address_dot == "origin.com:80"
     @test !secure_dot
     @test target_dot == "/a/next"
+    @test host_dot == "origin.com"
 
-    address_query, secure_query, target_query = HT._resolve_redirect_target("origin.com:80", false, "?q=1", "/a/b/c")
+    address_query, secure_query, target_query, host_query = HT._resolve_redirect_target("origin.com:80", false, "?q=1", "/a/b/c", "origin.com")
     @test address_query == "origin.com:80"
     @test !secure_query
     @test target_query == "/a/b/c?q=1"
+    @test host_query == "origin.com"
 
-    address_frag, secure_frag, target_frag = HT._resolve_redirect_target("origin.com:80", false, "#frag", "/a/b/c?x=1")
+    address_frag, secure_frag, target_frag, host_frag = HT._resolve_redirect_target("origin.com:80", false, "#frag", "/a/b/c?x=1", "origin.com")
     @test address_frag == "origin.com:80"
     @test !secure_frag
     @test target_frag == "/a/b/c?x=1"
+    @test host_frag == "origin.com"
 
-    @test_throws HT.ProtocolError HT._resolve_redirect_target("origin.com:80", false, "ftp://example.com/file", "/")
+    @test_throws HT.ProtocolError HT._resolve_redirect_target("origin.com:80", false, "ftp://example.com/file", "/", "origin.com")
+end
+
+@testset "streaming request Host mirrors URL authority as written" begin
+    # `HTTP.open`/streaming builds its `Request` from `_client_stream_request`,
+    # which must use `host_header` (authority as written), not the dial
+    # `address` (which always carries a port). Otherwise a default-port URL
+    # leaks `Host: example.com:443` and breaks AWS SigV4, exactly as the
+    # high-level path did.
+    bare = HT._client_stream_request("PUT", HT._parse_http_url("https://example.com/upload"), HT.Headers(), Int64(0), nothing)
+    @test bare.host == "example.com"
+
+    explicit = HT._client_stream_request("PUT", HT._parse_http_url("https://example.com:443/upload"), HT.Headers(), Int64(0), nothing)
+    @test explicit.host == "example.com:443"
+
+    custom = HT._client_stream_request("PUT", HT._parse_http_url("http://minio:9000/bucket/key"), HT.Headers(), Int64(0), nothing)
+    @test custom.host == "minio:9000"
+
+    ipv6 = HT._client_stream_request("GET", HT._parse_http_url("https://[2001:db8::1]/x"), HT.Headers(), Int64(0), nothing)
+    @test ipv6.host == "[2001:db8::1]"
 end
 
 @testset "HTTP high-level redirect derives TLS server name per hop" begin

@@ -137,6 +137,12 @@ end
             read_idle_timeout = 2,
             write_idle_timeout = 2,
         )
+        # The handshake `Host` mirrors the URL authority as written (built from
+        # `parsed.host_header`, not the dial `address`). Here the URL carries an
+        # explicit port so it is preserved verbatim; the default-port stripping
+        # case is covered by the shared `host_header` / `_resolve_redirect_target`
+        # unit tests in http_client_tests.jl.
+        @test ws.handshake_request.host == address
         @test HT.get_request_context(ws.handshake_request).deadline_ns != 0
         timeout_config = HT.get_request_context(ws.handshake_request).timeout_config
         @test timeout_config !== nothing
