@@ -825,6 +825,73 @@ end
     @test host_frag == "origin.com"
 
     @test_throws HT.ProtocolError HT._resolve_redirect_target("origin.com:80", false, "ftp://example.com/file", "/", "origin.com")
+
+    # Low-level `do!` callers may pin `Host` only in headers, leaving
+    # `request.host === nothing`. `_resolve_redirect_target` must accept a
+    # `nothing` current host (not throw a MethodError on the `::String` arg) and
+    # never propagate `nothing` into `request.host` — otherwise the redirected
+    # request would carry no `Host` header at all.
+    address_nh, secure_nh, target_nh, host_nh = HT._resolve_redirect_target("origin.com:443", true, "https://www.google.com/search", "/", nothing)
+    @test address_nh == "www.google.com:443"
+    @test host_nh == "www.google.com"  # absolute redirect: from parsed Location
+    address_nr, secure_nr, target_nr, host_nr = HT._resolve_redirect_target("origin.com:443", true, "../next", "/a/b/c", nothing)
+    @test address_nr == "origin.com:443"
+    @test host_nr == "origin.com:443"  # relative redirect, no parsed host: falls back to dial address
+end
+
+@testset "do! redirect with header-only Host (request.host === nothing)" begin
+    # Low-level `do!` callers may set `Host` only in the request headers, leaving
+    # `request.host === nothing`. A relative redirect must still be followed: the
+    # threaded `current_host_header` is `nothing` here, and `_resolve_redirect_target`
+    # must accept it (not throw a MethodError) and re-establish a `Host` for the
+    # next hop rather than dropping it. Regression for PR #1318 review follow-up.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_host_hop1 = Ref{Union{Nothing, String}}(nothing)
+    seen_host_hop2 = Ref{Union{Nothing, String}}(nothing)
+    server_task = errormonitor(Threads.@spawn begin
+        # Hop 1: /start -> 302 to a *relative* Location on the same authority.
+        conn1 = NC.accept(listener)
+        try
+            req1 = HT.read_request(HT._ConnReader(conn1))
+            seen_host_hop1[] = HT.header(req1.headers, "Host", nothing)
+            headers = HT.Headers()
+            HT.setheader(headers, "Location", "/final")
+            HT.setheader(headers, "Connection", "close")
+            _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers, close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn1)
+        end
+        # Hop 2: /final -> 200; capture the Host the client sent after redirect.
+        conn2 = NC.accept(listener)
+        try
+            req2 = HT.read_request(HT._ConnReader(conn2))
+            seen_host_hop2[] = HT.header(req2.headers, "Host", nothing)
+            _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn2)
+        end
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), cookiejar = nothing)
+    try
+        headers = HT.Headers()
+        HT.setheader(headers, "Host", address)
+        req = HT.Request("GET", "/start"; headers = headers, body = HT.EmptyBody(), content_length = 0)
+        @test req.host === nothing
+        response = HT.do!(client, address, req; redirect_limit = 1, protocol = :h1)
+        @test response.status == 200
+        @test String(_read_all_body_bytes_client(response.body)) == "ok"
+        _wait_task_client!(server_task)
+        @test seen_host_hop1[] == address
+        # The redirected request still carries a Host header (re-established from
+        # the dial address since the caller provided no parsed host).
+        @test seen_host_hop2[] == address
+    finally
+        close(client.transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
 end
 
 @testset "streaming request Host mirrors URL authority as written" begin
