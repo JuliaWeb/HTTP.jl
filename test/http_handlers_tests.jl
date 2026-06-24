@@ -184,6 +184,7 @@ end
 @testset "HTTP router live request handler server" begin
     router = HT.Router()
     HT.register!(router, "GET", "/hello/{name}", _router_hello_request)
+    HT.register!(router, "QUERY", "/search/{name}", _router_echo_request)
     HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
 
     server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
@@ -192,6 +193,10 @@ end
         hello = HT.get("http://$(address)/hello/jane?lang=en")
         @test hello.status == 200
         @test String(_read_all_handler_bytes(hello.body)) == "hello:jane"
+
+        query = HT.query("http://$(address)/search/jane"; body = (q = "ping",))
+        @test query.status == 200
+        @test String(_read_all_handler_bytes(query.body)) == "echo:jane:q=ping"
 
         echo = HT.post("http://$(address)/echo/jane"; body = "ping")
         @test echo.status == 200

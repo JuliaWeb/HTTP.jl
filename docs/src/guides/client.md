@@ -44,7 +44,7 @@ HTTP.forceclose(server)
 
 Useful top-level request helpers:
 
-- `HTTP.get`, `HTTP.head`, `HTTP.post`, `HTTP.put`, `HTTP.patch`, `HTTP.delete`, `HTTP.options`
+- `HTTP.get`, `HTTP.head`, `HTTP.query`, `HTTP.post`, `HTTP.put`, `HTTP.patch`, `HTTP.delete`, `HTTP.options`
 - `HTTP.request` for the fully general call shape
 - `HTTP.open` when you want streaming control instead of an eagerly consumed body
 
@@ -316,6 +316,30 @@ For `multipart/form-data` (file uploads), use [`HTTP.Form`](@ref):
 form = HTTP.Form(Dict("file" => open("upload.bin", "r"), "kind" => "binary"))
 HTTP.post("http://example.com/upload", [], form)
 ```
+
+### Sending QUERY requests
+
+RFC 10008 defines `QUERY` for safe, idempotent requests with content. Use
+`HTTP.query` when a request needs a body but has GET-like semantics:
+
+```julia
+HTTP.query(
+    "https://api.example.com/search";
+    headers = ["Content-Type" => "application/json"],
+    body = """{"select":["name","email"],"limit":10}""",
+)
+```
+
+`Dict` and `NamedTuple` bodies are encoded the same way as `HTTP.post` form
+bodies, with `Content-Type: application/x-www-form-urlencoded` set
+automatically:
+
+```julia
+HTTP.query("https://api.example.com/search"; body = (select = "name", limit = 10))
+```
+
+Servers that support `QUERY` can advertise accepted query content media types
+with the `Accept-Query` response header.
 
 ### Query parameters
 

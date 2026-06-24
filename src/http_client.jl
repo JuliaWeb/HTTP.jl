@@ -2027,11 +2027,11 @@ Keyword arguments:
   fallback when neither is provided
 - `retry`: overall toggle for high-level request retries; lower-level reused-connection transport retries still happen independently
 - `retries`: maximum number of retry attempts after the initial request attempt
-- `retry_non_idempotent`: allow automatic retries for methods like `POST`/`PATCH`; `PUT` and `DELETE` are already treated as idempotent
+- `retry_non_idempotent`: allow automatic retries for methods like `POST`/`PATCH`; `QUERY`, `PUT`, and `DELETE` are already treated as idempotent
 - `retry_if`: optional callback `(attempt, err, req, resp) -> Bool | nothing`; request-path failures are passed as `RequestRetryError` so implementations can inspect `err.err`, while response-based retry checks pass `err = nothing` and `resp = response`; `true` forces a retry when the request body is replayable, `false` suppresses retry, and `nothing` defers to built-in retry rules
 - `respect_retry_after`: honor server `Retry-After` on retryable `429`/`503` responses
 - `retry_bucket`: `true` uses the request transport's default `RetryBucket`, `false` disables bucket coordination, and a custom `RetryBucket` overrides the transport default
-- automatic retries only occur for replayable request bodies; built-in policy retries idempotent methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`) plus requests carrying `Idempotency-Key`/`X-Idempotency-Key`
+- automatic retries only occur for replayable request bodies; built-in policy retries idempotent methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `QUERY`, `PUT`, `DELETE`) plus requests carrying `Idempotency-Key`/`X-Idempotency-Key`
 - `status_exception`: throw `StatusError` for non-success responses
 - `redirect`: follow redirects through `do!`
 - `redirect_limit`: maximum number of redirects to follow for this call;
@@ -2232,6 +2232,7 @@ const _REQUEST_HELPER_DOC = """
     request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
     get(url, headers=Pair{String,String}[]; kwargs...)
     head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
     post(url, [headers], [body]; kwargs...)
     put(url, [headers], [body]; kwargs...)
     patch(url, [headers], [body]; kwargs...)
@@ -2257,6 +2258,12 @@ end
 @doc _REQUEST_HELPER_DOC
 function head(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("HEAD", url, headers, nothing; kwargs...)
+end
+
+@doc _REQUEST_HELPER_DOC
+function query(url::Union{AbstractString,URI}, args...; kwargs...)
+    headers, body = _split_headers_body_args(args)
+    return request("QUERY", url, headers, body; kwargs...)
 end
 
 @doc _REQUEST_HELPER_DOC
@@ -2301,6 +2308,11 @@ get(client::Client, url::Union{AbstractString,URI}, headers=Pair{String,String}[
 
 head(client::Client, url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...) =
     request("HEAD", url, headers, nothing; client=client, kwargs...)
+
+function query(client::Client, url::Union{AbstractString,URI}, args...; kwargs...)
+    headers, body = _split_headers_body_args(args)
+    return request("QUERY", url, headers, body; client=client, kwargs...)
+end
 
 function post(client::Client, url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
@@ -2365,6 +2377,12 @@ macro client(request_middleware, stream_middleware=:(()))
         function head(url, headers=Pair{String,String}[]; kwargs...)
             $__source__
             return request("HEAD", url, headers, nothing; kwargs...)
+        end
+
+        function query(url, args...; kwargs...)
+            $__source__
+            headers, body = HTTP._split_headers_body_args(args)
+            return request("QUERY", url, headers, body; kwargs...)
         end
 
         function post(url, args...; kwargs...)

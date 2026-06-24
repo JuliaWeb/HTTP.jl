@@ -71,6 +71,17 @@ r = HTTP.post(
 returned = JSON.parse(String(r.body))
 ```
 
+For safe, idempotent requests with content, HTTP.jl supports the RFC 10008
+`QUERY` method through `HTTP.query`:
+
+```julia
+r = HTTP.query(
+    "https://api.example.com/search";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(Dict("select" => ["name", "email"])),
+)
+```
+
 Stream directly into an `IO` sink with `response_stream`, or use `HTTP.open` when
 you want pull-based control over the response stream. The `do`-block form of
 `HTTP.open` returns the final `HTTP.Response`, not the value returned by the

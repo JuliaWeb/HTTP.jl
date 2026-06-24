@@ -1445,7 +1445,7 @@ end
 end
 
 @inline function _retryable_method(method::String)::Bool
-    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE"
+    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" || method == "QUERY"
 end
 
 @inline function _retryable_request(request::Request)::Bool

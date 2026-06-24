@@ -10,7 +10,7 @@ while `Reseau` provides the transport, resolver, and TLS substrate.
 
 Common entrypoints:
 
-- `request`, `get`, `post`, `put`, `patch`, `delete`, `head`, and `options`
+- `request`, `get`, `post`, `put`, `patch`, `delete`, `head`, `options`, and `query`
   for high-level client requests.
 - `open` for client-side request/response streaming.
 - `serve!` / `serve` for `Request -> Response` servers.
@@ -80,10 +80,10 @@ include("http_websockets.jl")
         :close_idle_connections!, :defaultheader!, :delete, :do!, :expired, :fileserver,
         :forceclose, :get, :get!, :get_request_context, :hasheader, :head, :header,
         :headercontains, :headers, :idle_connection_count, :isaborted, :isrecoverable,
-        :listen, :listen!, :mkheaders, :nobody, :open, :options, :patch, :peeraddr, :port, :post, :put,
-        :read_request, :removeheader, :request, :retry_attempts, :roundtrip!, :serve, :serve!,
-        :servecontent, :servefile, :set_deadline!, :setheader, :setstatus, :sse_stream,
-        :startwrite, :streamhandler, :trailers, :write_request!, :write_response!,
+        :listen, :listen!, :mkheaders, :nobody, :open, :options, :patch, :peeraddr, :port, :post,
+        :put, :query, :read_request, :removeheader, :request, :retry_attempts, :roundtrip!,
+        :serve, :serve!, :servecontent, :servefile, :set_deadline!, :setheader, :setstatus,
+        :sse_stream, :startwrite, :streamhandler, :trailers, :write_request!, :write_response!,
     ))
 end
 
