@@ -77,8 +77,11 @@ HTTP.setcookies!
 HTTP.addcookie!
 HTTP.Form
 HTTP.Multipart
+HTTP.Batch
 HTTP.content_type
 HTTP.parse_multipart_form
+HTTP.parse_multipart
+HTTP.parse_multipart_mixed
 ```
 
 ## Proxy Configuration
