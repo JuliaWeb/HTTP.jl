@@ -8,6 +8,7 @@ const HT = HTTP
     @test HT.canonical_header_key("content-type") == "Content-Type"
     @test HT.canonical_header_key("X-CUSTOM-HEADER") == "X-Custom-Header"
     @test HT.canonical_header_key("x-forwarded-for") == "X-Forwarded-For"
+    @test HT.canonical_header_key("accept-query") == "Accept-Query"
     headers = HT.Headers()
     HT.setheader(headers, "content-type", "application/json")
     HT.appendheader(headers, "x-forwarded-for", "127.0.0.1")

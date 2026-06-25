@@ -1067,14 +1067,17 @@ end
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     accept_count = Ref(0)
+    methods = String[]
     paths = String[]
+    bodies = String[]
     server_task = errormonitor(Threads.@spawn begin
         conn1 = NC.accept(listener)
         accept_count[] += 1
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
+            push!(methods, req1.method)
             push!(paths, req1.target)
-            _read_all_transport_body_bytes(req1.body)
+            push!(bodies, String(_read_all_transport_body_bytes(req1.body)))
             _write_response_to_conn!(conn1, req1; body_text = "warmup")
             sleep(0.15)
         finally
@@ -1084,8 +1087,9 @@ end
         accept_count[] += 1
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
+            push!(methods, req2.method)
             push!(paths, req2.target)
-            _read_all_transport_body_bytes(req2.body)
+            push!(bodies, String(_read_all_transport_body_bytes(req2.body)))
             _write_response_to_conn!(conn2, req2; body_text = "retried", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn2)
@@ -1098,13 +1102,21 @@ end
         res1 = HT.roundtrip!(transport, address, req1)
         @test String(_read_all_transport_body_bytes(res1.body)) == "warmup"
         sleep(0.20)
-        req2 = HT.Request("GET", "/retry"; host = address, body = HT.EmptyBody(), content_length = 0)
+        req2 = HT.Request(
+            "QUERY",
+            "/retry";
+            host = address,
+            body = HT.BytesBody(collect(codeunits("select=1"))),
+            content_length = 8,
+        )
         res2 = HT.roundtrip!(transport, address, req2)
         @test res2.status == 200
         @test String(_read_all_transport_body_bytes(res2.body)) == "retried"
         _wait_task!(server_task)
         @test accept_count[] == 2
+        @test methods == ["GET", "QUERY"]
         @test paths == ["/warmup", "/retry"]
+        @test bodies == ["", "select=1"]
     finally
         close(transport)
         HTTP.@try_ignore NC.close(listener)
@@ -1114,6 +1126,7 @@ end
 end
 
 @testset "HTTP client transport treats not-pollable reused errors as retryable" begin
+    @test HT._retryable_method("QUERY")
     @test HT._retryable_reused_conn_error(Reseau.IOPoll.NotPollableError())
 end
 

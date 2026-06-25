@@ -22,6 +22,7 @@ HTTP.roundtrip!
 HTTP.request
 HTTP.get
 HTTP.head
+HTTP.query
 HTTP.post
 HTTP.put
 HTTP.patch

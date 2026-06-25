@@ -517,6 +517,7 @@ const _COMMON_CANONICAL_HEADER_KEYS = Dict(
     "Accept-Charset" => "Accept-Charset",
     "Accept-Encoding" => "Accept-Encoding",
     "Accept-Language" => "Accept-Language",
+    "Accept-Query" => "Accept-Query",
     "Accept-Ranges" => "Accept-Ranges",
     "Cache-Control" => "Cache-Control",
     "Connection" => "Connection",

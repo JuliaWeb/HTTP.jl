@@ -121,6 +121,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     base_url = "http://$(address)"
     seen_tokens = String[]
+    seen_query_body = Ref("")
     server_task = errormonitor(Threads.@spawn begin
         conn1 = NC.accept(listener)
         try
@@ -133,10 +134,19 @@ end
         conn2 = NC.accept(listener)
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
-            push!(seen_tokens, HT.header(req2.headers, "X-Stream-Token", ""))
-            _send_response_client!(conn2, req2; body_text="stream")
+            push!(seen_tokens, HT.header(req2.headers, "X-Client-Token", ""))
+            seen_query_body[] = String(_read_all_body_bytes_client(req2.body))
+            _send_response_client!(conn2, req2; body_text="query:" * seen_query_body[])
         finally
             HTTP.@try_ignore NC.close(conn2)
+        end
+        conn3 = NC.accept(listener)
+        try
+            req3 = HT.read_request(HT._ConnReader(conn3))
+            push!(seen_tokens, HT.header(req3.headers, "X-Stream-Token", ""))
+            _send_response_client!(conn3, req3; body_text="stream")
+        finally
+            HTTP.@try_ignore NC.close(conn3)
         end
         return nothing
     end)
@@ -144,6 +154,16 @@ end
         response = ClientSingleMiddleware.get("$(base_url)/request"; clienttoken="abc123", retry=false)
         @test response.status == 200
         @test String(response.body) == "request"
+        @test HT.header(response, "X-Client-Request") == "handled"
+
+        response = ClientSingleMiddleware.query(
+            "$(base_url)/query";
+            clienttoken = "query-abc",
+            body = (name = "value",),
+            retry = false,
+        )
+        @test response.status == 200
+        @test String(response.body) == "query:name=value"
         @test HT.header(response, "X-Client-Request") == "handled"
 
         seen_body = Ref("")
@@ -154,7 +174,8 @@ end
         end
         @test response.status == 200
         @test seen_body[] == "stream"
-        @test seen_tokens == ["abc123", "stream-xyz"]
+        @test seen_query_body[] == "name=value"
+        @test seen_tokens == ["abc123", "query-abc", "stream-xyz"]
         _wait_task_client!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)
@@ -377,6 +398,66 @@ end
     end
 end
 
+@testset "HTTP client QUERY redirect preserves method and replayable body" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    seen_methods = String[]
+    seen_bodies = String[]
+    server_task = errormonitor(Threads.@spawn begin
+        conn1 = NC.accept(listener)
+        try
+            req1 = HT.read_request(HT._ConnReader(conn1))
+            push!(seen_methods, req1.method)
+            push!(seen_bodies, String(_read_all_body_bytes_client(req1.body)))
+            headers = HT.Headers()
+            HT.setheader(headers, "Location", "/final")
+            HT.setheader(headers, "Connection", "close")
+            _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers, close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn1)
+        end
+        conn2 = NC.accept(listener)
+        try
+            req2 = HT.read_request(HT._ConnReader(conn2))
+            push!(seen_methods, req2.method)
+            push!(seen_bodies, String(_read_all_body_bytes_client(req2.body)))
+            _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn2)
+        end
+        return nothing
+    end)
+    client = HT.Client()
+    try
+        policy = HT._redirect_policy(client)
+        override_method, preserve_method = HT._normalize_redirect_method_override("QUERY")
+        @test override_method == "QUERY"
+        @test !preserve_method
+        @test HT._rewrite_method_for_redirect("QUERY", 301, policy) == "QUERY"
+        @test HT._rewrite_method_for_redirect("QUERY", 302, policy) == "QUERY"
+        @test HT._rewrite_method_for_redirect("QUERY", 303, policy) == "GET"
+        @test HT._rewrite_method_for_redirect("QUERY", 307, policy) == "QUERY"
+        @test HT._rewrite_method_for_redirect("QUERY", 308, policy) == "QUERY"
+
+        response = HT.query(
+            "$(base_url)/start",
+            ["Content-Type" => "application/x-www-form-urlencoded"],
+            "select=name";
+            client = client,
+        )
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_client!(server_task)
+        @test seen_methods == ["QUERY", "QUERY"]
+        @test seen_bodies == ["select=name", "select=name"]
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP request trace emits redirect events" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -465,6 +546,55 @@ end
         _wait_task_client!(server_task)
         @test seen_methods == ["POST", "POST"]
         @test seen_bodies == ["payload", "payload"]
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP client QUERY requests retry as idempotent" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    seen_methods = String[]
+    seen_bodies = String[]
+    server_task = errormonitor(Threads.@spawn begin
+        for attempt in 1:2
+            conn = NC.accept(listener)
+            try
+                req = HT.read_request(HT._ConnReader(conn))
+                push!(seen_methods, req.method)
+                push!(seen_bodies, String(_read_all_body_bytes_client(req.body)))
+                if attempt == 1
+                    _send_response_client!(
+                        conn,
+                        req;
+                        status = 503,
+                        reason = "Service Unavailable",
+                        body_text = "retry",
+                        close_conn = true,
+                    )
+                else
+                    _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+                end
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end)
+    try
+        response = HT.query(
+            "$(base_url)/retry",
+            ["Content-Type" => "application/sql"],
+            "select 1";
+            retries = 1,
+        )
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_client!(server_task)
+        @test seen_methods == ["QUERY", "QUERY"]
+        @test seen_bodies == ["select 1", "select 1"]
     finally
         HTTP.@try_ignore NC.close(listener)
     end
@@ -1242,8 +1372,11 @@ end
     seen_targets = String[]
     seen_header = Ref{Union{Nothing, String}}(nothing)
     seen_auth = Union{Nothing, String}[]
+    seen_query_methods = String[]
+    seen_query_bodies = String[]
+    seen_query_content_types = Union{Nothing, String}[]
     server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:15
+        for _ in 1:17
             conn = NC.accept(listener)
             try
                 req = HT.read_request(HT._ConnReader(conn))
@@ -1256,6 +1389,11 @@ end
                     seen_header[] = HT.header(req.headers, "X-Token", nothing)
                     payload = String(_read_all_body_bytes_client(req.body))
                     _send_response_client!(conn, req; body_text = payload, close_conn = true)
+                elseif req.target == "/body-query" || req.target == "/body-query-client"
+                    push!(seen_query_methods, req.method)
+                    push!(seen_query_bodies, String(_read_all_body_bytes_client(req.body)))
+                    push!(seen_query_content_types, HT.header(req.headers, "Content-Type", nothing))
+                    _send_response_client!(conn, req; body_text = "query:" * seen_query_bodies[end], close_conn = true)
                 elseif startswith(req.target, "/encoded?")
                     _send_response_client!(conn, req; body_text = req.target, close_conn = true)
                 elseif req.target == "/auth" || req.target == "/auth-url" || req.target == "/auth-url-uri" || req.target == "/auth-header"
@@ -1311,6 +1449,24 @@ end
         @test resp_echo_uri.status == 200
         @test String(resp_echo_uri.body) == "payload-uri"
         @test seen_header[] == "xyz789"
+
+        resp_body_query = HT.query("$(base_url)/body-query"; body = (select = "name", limit = 10))
+        @test resp_body_query.status == 200
+        @test String(resp_body_query.body) == "query:select=name&limit=10"
+
+        query_client = HT.Client()
+        try
+            resp_client_query = HT.query(
+                query_client,
+                "$(base_url)/body-query-client",
+                ["Content-Type" => "application/sql"],
+                "select 1",
+            )
+            @test resp_client_query.status == 200
+            @test String(resp_client_query.body) == "query:select 1"
+        finally
+            close(query_client)
+        end
 
         resp_auth = HT.get("$(base_url)/auth"; basicauth = ("alice", "secret"))
         @test resp_auth.status == 200
@@ -1444,11 +1600,16 @@ end
         @test "/echo" in seen_targets
         @test "/query?a=1&b=2" in seen_targets
         @test "/query?x=0&a=1&b=2" in seen_targets
+        @test "/body-query" in seen_targets
+        @test "/body-query-client" in seen_targets
         @test "/encoded?a%20b=c%2Bd&slash=%2Fx" in seen_targets
         @test "/auth" in seen_targets
         @test "/auth-url" in seen_targets
         @test "/auth-url-uri" in seen_targets
         @test "/auth-header" in seen_targets
+        @test seen_query_methods == ["QUERY", "QUERY"]
+        @test seen_query_bodies == ["select=name&limit=10", "select 1"]
+        @test seen_query_content_types == ["application/x-www-form-urlencoded", "application/sql"]
     finally
         HTTP.@try_ignore NC.close(listener)
     end
@@ -2564,6 +2725,7 @@ end
             @test String(HT.post(client, url; body="x").body) == "POST"
             @test String(HT.put(client, url; body="x").body) == "PUT"
             @test String(HT.patch(client, url; body="x").body) == "PATCH"
+            @test String(HT.query(client, url; body="x").body) == "QUERY"
             @test String(HT.delete(client, url).body) == "DELETE"
             @test HT.head(client, url).status == 200
             @test HT.options(client, url).status == 200

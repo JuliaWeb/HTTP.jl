@@ -20,7 +20,7 @@ function _normalize_redirect_method_override(redirect_method)::Tuple{Union{Nothi
     redirect_method == :same && return nothing, true
     redirect_method isa AbstractString || redirect_method isa Symbol || throw(ArgumentError("redirect_method must be nothing, :same, or an HTTP method String/Symbol"))
     method = uppercase(String(redirect_method))
-    method in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH") || throw(ArgumentError("redirect_method must be one of GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, or :same"))
+    method in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "QUERY") || throw(ArgumentError("redirect_method must be one of GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, QUERY, or :same"))
     return method, false
 end
 
@@ -242,7 +242,7 @@ function _rewrite_method_for_redirect(method::String, status::Int, policy::_Redi
     if policy.redirect_method !== nothing
         return policy.redirect_method::String
     end
-    method == "HEAD" && return method
+    (method == "HEAD" || method == "QUERY") && return method
     return "GET"
 end
 

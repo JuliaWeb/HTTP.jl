@@ -25,7 +25,7 @@ end
 end
 
 @inline function _retryable_request_method(method::String)::Bool
-    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" || method == "PUT" || method == "DELETE"
+    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" || method == "PUT" || method == "DELETE" || method == "QUERY"
 end
 
 @inline function _retryable_request_headers(request::Request)::Bool

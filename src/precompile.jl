@@ -124,6 +124,22 @@ function _run_precompile_workload_inner!()::Nothing
             payload = _precompile_body_string(req.body)
             return _precompile_text_response("echo:" * getparam(req, "name") * ":" * payload)
         end))
+        register!(request_router, "QUERY", "/search/{name}", Handlers.handlertimeout(0.5)(req -> begin
+            content_type = header(req, "Content-Type", "")
+            payload = _precompile_body_string(req.body)
+            response_headers = ["Accept-Query" => "application/x-www-form-urlencoded"]
+            req.method == "QUERY" || return Response(405, EmptyBody(); content_length=0)
+            occursin("application/x-www-form-urlencoded", content_type) || return Response(415, EmptyBody(); content_length=0)
+            return _precompile_text_response("query:" * getparam(req, "name") * ":" * payload, 200, response_headers)
+        end))
+        register!(request_router, "QUERY", "/search-redirect", req ->
+            Response(
+                307,
+                EmptyBody();
+                headers=["Location" => "/search/redirected"],
+                content_length=0,
+            )
+        )
         register!(request_router, "GET", "/redirect", req ->
             Response(
                 302,
@@ -247,6 +263,19 @@ function _run_precompile_workload_inner!()::Nothing
         echo = post("http://$(request_address)/echo/jane"; client=client, body="ping", stream_timeouts...)
         @assert echo.status == 200
         @assert String(echo.body) == "echo:jane:ping"
+
+        _precompile_trace("request query")
+        query_headers = ["Content-Type" => "application/x-www-form-urlencoded"]
+        query_resp = request("QUERY", "http://$(request_address)/search/jane", query_headers, (term="ping",); client=client, stream_timeouts...)
+        @assert query_resp.status == 200
+        @assert header(query_resp, "Accept-Query", nothing) == "application/x-www-form-urlencoded"
+        @assert String(query_resp.body) == "query:jane:term=ping"
+
+        _precompile_trace("request query redirect")
+        query_redirect = request("QUERY", "http://$(request_address)/search-redirect", query_headers, "term=redirect"; client=client, stream_timeouts...)
+        @assert query_redirect.status == 200
+        @assert header(query_redirect, "Accept-Query", nothing) == "application/x-www-form-urlencoded"
+        @assert String(query_redirect.body) == "query:redirected:term=redirect"
 
         _precompile_trace("request redirect")
         redirected = get("http://$(request_address)/redirect"; client=client, request_timeouts...)
