@@ -20,7 +20,7 @@ function _client_stream_request(
         copy(headers),
         Headers(),
         EmptyBody(),
-        parsed.address,
+        parsed.host_header,
         Int64(0),
         UInt8(1),
         UInt8(1),

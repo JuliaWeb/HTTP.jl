@@ -199,19 +199,34 @@ function _normalize_redirect_authority(authority::String, secure::Bool)::String
     return HostResolvers.join_host_port(authority, secure ? 443 : 80)
 end
 
-function _resolve_redirect_target(current_address::String, current_secure::Bool, location::String, current_target::String)
+# Returns `(address, secure, target, host_header)` for the next hop. `address`
+# is the dial target (always carries a port); `host_header` is the authority as
+# written for the `Host` header (default port never synthesized) — see
+# `_urlparts_host_header!`. For a host-changing redirect both come from the
+# parsed Location; for a same-authority relative redirect the host is unchanged,
+# so `current_host_header` is carried through verbatim.
+#
+# `current_host_header` is the current hop's `request.host`, which is `nothing`
+# for low-level `do!` callers that pin `Host` only in the request headers. The
+# header is stripped on each hop by `_prepare_request_for_redirect`, so the next
+# `Host` is taken from this returned value; on a relative redirect with no parsed
+# host we fall back to the dial `address` (carrying the port, as before this
+# change) rather than returning `nothing`, which would drop the `Host` header
+# entirely. An absolute redirect always yields a proper parsed `host_header`.
+function _resolve_redirect_target(current_address::String, current_secure::Bool, location::String, current_target::String, current_host_header::Union{Nothing,String})
     scheme_match = match(r"^([A-Za-z][A-Za-z0-9+\\.-]*):", location)
     if scheme_match !== nothing
         scheme = lowercase(String(scheme_match.captures[1]))
         (scheme == "http" || scheme == "https") || throw(ProtocolError("unsupported redirect location scheme '$scheme'"))
         parsed = _parse_http_url(location)
-        return parsed.address, parsed.secure, parsed.target
+        return parsed.address, parsed.secure, parsed.target, parsed.host_header
     end
     if startswith(location, "//")
         parsed = _parse_http_url(string(current_secure ? "https:" : "http:", location))
-        return parsed.address, parsed.secure, parsed.target
+        return parsed.address, parsed.secure, parsed.target, parsed.host_header
     end
-    return current_address, current_secure, _resolve_relative_redirect_request_target(current_target, location)
+    next_host_header = current_host_header === nothing ? current_address : current_host_header
+    return current_address, current_secure, _resolve_relative_redirect_request_target(current_target, location), next_host_header
 end
 
 function _rewrite_method_for_redirect(method::String, status::Int, policy::_RedirectPolicy)::String

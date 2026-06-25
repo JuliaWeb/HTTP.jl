@@ -147,6 +147,29 @@ function _urlparts_url!(parts::_URLParts)::String
     return url
 end
 
+# Authority for the `Host` header. This mirrors the URL as written: an explicit
+# port is preserved, but the scheme's default port is never synthesized. The
+# connection address (`_urlparts_address!`) always carries a port for dialing,
+# so the two intentionally differ for a default-port URL.
+#
+# Synthesizing the default port into `Host` (e.g. `s3.amazonaws.com:443`) is
+# legal per RFC 9110 but breaks any server that treats the Host verbatim. The
+# motivating case is AWS SigV4: it signs the canonical host (`s3.amazonaws.com`)
+# and rejects a request whose `Host` carries `:443`. Go's net/http, curl and
+# HTTP.jl 1.x all keep the Host authority as written; this restores that.
+#
+# For an explicit port we use the authority directly. For a default-port URL we
+# strip the synthesized `:<default_port>` off `address` rather than reusing
+# `server_name`, because `server_name` unwraps IPv6 brackets (`2001:db8::1`)
+# whereas a `Host` header requires them (`[2001:db8::1]`); `address` keeps the
+# brackets (`[2001:db8::1]:443`), so trimming the port yields the correct form.
+function _urlparts_host_header!(parts::_URLParts)::String
+    getfield(parts, :has_explicit_port) && return _urlparts_address!(parts)
+    address = _urlparts_address!(parts)
+    suffix = string(':', Int(getfield(parts, :default_port)))
+    return endswith(address, suffix) ? address[1:(end - length(suffix))] : address
+end
+
 function _urlparts_authorization!(parts::_URLParts)::Union{Nothing,String}
     getfield(parts, :has_userinfo) || return nothing
     cached = getfield(parts, :authorization_cache)
@@ -166,6 +189,8 @@ function Base.getproperty(parts::_URLParts, sym::Symbol)
         return _urlparts_target!(parts)
     elseif sym === :server_name
         return _urlparts_server_name!(parts)
+    elseif sym === :host_header
+        return _urlparts_host_header!(parts)
     elseif sym === :url
         return _urlparts_url!(parts)
     elseif sym === :authorization
@@ -175,7 +200,8 @@ function Base.getproperty(parts::_URLParts, sym::Symbol)
 end
 
 function Base.propertynames(::_URLParts, private::Bool=false)
-    return private ? fieldnames(_URLParts) : (:secure, :address, :target, :server_name, :url, :authorization)
+    return private ? fieldnames(_URLParts) :
+           (:secure, :address, :target, :server_name, :host_header, :url, :authorization)
 end
 
 @inline function _request_url(secure::Bool, address::String, target::String)::String

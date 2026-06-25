@@ -895,7 +895,7 @@ function _do_incoming!(
             previous_secure = current_secure
             previous_address = current_address
             previous_target = current_request.target
-            next_address, next_secure, next_target = _resolve_redirect_target(current_address, current_secure, location, current_request.target)
+            next_address, next_secure, next_target, next_host_header = _resolve_redirect_target(current_address, current_secure, location, current_request.target, current_request.host)
             _emit_trace(
                 trace,
                 RedirectEvent(
@@ -940,7 +940,7 @@ function _do_incoming!(
                     cookies = Cookie[]
                 end
             end
-            current_request.host = current_address
+            current_request.host = next_host_header
             break
         end
     end
@@ -1944,7 +1944,7 @@ function request(
             parsed.target;
             headers=req_headers,
             body=normalized_body.body,
-            host=parsed.address,
+            host=parsed.host_header,
             content_length=normalized_body.content_length,
             context=req_context,
         )

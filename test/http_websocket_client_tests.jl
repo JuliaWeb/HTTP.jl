@@ -112,6 +112,20 @@ function _read_ws_frames(conn, ws::W.Conn)
     return HT.WebSockets.ws_on_incoming_data!(ws, buf)
 end
 
+@testset "WebSocket handshake Host mirrors URL authority as written" begin
+    # The WS handshake `Host` is built from `parsed.host_header`, where `parsed`
+    # comes from `_parse_websocket_url` (which rewrites ws->http / wss->https
+    # before parsing). Exercise that mapping directly: a default-port wss/ws URL
+    # must yield a bare Host, while an explicit or custom port is preserved.
+    @test W._parse_websocket_url("wss://example.com/chat").host_header == "example.com"
+    @test W._parse_websocket_url("ws://example.com/chat").host_header == "example.com"
+    @test W._parse_websocket_url("wss://example.com:443/chat").host_header == "example.com:443"
+    @test W._parse_websocket_url("ws://minio:9000/chat").host_header == "minio:9000"
+    @test W._parse_websocket_url("wss://[2001:db8::1]/chat").host_header == "[2001:db8::1]"
+    # The dial address still carries the port for connecting.
+    @test W._parse_websocket_url("wss://example.com/chat").address == "example.com:443"
+end
+
 @testset "HTTP.WebSockets client open over ws" begin
     listener = nothing
     task = nothing
@@ -137,6 +151,12 @@ end
             read_idle_timeout = 2,
             write_idle_timeout = 2,
         )
+        # The handshake `Host` mirrors the URL authority as written (built from
+        # `parsed.host_header`, not the dial `address`). Here the URL carries an
+        # explicit port so it is preserved verbatim; the default-port stripping
+        # case is covered by the shared `host_header` / `_resolve_redirect_target`
+        # unit tests in http_client_tests.jl.
+        @test ws.handshake_request.host == address
         @test HT.get_request_context(ws.handshake_request).deadline_ns != 0
         timeout_config = HT.get_request_context(ws.handshake_request).timeout_config
         @test timeout_config !== nothing
