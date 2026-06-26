@@ -416,7 +416,7 @@ function _precompile_workload_enabled()::Bool
     Base.JLOptions().code_coverage == 0 || return false
 
     # https://github.com/JuliaWeb/HTTP.jl/issues/1280
-    is_julia_automerge() && return true
+    is_julia_automerge() && return false
 
     return _precompile_host_resolver_available()
 end
