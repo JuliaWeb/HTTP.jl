@@ -1609,7 +1609,7 @@ end
 
 function _apply_default_accept_encoding!(headers::Headers, decompress::Union{Nothing,Bool})::Nothing
     decompress === false && return nothing
-    hasheader(headers, "Accept-Encoding") && return nothing
+    any(h -> h[1] == "Accept-Encoding", headers.entries) && return nothing
     setheader(headers, "Accept-Encoding", "gzip, deflate")
     return nothing
 end
