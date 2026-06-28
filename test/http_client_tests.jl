@@ -1622,7 +1622,7 @@ end
     base_url = "http://$(address)"
     accept_encodings = Dict{String, Union{Nothing, String}}()
     server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:13
+        for _ in 1:14
             conn = NC.accept(listener)
             try
                 req = HT.read_request(HT._ConnReader(conn))
@@ -1691,6 +1691,9 @@ end
                     headers = HT.Headers()
                     HT.setheader(headers, "Content-Encoding", "deflate")
                     _send_response_bytes_client!(conn, req; body_bytes = payload, headers = headers, close_conn = true)
+                elseif req.target == "/accept-encoding-empty"
+                    accept_encodings[req.target] = HT.header(req.headers, "Accept-Encoding", nothing)
+                    _send_response_client!(conn, req; body_text = "ok", close_conn = true)
                 else
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
@@ -1788,6 +1791,11 @@ end
         @test resp_deflate_buffer.body === deflate_buffer
         @test String(resp_deflate_buffer.body) == "deflate-buffer"
         @test accept_encodings["/deflate-buffer"] == "gzip, deflate"
+
+        # RFC 9110 §12.5.3: an explicit Accept-Encoding: "" must not be overwritten
+        resp_ae_empty = HT.get("$(base_url)/accept-encoding-empty"; headers = ["Accept-Encoding" => ""])
+        @test resp_ae_empty.status == 200
+        @test accept_encodings["/accept-encoding-empty"] == ""
 
         _wait_task_client!(server_task)
     finally
