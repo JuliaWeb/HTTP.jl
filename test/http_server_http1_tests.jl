@@ -99,7 +99,7 @@ function _raw_http_request(
             catch err
                 _is_first_byte_timeout(err) || rethrow(err)
                 attempt < attempts || error("timed out waiting for first response byte ($(attempts) attempts)")
-                @warn "raw probe got no first byte; re-dialing — known Windows IOCP wake strand (Reseau#107)" attempt port
+                @warn "raw probe got no first byte; re-dialing after known Windows IOCP wake strand (Reseau#107)" attempt port
             finally
                 NC.close(sock)
             end
@@ -108,15 +108,28 @@ function _raw_http_request(
     end
 end
 
-function _raw_http_request_until_close(port::Integer, request::AbstractString; timeout_s::Float64 = 3.0)::Tuple{String, Bool}
-    return _run_with_timeout(; timeout_s = timeout_s + 4.0, label = "raw http request until close (port $(port))") do
-        sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
-        try
-            write(sock, Vector{UInt8}(codeunits(String(request))))
-            return _read_until_close(sock; timeout_s)
-        finally
-            NC.close(sock)
+function _raw_http_request_until_close(
+    port::Integer,
+    request::AbstractString;
+    timeout_s::Float64 = 3.0,
+    wait_for_first_byte::Bool = true,
+    attempts::Int = Sys.iswindows() ? 3 : 1,
+)::Tuple{String, Bool}
+    return _run_with_timeout(; timeout_s = (timeout_s + 4.0) * attempts, label = "raw http request until close (port $(port))") do
+        for attempt in 1:attempts
+            sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
+            try
+                write(sock, Vector{UInt8}(codeunits(String(request))))
+                return _read_until_close(sock; timeout_s, wait_for_first_byte)
+            catch err
+                _is_first_byte_timeout(err) || rethrow(err)
+                attempt < attempts || error("timed out waiting for first response byte before close ($(attempts) attempts)")
+                @warn "raw probe got no first byte before close; re-dialing after known Windows IOCP wake strand (Reseau#107)" attempt port
+            finally
+                NC.close(sock)
+            end
         end
+        error("unreachable: raw probe retry loop exited")
     end
 end
 
@@ -199,23 +212,34 @@ function _read_until_quiet(
     end
 end
 
-function _read_until_close(conn::NC.Conn; timeout_s::Float64 = 1.0)::Tuple{String, Bool}
+function _read_until_close(conn::NC.Conn; timeout_s::Float64 = 1.0, wait_for_first_byte::Bool = false)::Tuple{String, Bool}
     buf = Vector{UInt8}(undef, 1024)
     out = UInt8[]
     deadline_ns = Int64(time_ns()) + round(Int64, timeout_s * 1.0e9)
+    saw_bytes = false
     while true
         remaining_ns = deadline_ns - Int64(time_ns())
-        remaining_ns <= 0 && return String(out), false
+        if remaining_ns <= 0
+            wait_for_first_byte && !saw_bytes && throw(_FirstByteTimeout())
+            return String(out), false
+        end
         NC.set_read_deadline!(conn, Int64(time_ns()) + remaining_ns)
         try
             chunk = readavailable(conn)
             n = length(chunk)
-            n == 0 && return String(out), true
+            if n == 0
+                wait_for_first_byte && !saw_bytes && throw(_FirstByteTimeout())
+                return String(out), true
+            end
             n > length(buf) && resize!(buf, n)
             copyto!(buf, 1, chunk, 1, n)
             append!(out, @view(buf[1:n]))
+            saw_bytes = true
         catch err
-            err isa IOP.DeadlineExceededError && return String(out), false
+            if err isa IOP.DeadlineExceededError
+                wait_for_first_byte && !saw_bytes && throw(_FirstByteTimeout())
+                return String(out), false
+            end
             (err isa EOFError || HT._is_peer_close_error(err::Exception)) && return String(out), true
             rethrow(err)
         end
@@ -1037,7 +1061,8 @@ end
     sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
     try
         write(sock, Vector{UInt8}(codeunits("GET /one HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
-        first = _read_until_quiet(sock; timeout_s = 2.0, quiet_timeout_s = 0.1)
+        first_timeout_s = Sys.iswindows() ? 5.0 : 2.0
+        first = _read_until_quiet(sock; timeout_s = first_timeout_s, quiet_timeout_s = 0.1, wait_for_first_byte = true)
         @test occursin("HTTP/1.1 200 OK", first)
         sleep(1.0)
         closed_after_idle = false

@@ -802,6 +802,8 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     close_count = Ref(0)
     stage = Ref(1)
+    second_chunk_started = Channel{Nothing}(1)
+    release_second_chunk = Channel{Nothing}(1)
     callback_body = HT.CallbackBody(
         dst -> begin
             if stage[] == 1
@@ -811,7 +813,8 @@ end
                 return length(bytes)
             end
             if stage[] == 2
-                sleep(1.0)
+                isready(second_chunk_started) || put!(second_chunk_started, nothing)
+                take!(release_second_chunk)
                 bytes = collect(codeunits("world"))
                 copyto!(dst, 1, bytes, 1, length(bytes))
                 stage[] = 3
@@ -837,15 +840,26 @@ end
     transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
     try
         req = HT.Request("POST", "/early"; host = address, body = callback_body, content_length = 10)
-        started = time()
-        res = HT.roundtrip!(transport, address, req)
-        elapsed = time() - started
-        @test res.status == 200
-        @test String(_read_all_transport_body_bytes(res.body)) == "early"
-        @test elapsed < 0.75
-        @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
+        res_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req))
+        ready = timedwait(() -> istaskdone(res_task) || isready(second_chunk_started), 2.0; pollint = 0.001)
+        @test ready == :ok
+        if ready == :ok && isready(second_chunk_started) && !istaskdone(res_task)
+            response_ready = timedwait(() -> istaskdone(res_task), 2.0; pollint = 0.001)
+            @test response_ready == :ok
+        end
+        @test istaskdone(res_task)
+        isready(release_second_chunk) || put!(release_second_chunk, nothing)
+        if istaskdone(res_task)
+            res = fetch(res_task)
+            @test res.status == 200
+            @test String(_read_all_transport_body_bytes(res.body)) == "early"
+            @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
+        else
+            _wait_task!(res_task)
+        end
         _wait_task!(server_task)
     finally
+        isready(release_second_chunk) || put!(release_second_chunk, nothing)
         close(transport)
         HTTP.@try_ignore NC.close(listener)
     end
