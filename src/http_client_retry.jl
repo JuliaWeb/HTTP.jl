@@ -206,7 +206,7 @@ function _arm_request_retry!(
         _sleep_retry_delay!(request, delay_ns) || return false, nothing, delay_ns
         ok = true
     finally
-        ok || (bucket !== nothing && token !== nothing && release(bucket::RetryBucket, token, nothing))
+        ok || (bucket !== nothing && token !== nothing && release(bucket::RetryBucket, token, _retry_bucket_failure_cost(nothing)))
     end
     controller.remaining -= 1
     return true, token, delay_ns
