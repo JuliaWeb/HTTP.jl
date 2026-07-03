@@ -148,6 +148,13 @@ mutable struct H2Connection
     conn_send_window::Int64
     initial_stream_send_window::Int64
     stream_send_window::Dict{UInt32,Int64}
+    # Streams whose send side is closed: the peer completed its response
+    # (END_STREAM) or reset the stream, or the request was canceled. Guarded by
+    # `state_lock` and checked by `_reserve_send_window!` so a body writer
+    # parked on flow control aborts instead of waiting for WINDOW_UPDATE
+    # frames the peer will never send (RFC 9113 §8.1 permits a server to
+    # respond before the request body completes).
+    send_closed_streams::Set{UInt32}
     peer_max_concurrent_streams::Int
     peer_max_header_list_size::Int
     peer_goaway_last_stream_id::UInt32
@@ -258,8 +265,41 @@ end
 @inline function _h2_send_window_ready_locked(conn::H2Connection, stream_id::UInt32)::Bool
     (@atomic :acquire conn.closed) && return true
     conn.conn_error !== nothing && return true
-    stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
+    # A send-closed or unregistered stream will never receive more window
+    # credit; report ready so the waiter re-checks and aborts.
+    stream_id in conn.send_closed_streams && return true
+    haskey(conn.stream_send_window, stream_id) || return true
+    stream_window = conn.stream_send_window[stream_id]
     return stream_window > 0 && conn.conn_send_window > 0
+end
+
+"""
+    _mark_h2_send_closed!(conn, stream_id)
+
+Record that no more request DATA may be sent on `stream_id` (the peer ended or
+reset the stream, or the request was canceled) and wake any body writer parked
+in `_reserve_send_window!` waiting for flow-control credit.
+"""
+function _mark_h2_send_closed!(conn::H2Connection, stream_id::UInt32)
+    lock(conn.state_lock)
+    try
+        if haskey(conn.streams, stream_id)
+            push!(conn.send_closed_streams, stream_id)
+        end
+        notify(conn.window_condition; all=true)
+    finally
+        unlock(conn.state_lock)
+    end
+    return nothing
+end
+
+@inline function _h2_send_closed(conn::H2Connection, stream_id::UInt32)::Bool
+    lock(conn.state_lock)
+    try
+        return stream_id in conn.send_closed_streams || !haskey(conn.stream_send_window, stream_id)
+    finally
+        unlock(conn.state_lock)
+    end
 end
 
 function _wait_h2_send_window_locked!(conn::H2Connection, stream_id::UInt32, deadline_ns::Int64)::Nothing
@@ -286,6 +326,9 @@ function _wait_h2_send_window_locked!(conn::H2Connection, stream_id::UInt32, dea
     return nothing
 end
 
+# Returns the number of DATA payload bytes the caller may send (> 0), or 0 when
+# the stream's send side closed (peer response complete, stream reset, request
+# canceled, or stream unregistered) and the caller must stop sending.
 function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::Int, deadline_ns::Int64)::Int
     wanted > 0 || throw(ArgumentError("wanted send window must be > 0"))
     lock(conn.state_lock)
@@ -293,6 +336,8 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
         while true
             (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
             conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
+            stream_id in conn.send_closed_streams && return 0
+            haskey(conn.stream_send_window, stream_id) || return 0
             stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
@@ -310,21 +355,24 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     end
 end
 
-function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request, data::Vector{UInt8}, end_stream::Bool)
-    isempty(data) && return nothing
+# Returns `true` when all of `data` was written, `false` when the stream's send
+# side closed mid-body and the remaining payload must be abandoned.
+function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request, data::Vector{UInt8}, end_stream::Bool)::Bool
+    isempty(data) && return true
     offset = 1
     total_len = length(data)
     while offset <= total_len
         remaining = total_len - offset + 1
         write_deadline_ns = _request_write_deadline_ns(request)
         chunk_len = _reserve_send_window!(conn, stream_id, remaining, write_deadline_ns)
+        chunk_len == 0 && return false
         chunk = Vector{UInt8}(undef, chunk_len)
         copyto!(chunk, 1, data, offset, chunk_len)
         final_chunk = (offset + chunk_len - 1) == total_len
         _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, end_stream && final_chunk, chunk), write_deadline_ns)
         offset += chunk_len
     end
-    return nothing
+    return true
 end
 
 function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,UInt32}})
@@ -646,6 +694,7 @@ function _unregister_stream!(conn::H2Connection, stream_id::UInt32)
     try
         pop!(conn.streams, stream_id, nothing)
         pop!(conn.stream_send_window, stream_id, nothing)
+        delete!(conn.send_closed_streams, stream_id)
         notify(conn.stream_condition; all=true)
     finally
         unlock(conn.state_lock)
@@ -871,7 +920,21 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         rst = frame::RSTStreamFrame
         state = _stream_state(conn, rst.stream_id)
         state === nothing && return nothing
-        _set_stream_error!(state::H2StreamState, H2StreamResetError(rst.error_code))
+        # RFC 9113 §8.1: a server MAY send RST_STREAM with NO_ERROR after a
+        # complete response to ask the client to abort the request body;
+        # "clients MUST NOT discard responses as a result". Only surface the
+        # reset as a stream error when it does not follow a complete response.
+        benign = false
+        lock((state::H2StreamState).lock)
+        try
+            benign = rst.error_code == UInt32(0) && (state::H2StreamState).stream_done
+        finally
+            unlock((state::H2StreamState).lock)
+        end
+        benign || _set_stream_error!(state::H2StreamState, H2StreamResetError(rst.error_code))
+        # Either way the peer will grant no more send window: wake any body
+        # writer parked on flow control so it stops uploading.
+        _mark_h2_send_closed!(conn, rst.stream_id)
         return nothing
     elseif frame isa WindowUpdateFrame
         update = frame::WindowUpdateFrame
@@ -900,6 +963,10 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
             _consume_orphan_header_fragment!(conn, headers.stream_id, headers.header_block_fragment, headers.end_headers)
             return nothing
         end
+        # A response bearing END_STREAM means the peer is done with the stream
+        # and will grant no more send window; wake any body writer parked on
+        # flow control so the roundtrip can return this early response.
+        headers.end_stream && _mark_h2_send_closed!(conn, headers.stream_id)
         _handle_stream_header_fragment!(conn, state::H2StreamState, headers.header_block_fragment, headers.end_headers, headers.end_stream)
         # Track an open header block so a missing END_HEADERS forces CONTINUATION
         # (RFC 7540 6.10) and the trailing frames still reach this stream even if
@@ -938,6 +1005,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         data = frame::DataFrame
         state = _stream_state(conn, data.stream_id)
         state === nothing && return nothing
+        # Mark before `_handle_stream_data!`, which can block while the
+        # buffered body is drained.
+        data.end_stream && _mark_h2_send_closed!(conn, data.stream_id)
         _handle_stream_data!(state::H2StreamState, data)
         return nothing
     end
@@ -1114,6 +1184,7 @@ function _connect_h2_from_tcp!(
             Int64(65_535),
             Int64(65_535),
             Dict{UInt32,Int64}(),
+            Set{UInt32}(),
             typemax(Int),
             0,
             typemax(UInt32),
@@ -1226,8 +1297,13 @@ function Base.close(conn::H2Connection)
     return nothing
 end
 
-function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request::Request)
-    request.body isa EmptyBody && return nothing
+# Returns `true` when the full body (and END_STREAM) was sent, `false` when the
+# upload was abandoned because the stream's send side closed first — e.g. the
+# peer answered with a complete response before reading the whole request body
+# (RFC 9113 §8.1), reset the stream, or the request was canceled. The caller
+# decides how to close out the abandoned stream.
+function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request::Request)::Bool
+    request.body isa EmptyBody && return true
     buf = Vector{UInt8}(undef, 16 * 1024)
     pending = UInt8[]
     have_pending = false
@@ -1236,16 +1312,16 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
             n = body_read!(request.body, buf)
             if n == 0
                 if have_pending
-                    _write_data_frames_h2!(conn, stream_id, request, pending, true)
-                else
-                    _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]), _request_write_deadline_ns(request))
+                    return _write_data_frames_h2!(conn, stream_id, request, pending, true)
                 end
-                return nothing
+                _h2_send_closed(conn, stream_id) && return false
+                _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]), _request_write_deadline_ns(request))
+                return true
             end
             current = Vector{UInt8}(undef, n)
             copyto!(current, 1, buf, 1, n)
             if have_pending
-                _write_data_frames_h2!(conn, stream_id, request, pending, false)
+                _write_data_frames_h2!(conn, stream_id, request, pending, false) || return false
             end
             pending = current
             have_pending = true
@@ -1301,6 +1377,14 @@ function _request_headers_for_h2(address::String, request::Request, secure::Bool
             end
             push!(fields, HeaderField(lowered, normalized, false))
         end
+    end
+    # HTTP/2 carries no Transfer-Encoding; DATA framing alone delimits the
+    # body. Still advertise `content-length` when the body size is known
+    # (RFC 9113 §8.1.1), matching the HTTP/1.1 client: intermediaries that
+    # translate to an HTTP/1.1 origin otherwise forward the body without a
+    # declared length, and origins commonly treat that as an empty body.
+    if request.content_length >= 0 && !(request.body isa EmptyBody) && !hasheader(request.headers, "content-length")
+        push!(fields, HeaderField("content-length", string(request.content_length), false))
     end
     return fields
 end
@@ -1606,6 +1690,9 @@ function _h2_roundtrip_incoming!(
     cancel_cb = let conn = conn, stream_state = stream_state, request_ctx = request_ctx
         () -> begin
             _set_stream_error!(stream_state, _canceled_error(request_ctx))
+            # Stop a body writer parked on flow control; cancellation means no
+            # more request DATA may be sent on this stream.
+            _mark_h2_send_closed!(conn, stream_state.stream_id)
             @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x8)))
             lock(conn.state_lock)
             try
@@ -1625,7 +1712,19 @@ function _h2_roundtrip_incoming!(
         end
         try
             end_stream = request.body isa EmptyBody
-            end_stream || _write_request_body_h2!(conn, stream_state.stream_id, request)
+            if !end_stream && !_write_request_body_h2!(conn, stream_state.stream_id, request)
+                # The upload was abandoned because the peer finished with the
+                # stream first. When that was a benign early complete response
+                # (no stream error), actively cancel our half of the stream
+                # with NO_ERROR so the peer can release its stream state; a
+                # peer-initiated reset or cancellation needs no reply.
+                send_rst = lock(stream_state.lock) do
+                    stream_state.stream_error === nothing && !stream_state.conn_errored
+                end
+                if send_rst
+                    @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x0)))
+                end
+            end
         catch err
             _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed", err::Exception))
             rethrow()
