@@ -1822,6 +1822,17 @@ For timeout kwargs left at `0`, fall back to the client's default for the named 
     return getfield(client, field)
 end
 
+const _DEFAULT_CONNECT_TIMEOUT = 30
+
+@inline function _resolve_connect_timeout(client::Union{Nothing,Client}, value::Union{Nothing,Real})::Real
+    if value === nothing
+        client === nothing && return _DEFAULT_CONNECT_TIMEOUT
+        default = client.default_connect_timeout
+        return default > 0 ? default : _DEFAULT_CONNECT_TIMEOUT
+    end
+    return _client_default_timeout(client, value, :default_connect_timeout)
+end
+
 
 function request(
     method::Union{AbstractString,Symbol},
@@ -1854,7 +1865,7 @@ function request(
     max_sse_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
-    connect_timeout::Real=30,
+    connect_timeout::Union{Nothing,Real}=nothing,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
@@ -1907,7 +1918,7 @@ function request(
         max_sse_line_bytes >= 0 || throw(ArgumentError("max_sse_line_bytes must be >= 0"))
         max_sse_event_bytes >= 0 || throw(ArgumentError("max_sse_event_bytes must be >= 0"))
         # Merge per-call values with client defaults (per-call wins)
-        connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
+        connect_timeout = _resolve_connect_timeout(client, connect_timeout)
         request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
         response_header_timeout = _client_default_timeout(client, response_header_timeout, :default_response_header_timeout)
         read_idle_timeout = _client_default_timeout(client, read_idle_timeout, :default_read_idle_timeout)
@@ -2071,7 +2082,8 @@ Keyword arguments:
   is created
 - `connect_timeout`: connection establishment timeout in seconds, covering DNS,
   TCP connect, HTTP proxy `CONNECT` or SOCKS5 handshakes, TLS handshake, and
-  HTTP/2 session setup in the high-level client paths
+  HTTP/2 session setup in the high-level client paths. When not passed, the
+  `client`'s `connect_timeout` default applies if set, else 30; `0` disables
 - `request_timeout`: overall request deadline in seconds
 - `response_header_timeout`: maximum time to wait for response headers after
   the request has been sent

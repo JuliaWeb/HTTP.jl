@@ -450,7 +450,7 @@ function open(
     basicauth=nothing,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
-    connect_timeout::Real=30,
+    connect_timeout::Union{Nothing,Real}=nothing,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
@@ -486,7 +486,7 @@ function open(
         logtag=logtag,
     )
     # Apply client defaults (per-call wins)
-    connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
+    connect_timeout = _resolve_connect_timeout(client, connect_timeout)
     request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
     response_header_timeout = _client_default_timeout(client, response_header_timeout, :default_response_header_timeout)
     read_idle_timeout = _client_default_timeout(client, read_idle_timeout, :default_read_idle_timeout)

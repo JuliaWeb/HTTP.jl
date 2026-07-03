@@ -2576,6 +2576,84 @@ end
     end
 end
 
+@testset "HTTP client-level connect_timeout resolution" begin
+    client = HT.Client(connect_timeout=5)
+    try
+        # Unset kwarg falls back to the client default.
+        @test HT._resolve_connect_timeout(client, nothing) == 5.0
+        # Explicit per-call values override the client default, including an
+        # explicit 30 (the built-in default value).
+        @test HT._resolve_connect_timeout(client, 7) == 7
+        @test HT._resolve_connect_timeout(client, 30) == 30
+        # Explicit 0 falls through to the client default, like the other
+        # timeout kwargs.
+        @test HT._resolve_connect_timeout(client, 0) == 5.0
+    finally
+        close(client)
+    end
+    unset = HT.Client()
+    try
+        # Neither the call nor the client sets it: built-in 30s default.
+        @test HT._resolve_connect_timeout(unset, nothing) == 30
+        # Explicit 0 without a client default disables the connect timeout.
+        @test HT._resolve_connect_timeout(unset, 0) == 0
+    finally
+        close(unset)
+    end
+    @test HT._resolve_connect_timeout(nothing, nothing) == 30
+    @test HT._resolve_connect_timeout(nothing, 12) == 12
+    @test HT._resolve_connect_timeout(nothing, 0) == 0
+end
+
+@testset "HTTP Client(connect_timeout=...) default applies to requests" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:2
+            conn = NC.accept(listener)
+            try
+                sleep(0.20)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end)
+    client = HT.Client(
+        transport=HT.Transport(tls_config=TL.Config(verify_peer=false), max_idle_per_host=4, max_idle_total=4),
+        connect_timeout=0.05,
+    )
+    try
+        # The request does not pass connect_timeout, so the client default
+        # must bound the (stalled) TLS handshake.
+        err = try
+            HT.get("https://$(address)/stall"; client=client, retry=false)
+            nothing
+        catch ex
+            ex
+        end
+        @test err !== nothing
+        @test _is_timeout_error_client(err::Exception)
+
+        # Same through the HTTP.open streaming path.
+        stream_err = try
+            HT.open(:GET, "https://$(address)/stall"; client=client, retry=false) do stream
+                nothing
+            end
+            nothing
+        catch ex
+            ex
+        end
+        @test stream_err !== nothing
+        @test _is_timeout_error_client(stream_err::Exception)
+        _wait_task_client!(server_task)
+    finally
+        close(client.transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP transport error wrapping" begin
     refused = ND.OpError("dial", "tcp", nothing, nothing, Base.SystemError("connect", Base.Libc.ECONNREFUSED))
     wrapped_refused = HT._wrap_client_transport_error(refused, "request", Int64(0), Int64(0))
