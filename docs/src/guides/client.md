@@ -201,8 +201,9 @@ Recognized client defaults:
 - `default_query`: dict, named-tuple, or vector-of-pairs of query parameters; per-call keys override matching defaults
 - `default_basicauth`: applied unless the call passes `basicauth` or an explicit `Authorization` header
 - `connect_timeout`, `request_timeout`, `response_header_timeout`,
-  `read_idle_timeout`, `write_idle_timeout`: applied when the per-call timeout
-  is `0` (the default)
+  `read_idle_timeout`, `write_idle_timeout`: applied when the call does not pass the
+  matching keyword. When neither the call nor the client sets it the timeouts are disabled
+  (i.e. set to `0`) except `connect_timeout` which defaults to `30`
 
 ### Positional `Client` calls
 
@@ -453,6 +454,9 @@ read timeout:
 - `write_idle_timeout` bounds inactivity between outbound write-progress events
 - `expect_continue_timeout` controls how long HTTP/1 uploads wait on
   `100-continue` before sending the body anyway
+
+`connect_timeout` defaults to 30 seconds when neither the call nor a `Client`
+sets it; the other timeouts are disabled by default.
 
 `readtimeout` is still accepted for compatibility, but it is deprecated and now
 behaves like `read_idle_timeout`.
