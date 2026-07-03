@@ -1228,6 +1228,214 @@ end
     end
 end
 
+@testset "HTTP/2 client advertises content-length for known-size request bodies" begin
+    # RFC 9113 §8.1.1 permits `content-length` on HTTP/2 requests, and
+    # intermediaries translating to HTTP/1.1 origins need it: without one they
+    # forward the body with no declared length, and origins commonly treat
+    # that as an empty body (e.g. Django rejects such uploads outright).
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_headers = Ref{Vector{HT.HeaderField}}(HT.HeaderField[])
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            seen_headers[] = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            done = false
+            while !done
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame || continue
+                done = (frame::HT.DataFrame).end_stream
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 96)
+        request = HT.Request("POST", "/sized-upload"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        _wait_task_h2!(server_task)
+        lengths = [field.value for field in seen_headers[] if field.name == "content-length"]
+        @test lengths == ["96"]
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client aborts request body on early complete response" begin
+    # RFC 9113 §8.1: a server can send a complete response before the client
+    # finishes the request body (e.g. rejecting an upload at auth time) and
+    # then stops granting flow-control window. A body writer parked in
+    # `_reserve_send_window!` must wake up, abandon the upload, cancel its half
+    # of the stream with RST_STREAM(NO_ERROR), and surface the response.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    data_bytes = Threads.Atomic{Int}(0)
+    client_rst_code = Threads.Atomic{Int}(-1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(32)]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            # Complete 401 response immediately; never send WINDOW_UPDATE.
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "401", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
+            while true
+                frame = HT.read_frame!(reader)
+                if frame isa HT.DataFrame
+                    Threads.atomic_add!(data_bytes, length((frame::HT.DataFrame).data))
+                elseif frame isa HT.RSTStreamFrame
+                    client_rst_code[] = Int((frame::HT.RSTStreamFrame).error_code)
+                    break
+                end
+            end
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 128)
+        request = HT.Request("POST", "/early-response"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 401
+        _wait_task_h2!(server_task)
+        # Only the first 32-byte window's worth of the body was sent.
+        # (Connection reusability after a stream-level event is asserted in the
+        # mid-upload reset testset below, whose server outlives the check; here
+        # the server closes its socket as soon as it sees the client RST, so
+        # the read loop may legitimately have shut the connection down.)
+        @test data_bytes[] < length(payload)
+        @test client_rst_code[] == 0
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client keeps response when peer resets after complete response" begin
+    # RFC 9113 §8.1: RST_STREAM with NO_ERROR after a complete response asks
+    # the client to abort the request body, and "clients MUST NOT discard
+    # responses as a result".
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(32)]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "401", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.RSTStreamFrame(hf.stream_id, UInt32(0x0)))
+            while true
+                frame = HT.read_frame!(reader)
+                frame isa HT.RSTStreamFrame && break
+            end
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 128)
+        request = HT.Request("POST", "/early-response-rst"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 401
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client surfaces mid-upload stream reset" begin
+    # A reset arriving while the body writer is parked on flow control must
+    # wake it and raise the stream error instead of stalling until a timeout.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(32)]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            # Wait for the first DATA frame, then cancel the stream without a
+            # response and without ever granting more window.
+            while true
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame && break
+            end
+            _write_frame_to_conn!(accepted_conn, HT.RSTStreamFrame(hf.stream_id, UInt32(0x8)))
+            sleep(0.20)
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 128)
+        request = HT.Request("POST", "/mid-upload-rst"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        err = try
+            HT.h2_roundtrip!(h2_conn, request)
+            nothing
+        catch e
+            e
+        end
+        @test err isa HT.H2StreamResetError
+        @test (err::HT.H2StreamResetError).error_code == UInt32(0x8)
+        # A stream-level reset must not poison the shared connection.
+        @test HT._h2_conn_reusable(h2_conn)
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 client connection window stays non-negative under a raised stream window" begin
     # A raised SETTINGS_INITIAL_WINDOW_SIZE only enlarges the per-stream send
     # window; the connection-level window is separate and stays at the protocol
@@ -1883,6 +2091,7 @@ function _build_bare_h2_connection()
         Int64(65_535),
         Int64(65_535),
         Dict{UInt32,Int64}(),
+        Set{UInt32}(),
         typemax(Int),
         0,
         typemax(UInt32),
