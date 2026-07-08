@@ -290,6 +290,52 @@ end
     @test occursin("elapsed", msg)
 end
 
+@testset "HTTP core headers display" begin
+    headers = HT.Headers([
+        "Authorization" => "Bearer super-secret",
+        "Proxy-Authorization" => "Basic dXNlcjpwYXNz",
+        "Cookie" => "session=secret-cookie",
+        "Set-Cookie" => "id=secret-id",
+        "Content-Type" => "text/plain",
+    ])
+
+    # Sensitive header values must be masked in both the compact (2-arg) and
+    # text/plain (3-arg) show forms, so they never leak into stacktraces,
+    # logging output, or the REPL.
+    compact = sprint(show, headers)
+    @test occursin("HTTP.Headers([", compact)
+    @test occursin("\"Authorization\" => \"******\"", compact)
+    @test occursin("\"Proxy-Authorization\" => \"******\"", compact)
+    @test occursin("\"Cookie\" => \"******\"", compact)
+    @test occursin("\"Set-Cookie\" => \"******\"", compact)
+    @test occursin("\"Content-Type\" => \"text/plain\"", compact)
+    @test !occursin("secret", compact)
+    @test !occursin("dXNlcjpwYXNz", compact)
+
+    plain = sprint(io -> show(io, MIME"text/plain"(), headers))
+    @test occursin("5-element", plain)
+    @test occursin("\"Authorization\" => \"******\"", plain)
+    @test occursin("\"Proxy-Authorization\" => \"******\"", plain)
+    @test occursin("\"Cookie\" => \"******\"", plain)
+    @test occursin("\"Set-Cookie\" => \"******\"", plain)
+    @test occursin("\"Content-Type\" => \"text/plain\"", plain)
+    @test !occursin("secret", plain)
+    @test !occursin("dXNlcjpwYXNz", plain)
+
+    # Redaction is case-insensitive.
+    lower = HT.Headers()
+    push!(lower.entries, "authorization" => "Bearer raw-secret")
+    @test occursin("\"authorization\" => \"******\"", sprint(show, lower))
+    @test !occursin("raw-secret", sprint(io -> show(io, MIME"text/plain"(), lower)))
+
+    # Redaction is display-only; programmatic access returns the real value.
+    @test HT.header(headers, "Authorization") == "Bearer super-secret"
+
+    # Empty collections render without a trailing colon or entries.
+    @test sprint(show, HT.Headers()) == "HTTP.Headers([])"
+    @test endswith(sprint(io -> show(io, MIME"text/plain"(), HT.Headers())), "0-element HTTP.Headers")
+end
+
 @testset "HTTP core request/response display" begin
     request_headers = HT.Headers()
     HT.setheader(request_headers, "Authorization", "Bearer super-secret")
