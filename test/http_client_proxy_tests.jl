@@ -577,6 +577,20 @@ end
     @test socks5h_plan.first_hop_address == "proxy.local:1080"
     @test socks5h_plan.pool_key == "socks5h://proxy.local:1080/|https://origin.local:443"
 
+    socks_alice = HT.ProxyURL("socks5://alice:one@proxy.local:1080")
+    socks_bob = HT.ProxyURL("socks5://bob:two@proxy.local:1080")
+    socks_alice_plan = HT._proxy_plan(socks_alice, false, "origin.local:80")
+    socks_bob_plan = HT._proxy_plan(socks_bob, false, "origin.local:80")
+    @test socks_alice_plan.pool_key != socks_bob_plan.pool_key
+    @test socks_alice_plan.pool_key == HT._proxy_plan(socks_alice, false, "origin.local:80").pool_key
+    @test !occursin("alice", socks_alice_plan.pool_key)
+    @test !occursin("one", socks_alice_plan.pool_key)
+
+    tunnel_alice = HT.ProxyURL("http://alice:one@proxy.local:8080")
+    tunnel_bob = HT.ProxyURL("http://bob:two@proxy.local:8080")
+    @test HT._proxy_plan(tunnel_alice, true, "origin.local:443").pool_key !=
+          HT._proxy_plan(tunnel_bob, true, "origin.local:443").pool_key
+
     socks_no_proxy = HT.ProxyURL("socks5://proxy.local:1080"; no_proxy = "origin.local")
     skipped_plan = HT._proxy_plan(socks_no_proxy, false, "origin.local:80")
     @test skipped_plan.mode == HT._ProxyPlanMode.DIRECT
