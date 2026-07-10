@@ -2,6 +2,7 @@
 
 using EnumX
 using Reseau.HostResolvers
+using UUIDs
 
 struct _NoProxyIPRule{N}
     ip::NTuple{N,UInt8}
@@ -45,6 +46,7 @@ struct _ProxyTarget
     authorization::Union{Nothing,String}
     username::Union{Nothing,String}
     password::Union{Nothing,String}
+    pool_identity::Union{Nothing,UUID}
 end
 
 """
@@ -354,6 +356,7 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
         authorization,
         username,
         password,
+        authorization === nothing ? nothing : uuid4(),
     )
 end
 
@@ -375,6 +378,7 @@ function _parse_proxy_target(url::AbstractString, allow_unsupported::Bool=false)
         parsed.authorization,
         nothing,
         nothing,
+        parsed.authorization === nothing ? nothing : uuid4(),
     )
 end
 
@@ -498,5 +502,8 @@ function _proxy_plan(
     else
         secure ? _ProxyPlanMode.HTTP_TUNNEL : _ProxyPlanMode.HTTP_FORWARD
     end
-    return _ProxyPlan(mode, proxy::_ProxyTarget, (proxy::_ProxyTarget).address, string((proxy::_ProxyTarget).url, "|", secure ? "https://" : "http://", address))
+    proxy_target = proxy::_ProxyTarget
+    proxy_pool_key = proxy_target.pool_identity === nothing ?
+        proxy_target.url : string(proxy_target.url, "|auth=", proxy_target.pool_identity::UUID)
+    return _ProxyPlan(mode, proxy_target, proxy_target.address, string(proxy_pool_key, "|", secure ? "https://" : "http://", address))
 end
