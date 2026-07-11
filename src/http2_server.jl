@@ -1108,7 +1108,7 @@ function _write_response_body_h2_server!(
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
-    response::Response,
+    @nospecialize(response::Response),
     end_stream::Bool=true,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
@@ -1206,13 +1206,14 @@ function _encode_h2_headers_frame_bytes_locked!(
     return take!(out)
 end
 
+# @nospecialize(response): same widening rationale as _write_all_response!
 function _write_h2_response!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
     request::Request,
-    response::Response,
+    @nospecialize(response::Response),
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
     response.request = request

@@ -833,7 +833,9 @@ Body suppression rules for status codes like `1xx`, `204`, and `304` are
 enforced here so callers can hand the function a regular `Response` object and
 let the serializer apply wire-level HTTP/1 rules.
 """
-function write_response!(io::IO, response::Response)
+# @nospecialize: compiled once for any Response{B}; the body write below dispatches
+# through an explicit isa chain (see _write_all_response! for why)
+function write_response!(io::IO, @nospecialize(response::Response))
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
@@ -883,8 +885,17 @@ function write_response!(io::IO, response::Response)
     end
     response.content_length < 0 && return nothing
     body = response.body
+    # explicit isa chain over the body shapes (String/bytes/AbstractBody): with the
+    # response nospecialized, `body` is abstract here, and a bare multi-method call
+    # would be dynamic dispatch — unresolvable under `juliac --trim`
     if body isa BytesBody
         _write_exact_bytes_body!(io, body::BytesBody, response.content_length)
+    elseif body isa String
+        _write_exact_body!(io, body::String, response.content_length)
+    elseif body isa Vector{UInt8}
+        _write_exact_body!(io, body::Vector{UInt8}, response.content_length)
+    elseif body isa AbstractBody
+        _write_exact_body!(io, body, response.content_length)
     else
         _write_exact_body!(io, body, response.content_length)
     end

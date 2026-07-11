@@ -989,7 +989,12 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
-function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
+# @nospecialize(response): deep middleware graphs widen the handler's response type
+# (inference-budget truncation), and a widened arg otherwise turns this call into
+# runtime specialization dispatch — unresolvable under `juliac --trim`. One instance
+# handles every Response{B}; the body write dispatches through the isa chain in
+# write_response!.
+function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, @nospecialize(response::Response))::Nothing
     try
         write_response!(conn, response)
     finally
@@ -1089,7 +1094,12 @@ function _try_write_server_error!(conn::Union{TCP.Conn,TLS.Conn}, request::Union
         request=request,
     )
     @try_ignore begin
-        _write_all_response!(conn, response)
+        # socket-union isa split (see the main response path)
+        if conn isa TCP.Conn
+            _write_all_response!(conn::TCP.Conn, response)
+        else
+            _write_all_response!(conn::TLS.Conn, response)
+        end
     end
     @try_ignore begin
         _close_server_write!(conn)
@@ -1224,7 +1234,14 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     end
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj)
+                # socket-union isa split so the write call resolves statically under --trim
+                let c = tracked.conn
+                    if c isa TCP.Conn
+                        _write_all_response!(c::TCP.Conn, response_obj)
+                    else
+                        _write_all_response!(c::TLS.Conn, response_obj)
+                    end
+                end
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
