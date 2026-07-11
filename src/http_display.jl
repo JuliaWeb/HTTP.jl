@@ -193,6 +193,34 @@ function _body_summary_label(body, content_length::Int64)::String
     return total > 0 ? string(total, "-byte body") : string(typeof(body), " body")
 end
 
+function _show_redacted_header_pair(io::IO, key::String, value::String)::Nothing
+    show(io, key)
+    print(io, " => ")
+    show(io, _http_render_header_value(key, value))
+    return nothing
+end
+
+function Base.show(io::IO, headers::Headers)
+    print(io, "HTTP.Headers([")
+    for (i, (key, value)) in enumerate(headers)
+        i > 1 && print(io, ", ")
+        _show_redacted_header_pair(io, key, value)
+    end
+    print(io, "])")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", headers::Headers)
+    summary(io, headers)
+    isempty(headers) && return
+    print(io, ":")
+    key_width = maximum(length(repr(key)) for (key, _) in headers)
+    for (key, value) in headers
+        print(io, "\n ", lpad(repr(key), key_width), " => ")
+        show(io, _http_render_header_value(key, value))
+    end
+    return
+end
+
 @inline function _request_summary_target(request::Request)::String
     request.host === nothing || return string(request.host::String, request.target)
     return request.target
