@@ -776,14 +776,23 @@ function _write_request_head!(
     return use_chunked, trailer_values
 end
 
-function _response_has_body(response::Response)::Bool
+# @nospecialize + concrete-first isa chain: called with widened responses from the
+# server write path; abstract-narrowed isempty calls are dynamic under `juliac --trim`
+function _response_has_body(@nospecialize(response::Response))::Bool
     _body_allowed_for_status(response.status) || return false
-    response.body === nothing && return false
-    response.body isa EmptyBody && return false
-    if response.body isa AbstractString
-        isempty(response.body::AbstractString) && return false
-    elseif response.body isa AbstractVector{UInt8}
-        isempty(response.body::AbstractVector{UInt8}) && return false
+    body = response.body
+    body === nothing && return false
+    body isa EmptyBody && return false
+    if body isa String
+        isempty(body) && return false
+    elseif body isa SubString{String}
+        isempty(body) && return false
+    elseif body isa Vector{UInt8}
+        isempty(body) && return false
+    elseif body isa AbstractString
+        isempty(body::AbstractString) && return false
+    elseif body isa AbstractVector{UInt8}
+        isempty(body::AbstractVector{UInt8}) && return false
     end
     response.content_length == 0 && return false
     return true
@@ -880,24 +889,41 @@ function write_response!(io::IO, @nospecialize(response::Response))
     write(io, take!(head_buf))
     allows_body || return nothing
     if use_chunked
-        _write_chunked_body!(io, response.body, trailer_values)
+        # concrete-first isa chain (see the exact-body chain below)
+        let cbody = response.body
+            if cbody isa String
+                _write_chunked_body!(io, cbody, trailer_values)
+            elseif cbody isa SubString{String}
+                _write_chunked_body!(io, cbody, trailer_values)
+            elseif cbody isa Vector{UInt8}
+                _write_chunked_body!(io, cbody, trailer_values)
+            elseif cbody isa AbstractBody
+                _write_chunked_body!(io, cbody, trailer_values)
+            else
+                throw(ProtocolError("unsupported HTTP/1 chunked response body type"))
+            end
+        end
         return nothing
     end
     response.content_length < 0 && return nothing
     body = response.body
-    # explicit isa chain over the body shapes (String/bytes/AbstractBody): with the
+    # explicit isa chain over the body shapes, concrete types first: with the
     # response nospecialized, `body` is abstract here, and a bare multi-method call
     # would be dynamic dispatch — unresolvable under `juliac --trim`
-    if body isa BytesBody
-        _write_exact_bytes_body!(io, body::BytesBody, response.content_length)
+    if body isa BytesBody{Vector{UInt8}}
+        _write_exact_bytes_body!(io, body, response.content_length)
+    elseif body isa BytesBody
+        _write_exact_bytes_body!(io, body, response.content_length)
     elseif body isa String
-        _write_exact_body!(io, body::String, response.content_length)
+        _write_exact_body!(io, body, response.content_length)
+    elseif body isa SubString{String}
+        _write_exact_body!(io, body, response.content_length)
     elseif body isa Vector{UInt8}
-        _write_exact_body!(io, body::Vector{UInt8}, response.content_length)
+        _write_exact_body!(io, body, response.content_length)
     elseif body isa AbstractBody
         _write_exact_body!(io, body, response.content_length)
     else
-        _write_exact_body!(io, body, response.content_length)
+        throw(ProtocolError("unsupported HTTP/1 response body type"))
     end
     return nothing
 end

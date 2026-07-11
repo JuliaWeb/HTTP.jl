@@ -1376,6 +1376,17 @@ mutable struct BytesBody{T<:AbstractVector{UInt8}} <: AbstractBody
     @atomic closed::Bool
 end
 
+# One trim-aware close for possibly-widened body values (server write paths see
+# @nospecialize'd responses): concrete types first, a single residual abstract call
+# for streaming bodies.
+function _body_close_any!(@nospecialize(body))::Nothing
+    body === nothing && return nothing
+    body isa EmptyBody && return nothing
+    body isa BytesBody{Vector{UInt8}} && return body_close!(body)
+    body isa AbstractBody && return body_close!(body)
+    return nothing
+end
+
 """Retain `data` in a new `BytesBody` and reset the read cursor to the start."""
 function BytesBody(data::T) where {T<:AbstractVector{UInt8}}
     return BytesBody{T}(data, 1, false)

@@ -1114,6 +1114,29 @@ function _write_response_body_h2_server!(
 )::Nothing
     body = response.body
     body isa EmptyBody && return nothing
+    # concrete-first: BytesBody{Vector{UInt8}} is the overwhelmingly common concrete
+    # instantiation; the generic BytesBody branch stays for exotic data vectors
+    if body isa BytesBody{Vector{UInt8}}
+        bytes_body = body
+        try
+            if body_closed(bytes_body)
+                end_stream && _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
+                return nothing
+            end
+            first = bytes_body.next_index
+            last = length(bytes_body.data)
+            if first <= last
+                data = first == 1 ? bytes_body.data : @view(bytes_body.data[first:last])
+                _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, data; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+                bytes_body.next_index = last + 1
+            elseif end_stream
+                _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
+            end
+        finally
+            body_close!(bytes_body)
+        end
+        return nothing
+    end
     if body isa BytesBody
         bytes_body = body::BytesBody
         try
@@ -1135,20 +1158,29 @@ function _write_response_body_h2_server!(
         end
         return nothing
     end
-    if body isa AbstractString
+    if body isa String
         # Zero-copy fast path: alias the String's codeunits (immutable) instead
         # of allocating a fresh Vector{UInt8} of the same length.
-        s = String(body)
+        ncodeunits(body) == 0 && return nothing
+        _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, codeunits(body); end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+        return nothing
+    end
+    if body isa AbstractString
+        s = String(body::AbstractString)
         ncodeunits(s) == 0 && return nothing
         _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, codeunits(s); end_stream=end_stream, write_deadline_ns=write_deadline_ns)
         return nothing
     end
+    if body isa Vector{UInt8}
+        isempty(body) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+        return nothing
+    end
     if body isa AbstractVector{UInt8}
-        bytes = body isa Vector{UInt8} ? body : Vector{UInt8}(body)
+        bytes = Vector{UInt8}(body::AbstractVector{UInt8})
         isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
         return nothing
     end
-    body isa AbstractBody || throw(ProtocolError("unsupported HTTP/2 response body type $(typeof(body))"))
+    body isa AbstractBody || throw(ProtocolError("unsupported HTTP/2 response body type"))
     buf = Vector{UInt8}(undef, 16 * 1024)
     pending = UInt8[]
     have_pending = false
@@ -1221,17 +1253,22 @@ function _write_h2_response!(
     has_trailers = !isempty(response.trailers)
     if !allows_body
         @try_ignore begin
-            response.body isa AbstractBody && body_close!(response.body::AbstractBody)
+            _body_close_any!(response.body)
         end
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, !has_trailers, write_deadline_ns)
         has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
         return nothing
     end
-    body_empty = response.body isa EmptyBody ||
-                 (response.body isa AbstractString && isempty(response.body::AbstractString)) ||
-                 (response.body isa AbstractVector{UInt8} && isempty(response.body::AbstractVector{UInt8}))
-    end_stream = body_empty && !has_trailers
     body = response.body
+    # concrete-first isa chain: the response arrives @nospecialize'd, so
+    # abstract-narrowed isempty calls are dynamic under `juliac --trim`
+    body_empty = body isa EmptyBody ||
+                 (body isa String && isempty(body)) ||
+                 (body isa SubString{String} && isempty(body)) ||
+                 (body isa Vector{UInt8} && isempty(body)) ||
+                 (body isa AbstractString && isempty(body::AbstractString)) ||
+                 (body isa AbstractVector{UInt8} && isempty(body::AbstractVector{UInt8}))
+    end_stream = body_empty && !has_trailers
     # Fallback path for streaming/empty bodies: original two-step path.
     if body_empty || !(body isa AbstractString || body isa AbstractVector{UInt8})
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
@@ -1253,9 +1290,20 @@ function _write_h2_response!(
     finally
         unlock(send_state.state_lock)
     end
-    body_bytes::AbstractVector{UInt8} = body isa AbstractString ?
-        codeunits(String(body)) :
-        (body isa Vector{UInt8} ? body : Vector{UInt8}(body))
+    # normalize to a concrete Vector{UInt8} once (one copy for string bodies on the
+    # h2 fast path — the frame writer copies into the connection buffer anyway):
+    # a Union-typed bytes value would make the batched-write call dynamic under --trim
+    body_bytes::Vector{UInt8} = if body isa String
+        Vector{UInt8}(codeunits(body))
+    elseif body isa SubString{String}
+        Vector{UInt8}(codeunits(body))
+    elseif body isa Vector{UInt8}
+        body
+    elseif body isa AbstractString
+        Vector{UInt8}(codeunits(String(body::AbstractString)))
+    else
+        Vector{UInt8}(body::AbstractVector{UInt8})
+    end
     _write_h2_headers_and_first_batch!(
         conn, write_lock, send_state, stream_id,
         response.status, response.headers,
