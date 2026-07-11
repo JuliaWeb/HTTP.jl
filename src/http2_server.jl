@@ -85,15 +85,7 @@ end
     return ProtocolError("HTTP/2 connection is closed")
 end
 
-mutable struct _H2ServerConnControl
-    @atomic shutdown_requested::Bool
-    @atomic goaway_sent::Bool
-    @atomic graceful_last_stream_id::UInt32
-end
-
-function _H2ServerConnControl()
-    return _H2ServerConnControl(false, false, UInt32(0))
-end
+# _H2ServerConnControl is defined in http_server.jl (hoisted for the typed shutdown hook)
 
 mutable struct _H2ServerBody <: AbstractBody
     conn::Union{TCP.Conn,TLS.Conn}
@@ -1718,7 +1710,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
         end
         _clear_deadlines!(conn)
-        _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
+        _set_conn_shutdown_hook!(tracked, _ConnShutdownHook(conn, write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
         while true
             _server_shutting_down(server) && return nothing

@@ -30,10 +30,31 @@ end
     IDENTITY = 4
 end
 
+# hoisted from http2_server.jl so the shutdown hook below can be concretely typed
+mutable struct _H2ServerConnControl
+    @atomic shutdown_requested::Bool
+    @atomic goaway_sent::Bool
+    @atomic graceful_last_stream_id::UInt32
+end
+
+function _H2ServerConnControl()
+    return _H2ServerConnControl(false, false, UInt32(0))
+end
+
+# the one shutdown-hook shape (the h2 GOAWAY request) as a concrete callable struct:
+# a Union{Nothing,Function} field made the hook invocation dynamic dispatch,
+# unresolvable under `juliac --trim`
+struct _ConnShutdownHook
+    conn::Union{TCP.Conn,TLS.Conn}
+    write_lock::ReentrantLock
+    control::_H2ServerConnControl
+end
+(h::_ConnShutdownHook)() = _request_h2_conn_shutdown!(h.conn, h.write_lock, h.control)
+
 mutable struct _ServerConn
     conn::Union{TCP.Conn,TLS.Conn}
     lock::ReentrantLock
-    shutdown_hook::Union{Nothing,Function}
+    shutdown_hook::Union{Nothing,_ConnShutdownHook}
     @atomic state::_ConnState.T
     @atomic state_unix_sec::Int64
 end
@@ -401,7 +422,7 @@ end
     return nothing
 end
 
-function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,Function})::Nothing
+function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_ConnShutdownHook})::Nothing
     lock(conn.lock)
     try
         conn.shutdown_hook = hook
