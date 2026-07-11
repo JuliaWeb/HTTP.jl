@@ -233,7 +233,9 @@ default405(::Request) = Response(405)
 default404(stream::Stream) = setstatus(stream, 404)
 default405(stream::Stream) = setstatus(stream, 405)
 
-Router(_404=default404, _405=default405, middleware=nothing) = Router(_404, _405, Node(), middleware)
+# type parameters force specialization (see register! above) so the parametric inner
+# constructor call is concrete rather than a runtime `apply_type`
+Router(_404::T=default404, _405::S=default405, middleware::F=nothing) where {T,S,F} = Router(_404, _405, Node(), middleware)
 
 """
     register!(router, method, path, handler) -> Nothing
@@ -261,8 +263,15 @@ end
 """
 function register! end
 
-function register!(r::Router, method, path, handler)
-    segments = map(segment, split(path, '/'; keepempty=false))
+# `handler::F where F` (not a bare untyped/`::Function` argument): julia doesn't
+# specialize on function-valued arguments that are only passed through, so without the
+# type parameter every registration funnels into one `handler::Function` instance where
+# the middleware wrap and the parametric `Leaf` construction are dynamic — type-unstable
+# and unresolvable under `juliac --trim`.
+function register!(r::Router, method, path, handler::F) where {F}
+    # typed container (not `map`, whose eltype can widen to Any here): keeps the
+    # segment comparisons in `insert!` union-split rather than dynamic
+    segments = Union{String,Variable}[segment(s) for s in split(path, '/'; keepempty=false)]
     if r.middleware !== nothing
         handler = r.middleware(handler)
     end
@@ -270,10 +279,10 @@ function register!(r::Router, method, path, handler)
     return nothing
 end
 
-register!(r::Router, path, handler) = register!(r, "*", path, handler)
+register!(r::Router, path, handler::F) where {F} = register!(r, "*", path, handler)
 
-register!(handler, r::Router, method, path) = register!(r, method, path, handler)
-register!(handler, r::Router, path) = register!(r, "*", path, handler)
+register!(handler::F, r::Router, method, path) where {F} = register!(r, method, path, handler)
+register!(handler::F, r::Router, path) where {F} = register!(r, "*", path, handler)
 
 const Params = Dict{String,String}
 

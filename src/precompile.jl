@@ -413,6 +413,9 @@ function is_julia_automerge()
 end
 
 function _precompile_workload_enabled()::Bool
+    # explicit opt-out: the workload starts real servers/requests, which must not run
+    # inside static compilation (e.g. `juliac --trim` builds, where it segfaults)
+    get(ENV, "HTTP_PRECOMPILE_WORKLOAD", "1") in ("0", "false", "FALSE", "no", "NO") && return false
     Base.JLOptions().code_coverage == 0 || return false
 
     # https://github.com/JuliaWeb/HTTP.jl/issues/1280
