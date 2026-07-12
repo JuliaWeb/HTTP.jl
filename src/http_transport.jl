@@ -193,6 +193,12 @@ versus closed.
 bound the total live HTTP/1 connections (idle, in-flight, and dialing) for one
 pool key and cause additional acquires to wait for direct handoff or a freed
 dial slot.
+
+`idle_timeout_ns` (default 90s, `0` disables) bounds how long an idle pooled
+connection may be handed out again; it also governs the owning `Client`'s
+pooled HTTP/2 connections. Keep it under the network's silent idle-drop window
+(NAT/load-balancer idle timeouts are commonly a few minutes) so a request is
+never written onto a connection whose peer has silently vanished.
 """
 mutable struct Transport
     host_resolver::_TransportHostResolver
@@ -1183,6 +1189,10 @@ The no-argument form closes idle connections held by the default client used by
 `HTTP.get`, `HTTP.post`, `HTTP.request`, and friends (a no-op if no request has
 been made yet). Pass an `HTTP.Client` or `HTTP.Transport` to target a specific
 connection pool.
+
+The `Client` and no-argument forms also close the client's pooled HTTP/2
+connections that have no in-flight streams; the `Transport` form covers only
+the HTTP/1 pool it owns.
 """
 function close_idle_connections!(transport::Transport)
     to_close = Conn[]
