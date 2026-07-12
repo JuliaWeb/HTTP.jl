@@ -778,7 +778,7 @@ end
 
 # @nospecialize + concrete-first isa chain: called with widened responses from the
 # server write path; abstract-narrowed isempty calls are dynamic under `juliac --trim`
-function _response_has_body(@nospecialize(response::Response))::Bool
+function _response_has_body(response::Response)::Bool
     _body_allowed_for_status(response.status) || return false
     body = response.body
     body === nothing && return false
@@ -844,7 +844,7 @@ let the serializer apply wire-level HTTP/1 rules.
 """
 # @nospecialize: compiled once for any Response{B}; the body write below dispatches
 # through an explicit isa chain (see _write_all_response! for why)
-function write_response!(io::IO, @nospecialize(response::Response))
+function write_response!(io::IO, response::Response)
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")

@@ -989,12 +989,35 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
+
+# Trim-aware dispatch shim for the (inference-widened) handler response: the deep
+# middleware graph widens the response type, and a direct call with a widened argument
+# is runtime specialization dispatch. The isa chain covers the concrete Response{B}
+# shapes servers actually produce, each branch dispatching to the fully specialized
+# write path; the final branch is the one residual dynamic site for exotic body types.
+@noinline function _write_all_response_dyn!(conn::Union{TCP.Conn,TLS.Conn}, @nospecialize(response::Response))::Nothing
+    if response isa Response{String}
+        _write_all_response!(conn, response)
+    elseif response isa Response{Vector{UInt8}}
+        _write_all_response!(conn, response)
+    elseif response isa Response{Nothing}
+        _write_all_response!(conn, response)
+    elseif response isa Response{EmptyBody}
+        _write_all_response!(conn, response)
+    elseif response isa Response{BytesBody{Vector{UInt8}}}
+        _write_all_response!(conn, response)
+    else
+        _write_all_response!(conn, response)
+    end
+    return nothing
+end
+
 # @nospecialize(response): deep middleware graphs widen the handler's response type
 # (inference-budget truncation), and a widened arg otherwise turns this call into
 # runtime specialization dispatch — unresolvable under `juliac --trim`. One instance
 # handles every Response{B}; the body write dispatches through the isa chain in
 # write_response!.
-function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, @nospecialize(response::Response))::Nothing
+function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
     try
         write_response!(conn, response)
     finally
@@ -1235,9 +1258,9 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 # socket-union isa split so the write call resolves statically under --trim
                 let c = tracked.conn
                     if c isa TCP.Conn
-                        _write_all_response!(c::TCP.Conn, response_obj)
+                        _write_all_response_dyn!(c::TCP.Conn, response_obj)
                     else
-                        _write_all_response!(c::TLS.Conn, response_obj)
+                        _write_all_response_dyn!(c::TLS.Conn, response_obj)
                     end
                 end
                 _clear_deadlines!(server, tracked.conn)

@@ -1108,7 +1108,7 @@ function _write_response_body_h2_server!(
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
-    @nospecialize(response::Response),
+    response::Response,
     end_stream::Bool=true,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
@@ -1238,14 +1238,40 @@ function _encode_h2_headers_frame_bytes_locked!(
     return take!(out)
 end
 
-# @nospecialize(response): same widening rationale as _write_all_response!
-function _write_h2_response!(
+
+# Trim-aware dispatch shim for the widened handler response (see _write_all_response_dyn!)
+@noinline function _write_h2_response_dyn!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
     request::Request,
     @nospecialize(response::Response),
+    write_deadline_ns::Int64=Int64(0),
+)::Nothing
+    if response isa Response{String}
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, response, write_deadline_ns)
+    elseif response isa Response{Vector{UInt8}}
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, response, write_deadline_ns)
+    elseif response isa Response{Nothing}
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, response, write_deadline_ns)
+    elseif response isa Response{EmptyBody}
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, response, write_deadline_ns)
+    elseif response isa Response{BytesBody{Vector{UInt8}}}
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, response, write_deadline_ns)
+    else
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, response, write_deadline_ns)
+    end
+    return nothing
+end
+
+function _write_h2_response!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    request::Request,
+    response::Response,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
     response.request = request
@@ -1565,7 +1591,7 @@ function _handle_h2_stream!(
                 return nothing
             end
             response_obj = response::Response
-            _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
+            _write_h2_response_dyn!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
         end
         _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
