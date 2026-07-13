@@ -250,6 +250,12 @@ end
             # `serve!` + `request(...)` and must remain trim-clean.
             ("http_trim_client_h1_request.jl", "http_trim_client_h1_request"),
             ("http_trim_client_h1_tls_request.jl", "http_trim_client_h1_tls_request"),
+            # Server response-write coverage: every body shape through the narrowing
+            # helpers and the widened-response dispatch shims, plus Router/register!
+            # machinery (serving through the router is the known frontier — see the
+            # workload comments).
+            ("http_trim_server_response_shapes.jl", "http_trim_server_response_shapes"),
+            ("http_trim_server_router_registration.jl", "http_trim_server_router_registration"),
         ]
         trim_workloads = _trim_selected_workloads(trim_workloads)
         for (script_file, output_name) in trim_workloads

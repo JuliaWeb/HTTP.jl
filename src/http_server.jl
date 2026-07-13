@@ -996,19 +996,7 @@ end
 # shapes servers actually produce, each branch dispatching to the fully specialized
 # write path; the final branch is the one residual dynamic site for exotic body types.
 @noinline function _write_all_response_dyn!(conn::Union{TCP.Conn,TLS.Conn}, @nospecialize(response::Response))::Nothing
-    if response isa Response{String}
-        _write_all_response!(conn, response)
-    elseif response isa Response{Vector{UInt8}}
-        _write_all_response!(conn, response)
-    elseif response isa Response{Nothing}
-        _write_all_response!(conn, response)
-    elseif response isa Response{EmptyBody}
-        _write_all_response!(conn, response)
-    elseif response isa Response{BytesBody{Vector{UInt8}}}
-        _write_all_response!(conn, response)
-    else
-        _write_all_response!(conn, response)
-    end
+    _with_response_narrowed(r -> _write_all_response!(conn, r), response)
     return nothing
 end
 
