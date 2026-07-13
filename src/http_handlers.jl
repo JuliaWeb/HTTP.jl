@@ -34,6 +34,9 @@ import ..body_close!
 import ..get_request_context
 import .._request_with_context
 import ..@try_ignore
+import ..EmptyBody
+import ..H1Body
+import .._H2ServerBody
 
 """
     Handler
@@ -79,11 +82,88 @@ function _route_variable_matches(pattern::Regex, segment::AbstractString)
     return m !== nothing && m.match == segment
 end
 
-struct Leaf{H}
+# ── HandlerFn: trim-safe type-erased callable for route handlers ──
+# The Reseau TaskFn pattern: a @generated per-callable-type @cfunction whose first C
+# argument is the callable itself (Ref{F}), so the handler call inside the trampoline
+# is concretely dispatched — no runtime closure trampolines, and the match-time
+# invocation below is a ccall through a stored pointer, which is statically
+# resolvable under `juliac --trim` (a plain Function field would make every request
+# dispatch over the open set of registered handler types).
+# `_root` keeps the (possibly boxed) callable alive for the Leaf's lifetime.
+
+struct _HandlerCallWrapper <: Function end
+
+# The C signature stays primitive-only (the trim verifier rejects boxed-Any
+# cfunction signatures): the request/stream and the result cross the trampoline as
+# raw pointers to caller-preserved Ref{Any} boxes.
+function (::_HandlerCallWrapper)(f::F, xptr::Ptr{Cvoid}, outptr::Ptr{Cvoid}) where {F}
+    xref = unsafe_pointer_to_objref(xptr)::Base.RefValue{Any}
+    out = unsafe_pointer_to_objref(outptr)::Base.RefValue{Any}
+    out[] = _call_handler_narrowed(f, xref[])
+    return nothing
+end
+
+# Explicit narrowing over the request/stream shapes the server constructs — a closed,
+# HTTP-internal set — so the handler invocation is statically dispatched per shape
+# (an Any-typed call would be runtime specialization dispatch under `juliac --trim`).
+# New server-side request body types must be added HERE.
+function _call_handler_narrowed(f::F, @nospecialize(x)) where {F}
+    if x isa Request{EmptyBody}
+        return f(x)
+    elseif x isa Request{BytesBody{Vector{UInt8}}}
+        return f(x)
+    elseif x isa Request{H1Body}
+        return f(x)
+    elseif x isa Request{_H2ServerBody}
+        return f(x)
+    elseif x isa Stream{false, Request{EmptyBody}}
+        return f(x)
+    elseif x isa Stream{false, Request{BytesBody{Vector{UInt8}}}}
+        return f(x)
+    elseif x isa Stream{false, Request{H1Body}}
+        return f(x)
+    elseif x isa Stream{false, Request{_H2ServerBody}}
+        return f(x)
+    else
+        throw(ArgumentError("unsupported request type for a routed handler"))
+    end
+end
+
+@generated function _handler_gen_fptr(::Type{F}) where F
+    quote
+        @cfunction($(_HandlerCallWrapper()), Cvoid, (Ref{$F}, Ptr{Cvoid}, Ptr{Cvoid}))
+    end
+end
+
+struct HandlerFn
+    ptr::Ptr{Cvoid}       # @cfunction pointer (specialized per callable type F)
+    objptr::Ptr{Cvoid}    # pointer to the callable object
+    _root::Any            # GC root — prevents collection, never dispatched on
+end
+
+function HandlerFn(callable::F) where F
+    ptr = _handler_gen_fptr(F)
+    objref = Base.cconvert(Ref{F}, callable)
+    objptr = Ptr{Cvoid}(Base.unsafe_convert(Ref{F}, objref))
+    return HandlerFn(ptr, objptr, objref)
+end
+
+HandlerFn(callable::HandlerFn) = callable
+
+@inline function (h::HandlerFn)(x)
+    xref = Ref{Any}(x)
+    out = Ref{Any}(nothing)
+    GC.@preserve xref out begin
+        ccall(h.ptr, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}), h.objptr, pointer_from_objref(xref), pointer_from_objref(out))
+    end
+    return out[]
+end
+
+struct Leaf
     method::String
     variables::Vector{Tuple{Int,String}}
     path::String
-    handler::H
+    handler::HandlerFn
 end
 
 Base.show(io::IO, x::Leaf) = print(io, "Leaf($(x.method))")
@@ -275,7 +355,7 @@ function register!(r::Router, method, path, handler::F) where {F}
     if r.middleware !== nothing
         handler = r.middleware(handler)
     end
-    insert!(r.routes, Leaf(method, Tuple{Int,String}[], path, handler), segments, 1)
+    insert!(r.routes, Leaf(method, Tuple{Int,String}[], path, HandlerFn(handler)), segments, 1)
     return nothing
 end
 
@@ -364,7 +444,11 @@ Retrieve any matched path parameters from the request context.
 Returns `nothing` when the request has not been routed or the route contained
 no path variables.
 """
-getparams(req) = get(req.context, :params, nothing)
+function getparams(req)::Union{Nothing, Params}
+    # the isa narrow keeps this trim-resolvable (context is a Dict{Symbol,Any})
+    params = get(req.context, :params, nothing)
+    return params isa Params ? params : nothing
+end
 
 """
     HTTP.getparam(req, name, default=nothing) -> Any
