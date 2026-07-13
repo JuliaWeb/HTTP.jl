@@ -187,6 +187,14 @@ mutable struct H2Connection
     # `_h2_conn_available` so a second caller doesn't decide a peer-capped
     # connection is reusable while the first caller is still in flight.
     pending_stream_count::Int
+    # `time_ns()` at the moment the connection last became fully idle (no
+    # registered streams and no pending reservations); stamped at creation and
+    # on each transition into that state. Guarded by `state_lock`. The pool
+    # uses it to evict connections idle past the transport's `idle_timeout_ns`:
+    # NATs and load balancers silently drop idle flows, and a request written
+    # onto such a connection stalls until the kernel's retransmission limit
+    # (~15 min on Linux) because no RST/FIN ever arrives (#1331).
+    idle_since_ns::Int64
     @atomic closed::Bool
 end
 
@@ -539,11 +547,57 @@ function _release_h2_pending_slot!(conn::H2Connection)
     lock(conn.state_lock)
     try
         conn.pending_stream_count -= 1
+        _h2_stamp_idle_locked!(conn)
         notify(conn.stream_condition; all=true)
     finally
         unlock(conn.state_lock)
     end
     return nothing
+end
+
+# Record the moment the connection becomes fully idle (no registered streams,
+# no pending reservations). Callers must hold `state_lock`. Stamping only on
+# the transition into the idle state keeps `idle_since_ns` monotone with real
+# inactivity: a connection that keeps serving traffic is never considered idle,
+# and one that goes quiet ages from the moment its last stream finished.
+@inline function _h2_stamp_idle_locked!(conn::H2Connection)
+    if isempty(conn.streams) && conn.pending_stream_count <= 0
+        conn.idle_since_ns = Int64(time_ns())
+    end
+    return nothing
+end
+
+"""
+    _h2_conn_idle_expired(conn, idle_timeout_ns, now_ns) -> Bool
+
+`true` when `conn` has no registered streams or pending reservations and has
+been idle longer than `idle_timeout_ns` (`0` disables the check). Pooled HTTP/2
+connections idle past the network's silent-drop window (NAT/load-balancer idle
+timeouts are commonly a few minutes) must not be handed out again: the peer is
+gone but no RST/FIN ever arrives, so the next request stalls until the kernel
+retransmission limit (#1331).
+"""
+function _h2_conn_idle_expired(conn::H2Connection, idle_timeout_ns::Int64, now_ns::Int64)::Bool
+    idle_timeout_ns > 0 || return false
+    lock(conn.state_lock)
+    try
+        isempty(conn.streams) || return false
+        conn.pending_stream_count > 0 && return false
+        return (now_ns - conn.idle_since_ns) > idle_timeout_ns
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
+# `true` when the connection carries no registered streams and no pending
+# reservations right now (regardless of how long it has been that way).
+function _h2_conn_fully_idle(conn::H2Connection)::Bool
+    lock(conn.state_lock)
+    try
+        return isempty(conn.streams) && conn.pending_stream_count <= 0
+    finally
+        unlock(conn.state_lock)
+    end
 end
 
 function _h2_conn_reusable(conn::H2Connection)::Bool
@@ -695,6 +749,7 @@ function _unregister_stream!(conn::H2Connection, stream_id::UInt32)
         pop!(conn.streams, stream_id, nothing)
         pop!(conn.stream_send_window, stream_id, nothing)
         delete!(conn.send_closed_streams, stream_id)
+        _h2_stamp_idle_locked!(conn)
         notify(conn.stream_condition; all=true)
     finally
         unlock(conn.state_lock)
@@ -1195,6 +1250,7 @@ function _connect_h2_from_tcp!(
             nothing,
             UInt8[],
             0,
+            Int64(time_ns()),
             false,
         )
         _verify_h2_alpn!(conn)

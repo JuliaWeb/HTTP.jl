@@ -2102,6 +2102,7 @@ function _build_bare_h2_connection()
         nothing,
         UInt8[],
         0,
+        Int64(time_ns()),
         false,
     )
     cleanup = () -> begin
@@ -2269,5 +2270,163 @@ end
         @test conn.encoder.table.max_size == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
     finally
         cleanup()
+    end
+end
+
+# ── #1331: pooled h2 connections must not outlive the idle timeout ──────────
+
+function _h2_serve_one_get!(c::NC.Conn, reader, enc, dec)
+    sid = UInt32(0)
+    while true
+        f = HT.read_frame!(reader)
+        if f isa HT.HeadersFrame
+            hf = f::HT.HeadersFrame
+            _ = HT.decode_header_block(dec, hf.header_block_fragment)
+            sid = hf.stream_id
+            hf.end_stream && break
+        elseif f isa HT.DataFrame && (f::HT.DataFrame).end_stream
+            break
+        end
+    end
+    blk = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+    _write_frame_to_conn!(c, HT.HeadersFrame(sid, true, true, blk))
+    return nothing
+end
+
+function _h2_handshake_server!(c::NC.Conn)
+    reader = HT._ConnReader(c)
+    _ = _read_exact_h2_tcp!(c, length(HT._H2_PREFACE))
+    _ = HT.read_frame!(reader)
+    _write_frame_to_conn!(c, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+    return reader
+end
+
+@testset "HTTP/2 pool evicts connections idle past the transport idle timeout (#1331)" begin
+    # NATs/load balancers silently drop idle flows; a pooled connection older
+    # than the idle timeout must be discarded at checkout, not handed out (the
+    # first read on a silently-dead connection stalls until the kernel
+    # retransmission limit, ~15 min on Linux).
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accepts = Threads.Atomic{Int}(0)
+    server_task = errormonitor(Threads.@spawn begin
+        # conn 1: answer one request, then go mute (stand-in for a dead path)
+        c1 = NC.accept(listener)
+        Threads.atomic_add!(accepts, 1)
+        reader1 = _h2_handshake_server!(c1)
+        enc1 = HT.Encoder(); dec1 = HT.Decoder()
+        _h2_serve_one_get!(c1, reader1, enc1, dec1)
+        # conn 2: the client must arrive here on a fresh connection
+        c2 = NC.accept(listener)
+        Threads.atomic_add!(accepts, 1)
+        reader2 = _h2_handshake_server!(c2)
+        enc2 = HT.Encoder(); dec2 = HT.Decoder()
+        _h2_serve_one_get!(c2, reader2, enc2, dec2)
+        HTTP.@try_ignore NC.close(c1)
+        HTTP.@try_ignore NC.close(c2)
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(idle_timeout_ns = Int64(150_000_000)))  # 150ms
+    try
+        r1 = HT.get("http://$(address)/one"; client = client, protocol = :h2)
+        @test r1.status == 200
+        pooled = lock(client.h2_lock) do
+            only(only(values(client.h2_conns)))
+        end
+        sleep(0.4)   # exceed the idle timeout
+        started = time()
+        r2 = HT.get("http://$(address)/two"; client = client, protocol = :h2, retry = false)
+        elapsed = time() - started
+        @test r2.status == 200
+        @test elapsed < 5.0            # a reused dead connection would hang
+        @test accepts[] == 2           # request 2 ran on a fresh connection
+        # the evicted connection was closed, and the pool holds only the new one
+        @test timedwait(() -> (@atomic :acquire pooled.closed), 5.0; pollint = 0.01) == :ok
+        n = lock(client.h2_lock) do
+            sum(length(v) for v in values(client.h2_conns); init = 0)
+        end
+        @test n == 1
+        _wait_task_h2!(server_task)
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 pool reuses fresh connections and honors idle_timeout_ns=0 (#1331)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accepts = Threads.Atomic{Int}(0)
+    server_task = errormonitor(Threads.@spawn begin
+        c = NC.accept(listener)
+        Threads.atomic_add!(accepts, 1)
+        reader = _h2_handshake_server!(c)
+        enc = HT.Encoder(); dec = HT.Decoder()
+        for _ in 1:3
+            _h2_serve_one_get!(c, reader, enc, dec)
+        end
+        HTTP.@try_ignore NC.close(c)
+        return nothing
+    end)
+    # idle_timeout_ns = 0 disables eviction entirely (matching the h1 pool),
+    # and a fresh connection inside the window must be reused, not evicted.
+    client = HT.Client(transport = HT.Transport(idle_timeout_ns = Int64(0)))
+    try
+        for i in 1:3
+            r = HT.get("http://$(address)/r$(i)"; client = client, protocol = :h2)
+            @test r.status == 200
+            sleep(0.05)
+        end
+        @test accepts[] == 1   # every request reused the single pooled conn
+        _wait_task_h2!(server_task)
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "close_idle_connections! closes idle pooled HTTP/2 connections (#1331)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        c = NC.accept(listener)
+        reader = _h2_handshake_server!(c)
+        enc = HT.Encoder(); dec = HT.Decoder()
+        _h2_serve_one_get!(c, reader, enc, dec)
+        # linger so closing is client-initiated
+        HTTP.@try_ignore begin
+            while true
+                _ = HT.read_frame!(reader)
+            end
+        end
+        HTTP.@try_ignore NC.close(c)
+        return nothing
+    end)
+    client = HT.Client()
+    try
+        r = HT.get("http://$(address)/warm"; client = client, protocol = :h2)
+        @test r.status == 200
+        conn = lock(client.h2_lock) do
+            only(only(values(client.h2_conns)))
+        end
+        # a connection with a pending reservation is active: it must be kept
+        @test HT._try_claim_h2_pending_slot!(conn)
+        HT.close_idle_connections!(client)
+        kept = lock(client.h2_lock) do
+            sum(length(v) for v in values(client.h2_conns); init = 0)
+        end
+        @test kept == 1
+        @test !(@atomic :acquire conn.closed)
+        # once fully idle again, it is closed and removed
+        HT._release_h2_pending_slot!(conn)
+        HT.close_idle_connections!(client)
+        remaining = lock(client.h2_lock) do
+            sum(length(v) for v in values(client.h2_conns); init = 0)
+        end
+        @test remaining == 0
+        @test timedwait(() -> (@atomic :acquire conn.closed), 5.0; pollint = 0.01) == :ok
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
     end
 end

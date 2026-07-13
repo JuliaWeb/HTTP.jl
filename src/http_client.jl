@@ -453,18 +453,31 @@ function _acquire_h2_conn!(
     connect_host_resolver = request === nothing ? base_host_resolver : _request_connect_host_resolver(base_host_resolver, request::Request)
     connect_deadline_ns = request === nothing ? _phase_deadline_ns(base_host_resolver.timeout_ns, base_host_resolver.deadline_ns) : _request_connect_phase_deadline_ns(base_host_resolver, request::Request)
     tls_handshake_timeout_ns = request === nothing ? Int64(0) : _request_connect_phase_timeout_ns(base_host_resolver, request::Request)
+    # Connections culled from the pool are closed after `h2_lock` is released:
+    # closing an H2Connection waits for its read loop to exit, and that must
+    # not happen while holding the pool lock.
+    to_close = H2Connection[]
     lock(client.h2_lock)
     try
         conns = get(() -> H2Connection[], client.h2_conns, key)
+        idle_timeout_ns = client.transport.idle_timeout_ns
+        now_ns = Int64(time_ns())
         i = 1
         while i <= length(conns)
             existing = conns[i]
+            # Evict connections idle past the pool's idle timeout before
+            # considering them for reuse: a NAT or load balancer may have
+            # silently dropped the flow, and the first read on such a
+            # connection stalls until the kernel retransmission limit (#1331).
+            if _h2_conn_idle_expired(existing::H2Connection, idle_timeout_ns, now_ns)
+                deleteat!(conns, i)
+                push!(to_close, existing::H2Connection)
+                continue
+            end
             if !_h2_conn_available(existing::H2Connection)
                 if !_h2_conn_reusable(existing::H2Connection)
                     deleteat!(conns, i)
-                    @try_ignore begin
-                        close(existing::H2Connection)
-                    end
+                    push!(to_close, existing::H2Connection)
                     continue
                 end
             else
@@ -530,6 +543,11 @@ function _acquire_h2_conn!(
         return conn::H2Connection
     finally
         unlock(client.h2_lock)
+        for culled in to_close
+            @try_ignore begin
+                close(culled)
+            end
+        end
     end
 end
 
@@ -1167,7 +1185,42 @@ function _default_client!()::Client{Nothing}
     end
 end
 
-close_idle_connections!(client::Client) = close_idle_connections!(client.transport)
+function close_idle_connections!(client::Client)
+    close_idle_connections!(client.transport)
+    # Also close pooled HTTP/2 connections with no in-flight streams — these
+    # live on the Client (not the Transport pool) and are equally subject to
+    # silent idle drops by NATs/load balancers (#1331). Connections carrying
+    # active streams or pending reservations are left untouched. Closing
+    # happens after `h2_lock` is released (close waits for the read loop).
+    to_close = H2Connection[]
+    lock(client.h2_lock)
+    try
+        for key in collect(keys(client.h2_conns))
+            conns = client.h2_conns[key]
+            kept = H2Connection[]
+            for conn in conns
+                if _h2_conn_fully_idle(conn)
+                    push!(to_close, conn)
+                else
+                    push!(kept, conn)
+                end
+            end
+            if isempty(kept)
+                pop!(client.h2_conns, key, nothing)
+            else
+                client.h2_conns[key] = kept
+            end
+        end
+    finally
+        unlock(client.h2_lock)
+    end
+    for conn in to_close
+        @try_ignore begin
+            close(conn)
+        end
+    end
+    return nothing
+end
 
 function close_idle_connections!()
     lock(_DEFAULT_CLIENT_LOCK)
@@ -1177,7 +1230,7 @@ function close_idle_connections!()
         unlock(_DEFAULT_CLIENT_LOCK)
     end
     client === nothing && return nothing
-    return close_idle_connections!(client.transport)
+    return close_idle_connections!(client)
 end
 
 function _status_throws(resp::Response)::Bool
