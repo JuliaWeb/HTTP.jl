@@ -1385,6 +1385,18 @@ end
 # the one residual dynamic site (streaming bodies); the final branch covers exotic
 # user types (the write paths reject them explicitly). Add new supported shapes
 # HERE, not as ad-hoc isa chains at call sites.
+# Compile-time preference ("trim_strict_bodies"): `juliac --trim` builds opt
+# into strict body-shape narrowing — unknown request/response body shapes throw
+# instead of taking the residual dynamic-dispatch fallback, letting the trim
+# verifier prove the narrowing helpers fully static. The default keeps today's
+# permissive behavior for exotic user body types.
+#
+# Enable from the build project with:
+#     Preferences.set_preferences!(HTTP, "trim_strict_bodies" => true)
+# (a Preference, not an ENV switch, so flipping it correctly invalidates the
+# precompile cache — same pattern as StructUtils' "trim_specialize")
+const TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
+
 @inline function _with_body_narrowed(f::F, @nospecialize(body)) where {F}
     if body === nothing
         return f(body)
@@ -1398,9 +1410,13 @@ end
         return f(body)
     elseif body isa BytesBody{Vector{UInt8}}
         return f(body)
+    elseif body isa BytesBody{Base.CodeUnits{UInt8, String}}
+        # Response(status, ::String) stores the body as codeunits
+        return f(body)
     elseif body isa AbstractBody
         return f(body)
     else
+        TRIM_STRICT_BODIES && throw(ArgumentError("unhandled body type in strict trim mode"))
         return f(body)
     end
 end
@@ -1844,7 +1860,11 @@ end
         return f(response)
     elseif response isa Response{BytesBody{Vector{UInt8}}}
         return f(response)
+    elseif response isa Response{BytesBody{Base.CodeUnits{UInt8, String}}}
+        # Response(status, ::String) stores the body as codeunits
+        return f(response)
     else
+        TRIM_STRICT_BODIES && throw(ArgumentError("unhandled response body type in strict trim mode"))
         return f(response)
     end
 end

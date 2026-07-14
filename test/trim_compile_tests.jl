@@ -132,6 +132,42 @@ function _trim_executable_timeout_s(script_path::String)::Float64
     return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
 end
 
+# Temp project with the "trim_strict_bodies" compile-time preference enabled:
+# unknown body shapes THROW instead of taking the residual dynamic fallback, so
+# compiling + running a workload against it proves the narrowing chains cover
+# every shape the compat constructors produce. A separate project (not ENV)
+# because preferences participate in the precompile cache key.
+function _setup_strict_trim_env()::String
+    http_path = normpath(joinpath(@__DIR__, ".."))
+    env_path = mktempdir()
+    julia = joinpath(Sys.BINDIR, Base.julia_exename())
+    setup_script = joinpath(env_path, "setup.jl")
+    write(setup_script, """
+    import Pkg
+    Pkg.develop(path=$(repr(http_path)))
+    Pkg.add("JuliaC")
+    Pkg.add("Reseau")
+    """)
+    write(joinpath(env_path, "LocalPreferences.toml"), "[HTTP]\ntrim_strict_bodies = true\n")
+    # Pkg.test() sets JULIA_LOAD_PATH restrictively; scrub it so the subprocess
+    # can find stdlibs like Pkg
+    env = Dict{String,String}(k => v for (k, v) in ENV if k != "JULIA_LOAD_PATH")
+    println("[trim] setting up strict-bodies environment...")
+    flush(stdout)
+    exit_code, output, timed_out = _run_command_with_timeout(
+        setenv(`$julia --startup-file=no --history-file=no --project=$env_path $setup_script`, env);
+        timeout_s = 600.0, log_label = "strict-setup"
+    )
+    rm(setup_script; force = true)
+    if exit_code != 0 || timed_out
+        println("[trim] strict setup FAILED (exit=$exit_code, timed_out=$timed_out)")
+        println(output)
+        error("failed to set up strict trim test environment")
+    end
+    println("[trim] strict-bodies environment ready")
+    return env_path
+end
+
 function _trim_selected_workloads(workloads::Vector{Tuple{String, String}})::Vector{Tuple{String, String}}
     only = strip(get(ENV, "HTTP_TRIM_ONLY", ""))
     isempty(only) && return workloads
@@ -257,9 +293,20 @@ end
             ("http_trim_server_response_shapes.jl", "http_trim_server_response_shapes"),
             ("http_trim_server_router_registration.jl", "http_trim_server_router_registration"),
         ]
-        trim_workloads = _trim_selected_workloads(trim_workloads)
-        for (script_file, output_name) in trim_workloads
-            _run_trim_case(project_path, script_file, output_name)
+        only = strip(get(ENV, "HTTP_TRIM_ONLY", ""))
+        if only != "strict"
+            trim_workloads = _trim_selected_workloads(trim_workloads)
+            for (script_file, output_name) in trim_workloads
+                _run_trim_case(project_path, script_file, output_name)
+            end
+        end
+        # Strict body-shape mode: the same response-shapes workload compiled with
+        # the "trim_strict_bodies" preference — a body shape missing from the
+        # narrowing chains throws at runtime and fails the executable step.
+        if isempty(only) || only == "strict"
+            strict_env = _setup_strict_trim_env()
+            _run_trim_case(strict_env, "http_trim_server_response_shapes.jl",
+                           "http_trim_server_response_shapes_strict")
         end
     end
 end
