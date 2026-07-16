@@ -181,6 +181,45 @@ end
     end
 end
 
+@testset "HTTP streamhandler reused String response body" begin
+    baked = HT.Response(200, ["Content-Type" => "text/plain"]; body = "baked string body")
+    server = HT.listen!(HT.streamhandler(_ -> baked), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(_read_all_handler_bytes(resp.body)) == "baked string body"
+
+        reused = HT.get("http://$(address)/"; status_exception = false, retry = false)
+        @test reused.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
+@testset "HTTP streamhandler ignores closed bodies when no body is written" begin
+    for (method, status, bytes) in (
+        ("GET", 200, UInt8[]),
+        ("GET", 204, collect(codeunits("ignored body"))),
+        ("HEAD", 200, collect(codeunits("head body"))),
+    )
+        body = HT.BytesBody(bytes)
+        HT.body_close!(body)
+        baked = HT.Response(status, body; content_length = length(bytes))
+        server = HT.listen!(HT.streamhandler(_ -> baked), "127.0.0.1", 0; listenany = true)
+        address = HT.server_addr(server)
+        try
+            resp = HT.request(method, "http://$(address)/"; status_exception = false, retry = false)
+            @test resp.status == status
+            @test isempty(_read_all_handler_bytes(resp.body))
+        finally
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
 @testset "HTTP router live request handler server" begin
     router = HT.Router()
     HT.register!(router, "GET", "/hello/{name}", _router_hello_request)
