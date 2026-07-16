@@ -452,6 +452,9 @@ function _write_response_body_to_stream!(stream::Stream, body)::Nothing
         return nothing
     end
     if body isa AbstractBody
+        if body_closed(body)
+            throw(ArgumentError("body is closed"))
+        end
         buf = Vector{UInt8}(undef, 16 * 1024)
         try
             while true
