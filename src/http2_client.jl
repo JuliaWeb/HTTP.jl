@@ -1598,6 +1598,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         nread = 0
         done = false
         too_many = false
+        terminal_error::Union{Nothing,Exception} = nothing
         wait_deadline_ns = Int64(0)
         lock(body.state.lock)
         try
@@ -1618,8 +1619,18 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                     notify(body.state.condition)
                 end
             elseif body.state.stream_done
-                _publish_h2_response_trailers!(body.state)
-                done = true
+                # DATA buffered before a stream reset is still readable, but
+                # once it is drained the terminal stream error must surface.
+                # Otherwise a partial response without Content-Length looks
+                # like a successful clean EOF.
+                if body.state.stream_error !== nothing
+                    terminal_error = body.state.stream_error
+                elseif body.state.conn_errored
+                    terminal_error = _stream_conn_error(body.conn)
+                else
+                    _publish_h2_response_trailers!(body.state)
+                    done = true
+                end
             else
                 _throw_stream_error(body.conn, body.state)
                 deadline_ns = _request_read_deadline_ns(body.request)
@@ -1633,6 +1644,12 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
             unlock(body.state.lock)
         end
         wait_deadline_ns == 0 || (_wait_h2_body_progress!(body.state, wait_deadline_ns); continue)
+        if terminal_error !== nothing
+            @atomic :release body.closed = true
+            _clear_h2_cancel_callback!(body)
+            _unregister_stream!(body.conn, body.stream_id)
+            throw(terminal_error::Exception)
+        end
         if too_many
             @atomic :release body.closed = true
             @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
