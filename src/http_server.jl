@@ -30,10 +30,31 @@ end
     IDENTITY = 4
 end
 
+# hoisted from http2_server.jl so the shutdown hook below can be concretely typed
+mutable struct _H2ServerConnControl
+    @atomic shutdown_requested::Bool
+    @atomic goaway_sent::Bool
+    @atomic graceful_last_stream_id::UInt32
+end
+
+function _H2ServerConnControl()
+    return _H2ServerConnControl(false, false, UInt32(0))
+end
+
+# the one shutdown-hook shape (the h2 GOAWAY request) as a concrete callable struct:
+# a Union{Nothing,Function} field made the hook invocation dynamic dispatch,
+# unresolvable under `juliac --trim`
+struct _ConnShutdownHook
+    conn::Union{TCP.Conn,TLS.Conn}
+    write_lock::ReentrantLock
+    control::_H2ServerConnControl
+end
+(h::_ConnShutdownHook)() = _request_h2_conn_shutdown!(h.conn, h.write_lock, h.control)
+
 mutable struct _ServerConn
     conn::Union{TCP.Conn,TLS.Conn}
     lock::ReentrantLock
-    shutdown_hook::Union{Nothing,Function}
+    shutdown_hook::Union{Nothing,_ConnShutdownHook}
     @atomic state::_ConnState.T
     @atomic state_unix_sec::Int64
 end
@@ -212,18 +233,18 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
 end
 
 function _stream_request_metadata(request::Request)::Request{EmptyBody}
-    return Request(
+    return _request_nocopy(
         request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=EmptyBody(),
-        host=request.host,
-        content_length=request.content_length,
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        EmptyBody(),
+        request.host,
+        request.content_length,
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        get_request_context(request),
     )
 end
 
@@ -401,7 +422,7 @@ end
     return nothing
 end
 
-function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,Function})::Nothing
+function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_ConnShutdownHook})::Nothing
     lock(conn.lock)
     try
         conn.shutdown_hook = hook
@@ -880,18 +901,18 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
     end
     @try_ignore body_close!(body)
     buffered_body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
-    return Request(
+    return _request_nocopy(
         request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=buffered_body,
-        host=request.host,
-        content_length=length(body_bytes),
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        buffered_body,
+        request.host,
+        Int64(length(body_bytes)),
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        get_request_context(request),
     )
 end
 
@@ -968,13 +989,27 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
+
+# Trim-aware dispatch shim for the (inference-widened) handler response: the deep
+# middleware graph widens the response type, and a direct call with a widened argument
+# is runtime specialization dispatch. The isa chain covers the concrete Response{B}
+# shapes servers actually produce, each branch dispatching to the fully specialized
+# write path; the final branch is the one residual dynamic site for exotic body types.
+@noinline function _write_all_response_dyn!(conn::Union{TCP.Conn,TLS.Conn}, @nospecialize(response::Response))::Nothing
+    _with_response_narrowed(r -> _write_all_response!(conn, r), response)
+    return nothing
+end
+
+# @nospecialize(response): deep middleware graphs widen the handler's response type
+# (inference-budget truncation), and a widened arg otherwise turns this call into
+# runtime specialization dispatch — unresolvable under `juliac --trim`. One instance
+# handles every Response{B}; the body write dispatches through the isa chain in
+# write_response!.
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
     try
         write_response!(conn, response)
     finally
-        if response.body isa AbstractBody
-            @try_ignore body_close!(response.body::AbstractBody)
-        end
+        @try_ignore _body_close_any!(response.body)
     end
     return nothing
 end
@@ -1068,7 +1103,12 @@ function _try_write_server_error!(conn::Union{TCP.Conn,TLS.Conn}, request::Union
         request=request,
     )
     @try_ignore begin
-        _write_all_response!(conn, response)
+        # socket-union isa split (see the main response path)
+        if conn isa TCP.Conn
+            _write_all_response!(conn::TCP.Conn, response)
+        else
+            _write_all_response!(conn::TLS.Conn, response)
+        end
     end
     @try_ignore begin
         _close_server_write!(conn)
@@ -1203,7 +1243,14 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     end
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj)
+                # socket-union isa split so the write call resolves statically under --trim
+                let c = tracked.conn
+                    if c isa TCP.Conn
+                        _write_all_response_dyn!(c::TCP.Conn, response_obj)
+                    else
+                        _write_all_response_dyn!(c::TLS.Conn, response_obj)
+                    end
+                end
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)

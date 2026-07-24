@@ -231,17 +231,17 @@ function _run_precompile_workload_inner!()::Nothing
         ws_url = "ws://" * WebSockets.server_addr(ws_server::WebSockets.Server) * "/echo"
 
         request_timeouts = (
-            connect_timeout=1.0,
-            request_timeout=5.0,
-            response_header_timeout=5.0,
-            read_idle_timeout=5.0,
+            connect_timeout=60.0,
+            request_timeout=60.0,
+            response_header_timeout=60.0,
+            read_idle_timeout=60.0,
         )
         stream_timeouts = (
-            connect_timeout=1.0,
-            request_timeout=5.0,
-            response_header_timeout=5.0,
-            read_idle_timeout=5.0,
-            write_idle_timeout=5.0,
+            connect_timeout=60.0,
+            request_timeout=60.0,
+            response_header_timeout=60.0,
+            read_idle_timeout=60.0,
+            write_idle_timeout=60.0,
         )
 
         client = Client(
@@ -413,6 +413,9 @@ function is_julia_automerge()
 end
 
 function _precompile_workload_enabled()::Bool
+    # explicit opt-out: the workload starts real servers/requests, which must not run
+    # inside static compilation (e.g. `juliac --trim` builds, where it segfaults)
+    get(ENV, "HTTP_PRECOMPILE_WORKLOAD", "1") in ("0", "false", "FALSE", "no", "NO") && return false
     Base.JLOptions().code_coverage == 0 || return false
 
     # https://github.com/JuliaWeb/HTTP.jl/issues/1280

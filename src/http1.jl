@@ -776,15 +776,11 @@ function _write_request_head!(
     return use_chunked, trailer_values
 end
 
+# @nospecialize + concrete-first isa chain: called with widened responses from the
+# server write path; abstract-narrowed isempty calls are dynamic under `juliac --trim`
 function _response_has_body(response::Response)::Bool
     _body_allowed_for_status(response.status) || return false
-    response.body === nothing && return false
-    response.body isa EmptyBody && return false
-    if response.body isa AbstractString
-        isempty(response.body::AbstractString) && return false
-    elseif response.body isa AbstractVector{UInt8}
-        isempty(response.body::AbstractVector{UInt8}) && return false
-    end
+    _with_body_narrowed(_response_body_known_empty, response.body) && return false
     response.content_length == 0 && return false
     return true
 end
@@ -824,6 +820,8 @@ function write_request!(
     return nothing
 end
 
+# @nospecialize: compiled once for any Response{B}; the body write below dispatches
+# through an explicit isa chain (see _write_all_response! for why)
 """
     write_response!(io, response)
 
@@ -878,15 +876,16 @@ function write_response!(io::IO, response::Response)
     write(io, take!(head_buf))
     allows_body || return nothing
     if use_chunked
-        _write_chunked_body!(io, response.body, trailer_values)
+        _with_body_narrowed(b -> _write_chunked_body!(io, b, trailer_values), response.body)
         return nothing
     end
     response.content_length < 0 && return nothing
-    body = response.body
-    if body isa BytesBody
-        _write_exact_bytes_body!(io, body::BytesBody, response.content_length)
-    else
-        _write_exact_body!(io, body, response.content_length)
+    _with_body_narrowed(response.body) do b
+        if b isa BytesBody
+            _write_exact_bytes_body!(io, b, response.content_length)
+        else
+            _write_exact_body!(io, b, response.content_length)
+        end
     end
     return nothing
 end

@@ -1376,6 +1376,68 @@ mutable struct BytesBody{T<:AbstractVector{UInt8}} <: AbstractBody
     @atomic closed::Bool
 end
 
+# ── trim-aware body narrowing ────────────────────────────────────────────────
+# Deep server graphs widen response/body types past inference's budget, and calls
+# with widened arguments become runtime specialization dispatch — unresolvable under
+# `juliac --trim`. This helper is the single source of truth for the concrete body
+# shapes the server write paths handle: each branch re-narrows `body` so `f` is
+# called with a concrete type (statically dispatched). The `AbstractBody` branch is
+# the one residual dynamic site (streaming bodies); the final branch covers exotic
+# user types (the write paths reject them explicitly). Add new supported shapes
+# HERE, not as ad-hoc isa chains at call sites.
+# Compile-time preference ("trim_strict_bodies"): `juliac --trim` builds opt
+# into strict body-shape narrowing — unknown request/response body shapes throw
+# instead of taking the residual dynamic-dispatch fallback, letting the trim
+# verifier prove the narrowing helpers fully static. The default keeps today's
+# permissive behavior for exotic user body types.
+#
+# Enable from the build project with:
+#     Preferences.set_preferences!(HTTP, "trim_strict_bodies" => true)
+# (a Preference, not an ENV switch, so flipping it correctly invalidates the
+# precompile cache — same pattern as StructUtils' "trim_specialize")
+const TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
+
+@inline function _with_body_narrowed(f::F, @nospecialize(body)) where {F}
+    if body === nothing
+        return f(body)
+    elseif body isa String
+        return f(body)
+    elseif body isa SubString{String}
+        return f(body)
+    elseif body isa Vector{UInt8}
+        return f(body)
+    elseif body isa EmptyBody
+        return f(body)
+    elseif body isa BytesBody{Vector{UInt8}}
+        return f(body)
+    elseif body isa BytesBody{Base.CodeUnits{UInt8, String}}
+        # Response(status, ::String) stores the body as codeunits
+        return f(body)
+    elseif body isa AbstractBody
+        return f(body)
+    else
+        TRIM_STRICT_BODIES && throw(ArgumentError("unhandled body type in strict trim mode"))
+        return f(body)
+    end
+end
+
+# Emptiness of a buffered response body, used by `_response_has_body` and the h2
+# response writer. Called through `_with_body_narrowed`, so `b` is concrete here.
+_response_body_known_empty(::Nothing) = true
+_response_body_known_empty(::EmptyBody) = true
+_response_body_known_empty(b::AbstractString) = isempty(b)
+_response_body_known_empty(b::AbstractVector{UInt8}) = isempty(b)
+_response_body_known_empty(@nospecialize(b)) = false
+
+# One trim-aware close for possibly-widened body values.
+function _body_close_any!(@nospecialize(body))::Nothing
+    _with_body_narrowed(body) do b
+        b isa AbstractBody && body_close!(b)
+        nothing
+    end
+    return nothing
+end
+
 """Retain `data` in a new `BytesBody` and reset the read cursor to the start."""
 function BytesBody(data::T) where {T<:AbstractVector{UInt8}}
     return BytesBody{T}(data, 1, false)
@@ -1779,6 +1841,32 @@ mutable struct Response{B}
     request_url::Union{Nothing,String}
     previous::Union{Nothing,Response}
     redirect_count::Int
+end
+
+# Trim-aware response narrowing (see `_with_body_narrowed`): the single source of
+# truth for the concrete `Response{B}` shapes server write paths dispatch over.
+# Each branch re-narrows so `f`'s call is statically dispatched into the fully
+# specialized write path; the final branch is the one residual dynamic site.
+@inline function _with_response_narrowed(f::F, @nospecialize(response::Response)) where {F}
+    if response isa Response{String}
+        return f(response)
+    elseif response isa Response{SubString{String}}
+        return f(response)
+    elseif response isa Response{Vector{UInt8}}
+        return f(response)
+    elseif response isa Response{Nothing}
+        return f(response)
+    elseif response isa Response{EmptyBody}
+        return f(response)
+    elseif response isa Response{BytesBody{Vector{UInt8}}}
+        return f(response)
+    elseif response isa Response{BytesBody{Base.CodeUnits{UInt8, String}}}
+        # Response(status, ::String) stores the body as codeunits
+        return f(response)
+    else
+        TRIM_STRICT_BODIES && throw(ArgumentError("unhandled response body type in strict trim mode"))
+        return f(response)
+    end
 end
 
 struct _IncomingResponseHead

@@ -85,15 +85,7 @@ end
     return ProtocolError("HTTP/2 connection is closed")
 end
 
-mutable struct _H2ServerConnControl
-    @atomic shutdown_requested::Bool
-    @atomic goaway_sent::Bool
-    @atomic graceful_last_stream_id::UInt32
-end
-
-function _H2ServerConnControl()
-    return _H2ServerConnControl(false, false, UInt32(0))
-end
+# _H2ServerConnControl is defined in http_server.jl (hoisted for the typed shutdown hook)
 
 mutable struct _H2ServerBody <: AbstractBody
     conn::Union{TCP.Conn,TLS.Conn}
@@ -1120,49 +1112,58 @@ function _write_response_body_h2_server!(
     end_stream::Bool=true,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
-    body = response.body
-    body isa EmptyBody && return nothing
-    if body isa BytesBody
-        bytes_body = body::BytesBody
-        try
-            if body_closed(bytes_body)
-                end_stream && _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
-                return nothing
-            end
-            first = bytes_body.next_index
-            last = length(bytes_body.data)
-            if first <= last
-                data = first == 1 ? bytes_body.data : @view(bytes_body.data[first:last])
-                _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, data; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
-                bytes_body.next_index = last + 1
-            elseif end_stream
-                _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
-            end
-        finally
-            body_close!(bytes_body)
+    # `_with_body_narrowed` hands each shape method a concretely-typed body, so the
+    # per-shape dispatch below is static (trim-resolvable); the shapes themselves are
+    # small methods rather than one isa ladder.
+    _with_body_narrowed(b -> _write_h2_body_shape!(conn, write_lock, send_state, stream_id, b, end_stream, write_deadline_ns), response.body)
+    return nothing
+end
+
+_write_h2_body_shape!(conn, write_lock, send_state, stream_id, ::Union{EmptyBody,Nothing}, end_stream::Bool, write_deadline_ns::Int64) = nothing
+
+function _write_h2_body_shape!(conn, write_lock, send_state, stream_id, bytes_body::BytesBody, end_stream::Bool, write_deadline_ns::Int64)
+    try
+        if body_closed(bytes_body)
+            end_stream && _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
+            return nothing
         end
-        return nothing
+        first = bytes_body.next_index
+        last = length(bytes_body.data)
+        if first <= last
+            data = first == 1 ? bytes_body.data : @view(bytes_body.data[first:last])
+            _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, data; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+            bytes_body.next_index = last + 1
+        elseif end_stream
+            _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
+        end
+    finally
+        body_close!(bytes_body)
     end
-    if body isa AbstractString
-        # Zero-copy fast path: alias the String's codeunits (immutable) instead
-        # of allocating a fresh Vector{UInt8} of the same length.
-        s = String(body)
-        ncodeunits(s) == 0 && return nothing
-        _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, codeunits(s); end_stream=end_stream, write_deadline_ns=write_deadline_ns)
-        return nothing
-    end
-    if body isa AbstractVector{UInt8}
-        bytes = body isa Vector{UInt8} ? body : Vector{UInt8}(body)
-        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
-        return nothing
-    end
-    body isa AbstractBody || throw(ProtocolError("unsupported HTTP/2 response body type $(typeof(body))"))
+    return nothing
+end
+
+function _write_h2_body_shape!(conn, write_lock, send_state, stream_id, body::AbstractString, end_stream::Bool, write_deadline_ns::Int64)
+    # Zero-copy fast path for String: alias the codeunits (immutable) instead of
+    # allocating a fresh Vector{UInt8} of the same length.
+    s = body isa String ? body : String(body)
+    ncodeunits(s) == 0 && return nothing
+    _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, codeunits(s); end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+    return nothing
+end
+
+function _write_h2_body_shape!(conn, write_lock, send_state, stream_id, body::AbstractVector{UInt8}, end_stream::Bool, write_deadline_ns::Int64)
+    bytes = body isa Vector{UInt8} ? body : Vector{UInt8}(body)
+    isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+    return nothing
+end
+
+function _write_h2_body_shape!(conn, write_lock, send_state, stream_id, body::AbstractBody, end_stream::Bool, write_deadline_ns::Int64)
     buf = Vector{UInt8}(undef, 16 * 1024)
     pending = UInt8[]
     have_pending = false
     try
         while true
-            n = body_read!(body::AbstractBody, buf)
+            n = body_read!(body, buf)
             if n == 0
                 if have_pending
                     _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
@@ -1181,10 +1182,13 @@ function _write_response_body_h2_server!(
         end
     finally
         @try_ignore begin
-            body_close!(body::AbstractBody)
+            body_close!(body)
         end
     end
 end
+
+_write_h2_body_shape!(conn, write_lock, send_state, stream_id, @nospecialize(body), end_stream::Bool, write_deadline_ns::Int64) =
+    throw(ProtocolError("unsupported HTTP/2 response body type"))
 
 """
     _encode_h2_headers_frame_bytes!(send_state, write_lock, stream_id, status,
@@ -1214,6 +1218,23 @@ function _encode_h2_headers_frame_bytes_locked!(
     return take!(out)
 end
 
+
+# Trim-aware dispatch shim for the widened handler response (see _write_all_response_dyn!)
+@noinline function _write_h2_response_dyn!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    request::Request,
+    @nospecialize(response::Response),
+    write_deadline_ns::Int64=Int64(0),
+)::Nothing
+    _with_response_narrowed(response) do r
+        _write_h2_response!(conn, write_lock, send_state, stream_id, request, r, write_deadline_ns)
+    end
+    return nothing
+end
+
 function _write_h2_response!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
@@ -1228,17 +1249,17 @@ function _write_h2_response!(
     has_trailers = !isempty(response.trailers)
     if !allows_body
         @try_ignore begin
-            response.body isa AbstractBody && body_close!(response.body::AbstractBody)
+            _body_close_any!(response.body)
         end
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, !has_trailers, write_deadline_ns)
         has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
         return nothing
     end
-    body_empty = response.body isa EmptyBody ||
-                 (response.body isa AbstractString && isempty(response.body::AbstractString)) ||
-                 (response.body isa AbstractVector{UInt8} && isempty(response.body::AbstractVector{UInt8}))
-    end_stream = body_empty && !has_trailers
     body = response.body
+    # concrete-first isa chain: the response arrives @nospecialize'd, so
+    # abstract-narrowed isempty calls are dynamic under `juliac --trim`
+    body_empty = _with_body_narrowed(_response_body_known_empty, body)
+    end_stream = body_empty && !has_trailers
     # Fallback path for streaming/empty bodies: original two-step path.
     if body_empty || !(body isa AbstractString || body isa AbstractVector{UInt8})
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
@@ -1260,9 +1281,18 @@ function _write_h2_response!(
     finally
         unlock(send_state.state_lock)
     end
-    body_bytes::AbstractVector{UInt8} = body isa AbstractString ?
-        codeunits(String(body)) :
-        (body isa Vector{UInt8} ? body : Vector{UInt8}(body))
+    # normalize to a concrete Vector{UInt8} once (one copy for string bodies on the
+    # h2 fast path — the frame writer copies into the connection buffer anyway):
+    # a Union-typed bytes value would make the batched-write call dynamic under --trim
+    body_bytes::Vector{UInt8} = _with_body_narrowed(body) do b
+        if b isa Vector{UInt8}
+            b
+        elseif b isa AbstractString
+            Vector{UInt8}(codeunits(String(b)))
+        else
+            Vector{UInt8}(b::AbstractVector{UInt8})
+        end
+    end
     _write_h2_headers_and_first_batch!(
         conn, write_lock, send_state, stream_id,
         response.status, response.headers,
@@ -1524,7 +1554,7 @@ function _handle_h2_stream!(
                 return nothing
             end
             response_obj = response::Response
-            _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
+            _write_h2_response_dyn!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
         end
         _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
@@ -1718,7 +1748,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
         end
         _clear_deadlines!(conn)
-        _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
+        _set_conn_shutdown_hook!(tracked, _ConnShutdownHook(conn, write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
         while true
             _server_shutting_down(server) && return nothing

@@ -131,6 +131,23 @@ end
     @test query_router(HT.Request("GET", "http://example.test/api/widgets/77?expand=true")) == ("77", "/api/widgets/{name}")
 end
 
+@testset "HTTP handlers trim narrowing guardrails" begin
+    @test_throws ArgumentError HT.Handlers._call_handler_narrowed(identity, 1)
+
+    wrapped = HT.Handlers.HandlerFn(identity)
+    @test HT.Handlers.HandlerFn(wrapped) === wrapped
+
+    router = HT.Router()
+    HT.register!(_ -> 17, router, "GET", "/handler-first-method")
+    HT.register!(_ -> 18, router, "/handler-first-any")
+    @test router(HT.Request("GET", "/handler-first-method")) == 17
+    @test router(HT.Request("PATCH", "/handler-first-any")) == 18
+
+    request = HT.Request("GET", "/")
+    request.context[:params] = "not a parameter dictionary"
+    @test HT.getparams(request) === nothing
+end
+
 @testset "HTTP handlers cookie middleware" begin
     headers = HT.Headers()
     HT.setheader(headers, "Cookie", "abc=def; mode=test")

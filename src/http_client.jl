@@ -533,7 +533,7 @@ function _acquire_h2_conn!(
                 rethrow()
             end
         else
-            throw(ArgumentError("HTTP/2 is not supported for proxy plan mode $(plan.mode)"))
+            throw(ArgumentError("HTTP/2 is not supported for this proxy plan mode"))
         end
         # Claim a slot on the freshly opened connection up front so subsequent
         # acquirers that race in see this caller's pending request.

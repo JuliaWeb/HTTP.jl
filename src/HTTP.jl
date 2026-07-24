@@ -23,6 +23,7 @@ See the migration guide for the most important 1.x to 2.0 API changes.
 module HTTP
 
 using URIs
+using Preferences
 
 const VERSION = v"2.0.0"
 

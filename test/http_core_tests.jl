@@ -185,6 +185,62 @@ end
     @test cb_reads[] == 1
 end
 
+@testset "HTTP core trim narrowing contracts" begin
+    text = "text"
+    substring = SubString(text, 2, 3)
+    bytes = UInt8[0x61]
+    bytes_body = HT.BytesBody(copy(bytes))
+    codeunits_body = HT.BytesBody(codeunits(text))
+    unknown_body = Ref(1)
+
+    for body in (
+        nothing,
+        text,
+        substring,
+        bytes,
+        HT.EmptyBody(),
+        bytes_body,
+        codeunits_body,
+        unknown_body,
+    )
+        @test HT._with_body_narrowed(identity, body) === body
+    end
+
+    @test HT._response_body_known_empty(nothing)
+    @test HT._response_body_known_empty(HT.EmptyBody())
+    @test HT._response_body_known_empty("")
+    @test !HT._response_body_known_empty("x")
+
+    response_for = body -> HT.Response{typeof(body)}(
+        200,
+        "",
+        HT.Headers(),
+        HT.Headers(),
+        body,
+        Int64(0),
+        UInt8(1),
+        UInt8(1),
+        false,
+        nothing,
+        nothing,
+        nothing,
+        0,
+    )
+    for body in (
+        text,
+        substring,
+        bytes,
+        nothing,
+        HT.EmptyBody(),
+        bytes_body,
+        codeunits_body,
+        unknown_body,
+    )
+        response = response_for(body)
+        @test HT._with_response_narrowed(identity, response) === response
+    end
+end
+
 @testset "HTTP core request/response construction" begin
     headers = HT.Headers()
     HT.setheader(headers, "content-type", "text/plain")
