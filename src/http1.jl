@@ -820,6 +820,8 @@ function write_request!(
     return nothing
 end
 
+# @nospecialize: compiled once for any Response{B}; the body write below dispatches
+# through an explicit isa chain (see _write_all_response! for why)
 """
     write_response!(io, response)
 
@@ -829,8 +831,6 @@ Body suppression rules for status codes like `1xx`, `204`, and `304` are
 enforced here so callers can hand the function a regular `Response` object and
 let the serializer apply wire-level HTTP/1 rules.
 """
-# @nospecialize: compiled once for any Response{B}; the body write below dispatches
-# through an explicit isa chain (see _write_all_response! for why)
 function write_response!(io::IO, response::Response)
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
