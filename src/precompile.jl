@@ -231,17 +231,17 @@ function _run_precompile_workload_inner!()::Nothing
         ws_url = "ws://" * WebSockets.server_addr(ws_server::WebSockets.Server) * "/echo"
 
         request_timeouts = (
-            connect_timeout=1.0,
-            request_timeout=5.0,
-            response_header_timeout=5.0,
-            read_idle_timeout=5.0,
+            connect_timeout=60.0,
+            request_timeout=60.0,
+            response_header_timeout=60.0,
+            read_idle_timeout=60.0,
         )
         stream_timeouts = (
-            connect_timeout=1.0,
-            request_timeout=5.0,
-            response_header_timeout=5.0,
-            read_idle_timeout=5.0,
-            write_idle_timeout=5.0,
+            connect_timeout=60.0,
+            request_timeout=60.0,
+            response_header_timeout=60.0,
+            read_idle_timeout=60.0,
+            write_idle_timeout=60.0,
         )
 
         client = Client(
