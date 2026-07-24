@@ -233,18 +233,18 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
 end
 
 function _stream_request_metadata(request::Request)::Request{EmptyBody}
-    return Request(
+    return _request_nocopy(
         request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=EmptyBody(),
-        host=request.host,
-        content_length=request.content_length,
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        EmptyBody(),
+        request.host,
+        request.content_length,
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        get_request_context(request),
     )
 end
 
@@ -901,18 +901,18 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
     end
     @try_ignore body_close!(body)
     buffered_body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
-    return Request(
+    return _request_nocopy(
         request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=buffered_body,
-        host=request.host,
-        content_length=length(body_bytes),
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        buffered_body,
+        request.host,
+        Int64(length(body_bytes)),
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        get_request_context(request),
     )
 end
 
