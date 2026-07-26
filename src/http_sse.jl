@@ -84,11 +84,20 @@ mutable struct SSEStream <: AbstractBody
     format_buffer::IOBuffer
     lock::ReentrantLock
     max_len::Int
+    pending::Vector{UInt8}
+    pending_index::Int
 end
 
 function SSEStream(; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)
     max_len > 0 || throw(ArgumentError("max_len must be > 0"))
-    return SSEStream(Base.BufferStream(), IOBuffer(), ReentrantLock(), Int(max_len))
+    return SSEStream(
+        Base.BufferStream(),
+        IOBuffer(),
+        ReentrantLock(),
+        Int(max_len),
+        UInt8[],
+        1,
+    )
 end
 
 isopen(stream::SSEStream)::Bool = isopen(stream.buffer)
@@ -111,7 +120,19 @@ end
 
 function body_read!(stream::SSEStream, dst::Vector{UInt8})::Int
     isempty(dst) && return 0
-    return readbytes!(stream.buffer, dst, length(dst))
+    if stream.pending_index > length(stream.pending)
+        # `readavailable` waits for at least one byte, but unlike
+        # `readbytes!(..., length(dst))` it does not wait to fill the server
+        # writer's entire scratch buffer or for a live producer to close.
+        stream.pending = readavailable(stream.buffer)
+        stream.pending_index = 1
+    end
+    available = length(stream.pending) - stream.pending_index + 1
+    available <= 0 && return 0
+    count = min(length(dst), available)
+    copyto!(dst, 1, stream.pending, stream.pending_index, count)
+    stream.pending_index += count
+    return count
 end
 
 # Split `value` into logical lines, treating CR, LF and CRLF all as line

@@ -255,6 +255,24 @@ end
     close(stream)
 end
 
+@testset "HTTP server SSE body yields before producer close" begin
+    stream = HT.SSEStream()
+    buffer = Vector{UInt8}(undef, 8192)
+    reader = @async HT.body_read!(stream, buffer)
+    yield()
+    write(stream, HT.SSEEvent("first"))
+    try
+        @test timedwait(() -> istaskdone(reader), 2.0) == :ok
+        if istaskdone(reader)
+            count = fetch(reader)
+            @test String(buffer[1:count]) == "data: first\n\n"
+        end
+    finally
+        close(stream)
+        wait(reader)
+    end
+end
+
 @testset "HTTP server SSE roundtrip" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
