@@ -112,6 +112,8 @@ function _call_handler_narrowed(f::F, @nospecialize(x)) where {F}
         return f(x)
     elseif x isa Request{BytesBody{Vector{UInt8}}}
         return f(x)
+    elseif x isa Request{BytesBody{Base.CodeUnits{UInt8, String}}}
+        return f(x)
     elseif x isa Request{H1Body}
         return f(x)
     elseif x isa Request{_H2ServerBody}

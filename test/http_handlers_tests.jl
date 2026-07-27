@@ -140,8 +140,10 @@ end
     router = HT.Router()
     HT.register!(_ -> 17, router, "GET", "/handler-first-method")
     HT.register!(_ -> 18, router, "/handler-first-any")
+    HT.register!(router, "POST", "/compat-string-body", req -> String(req.body))
     @test router(HT.Request("GET", "/handler-first-method")) == 17
     @test router(HT.Request("PATCH", "/handler-first-any")) == 18
+    @test router(HT.Request("POST", "/compat-string-body"; body = "payload")) == "payload"
 
     request = HT.Request("GET", "/")
     request.context[:params] = "not a parameter dictionary"

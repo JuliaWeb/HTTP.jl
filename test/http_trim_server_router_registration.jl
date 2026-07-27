@@ -35,6 +35,14 @@ function run_http_trim_server_router_registration()::Nothing
     bare = HT.Router()
     HT.register!(bare, "GET", "/ping", request -> trim_text_response("pong"))
 
+    # The public Request compatibility constructor stores strings in a
+    # BytesBody{CodeUnits}; keep that direct Router invocation trim-resolvable.
+    direct_response = router(HT.Request("POST", "/status"; body = "payload"))
+    direct_response isa HT.Response{HT.BytesBody{Vector{UInt8}}} ||
+        error("unexpected direct router response")
+    String((direct_response::HT.Response{HT.BytesBody{Vector{UInt8}}}).body) == "ok" ||
+        error("unexpected direct router response body")
+
     server = nothing
     try
         server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
