@@ -52,7 +52,7 @@ end
     @test req.target == "/upload"
     @test req.host == "example.com"
     @test req.content_length == 5
-    @test HT.headers(req.headers, "X-Test") == ["one, two"]
+    @test HT.headers(req.headers, "X-Test") == ["one,two"]
     @test _read_all_body_bytes(req.body) == collect(codeunits("hello"))
     headers = HT.Headers()
     HT.setheader(headers, "host", "example.com")

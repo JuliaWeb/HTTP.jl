@@ -18,15 +18,15 @@ const HT = HTTP
     @test eltype(typeof(headers)) == Pair{String, String}
     @test length(headers) == 2
     @test headers[1] == ("Content-Type" => "application/json")
-    @test headers[2] == ("X-Forwarded-For" => "127.0.0.1, 127.0.0.2")
+    @test headers[2] == ("X-Forwarded-For" => "127.0.0.1,127.0.0.2")
     @test collect(headers) == [
         "Content-Type" => "application/json",
-        "X-Forwarded-For" => "127.0.0.1, 127.0.0.2",
+        "X-Forwarded-For" => "127.0.0.1,127.0.0.2",
     ]
-    @test HT.headers(headers, "x-forwarded-for") == ["127.0.0.1, 127.0.0.2"]
+    @test HT.headers(headers, "x-forwarded-for") == ["127.0.0.1,127.0.0.2"]
     copied = HT.headers(headers, "x-forwarded-for")
     push!(copied, "127.0.0.3")
-    @test HT.headers(headers, "x-forwarded-for") == ["127.0.0.1, 127.0.0.2"]
+    @test HT.headers(headers, "x-forwarded-for") == ["127.0.0.1,127.0.0.2"]
     HT.defaultheader!(headers, "content-type" => "text/plain")
     @test HT.header(headers, "Content-Type") == "application/json"
     HT.setheader(headers, "x-forwarded-for", "127.0.0.9")
@@ -84,7 +84,7 @@ const HT = HTTP
     # append! uses appendheader semantics: comma-merges when last entry has same key
     headers5 = HT.Headers(["Accept" => "text/html"])
     append!(headers5, HT.Headers(["Accept" => "application/json"]))
-    @test headers5["Accept"] == "text/html, application/json"  # comma-merged
+    @test headers5["Accept"] == "text/html,application/json"  # comma-merged
     @test length(collect(headers5)) == 1  # merged into single entry
     # non-adjacent same key: pushed as new entry (appendheader only merges the last entry)
     headers5b = HT.Headers(["Accept" => "text/html", "X-Tag" => "v"])
@@ -94,6 +94,42 @@ const HT = HTTP
     headers6 = HT.Headers(["Set-Cookie" => "x=1"])
     append!(headers6, HT.Headers(["Set-Cookie" => "y=2"]))
     @test length([v for (k, v) in collect(headers6) if k == "Set-Cookie"]) == 2
+end
+
+@testset "appendheader joins duplicates with a bare comma (RFC 9110 §5.3)" begin
+    # Two adjacent duplicates: joined with "," and no whitespace. AWS SigV4 and
+    # Azure SharedKey canonicalization both require exactly this form, so any
+    # OWS here breaks request signing for duplicated headers.
+    two = HT.Headers()
+    HT.appendheader(two, "X-Dup", "a")
+    HT.appendheader(two, "X-Dup", "b")
+    @test collect(two) == ["X-Dup" => "a,b"]
+
+    # Three adjacent duplicates.
+    three = HT.Headers()
+    HT.appendheader(three, "X-Dup", "a")
+    HT.appendheader(three, "X-Dup", "b")
+    HT.appendheader(three, "X-Dup", "c")
+    @test collect(three) == ["X-Dup" => "a,b,c"]
+
+    # mkheaders goes through appendheader and must produce the same join.
+    @test collect(HT.mkheaders(["X-Dup" => "a", "X-Dup" => "b", "X-Dup" => "c"])) ==
+          ["X-Dup" => "a,b,c"]
+    @test collect(HT.mkheaders(Dict("X-Dup" => ["a", "b"]))) == ["X-Dup" => "a,b"]
+
+    # Non-adjacent duplicates are NOT merged: appendheader only ever merges
+    # into the immediately preceding entry.
+    nonadjacent = HT.Headers()
+    HT.appendheader(nonadjacent, "X-Dup", "a")
+    HT.appendheader(nonadjacent, "X-Other", "z")
+    HT.appendheader(nonadjacent, "X-Dup", "b")
+    @test collect(nonadjacent) == ["X-Dup" => "a", "X-Other" => "z", "X-Dup" => "b"]
+
+    # Set-Cookie is never merged, adjacent or not.
+    cookies = HT.Headers()
+    HT.appendheader(cookies, "Set-Cookie", "a=1")
+    HT.appendheader(cookies, "Set-Cookie", "b=2")
+    @test collect(cookies) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
 end
 
 @testset "HTTP core header tokens" begin
