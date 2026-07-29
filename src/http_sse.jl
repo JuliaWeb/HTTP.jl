@@ -111,7 +111,18 @@ end
 
 function body_read!(stream::SSEStream, dst::Vector{UInt8})::Int
     isempty(dst) && return 0
-    return readbytes!(stream.buffer, dst, length(dst))
+    buf = stream.buffer
+    # Return as soon as any bytes are buffered rather than asking readbytes! to
+    # fill `dst`: on a BufferStream that call blocks until length(dst) bytes
+    # accumulate or the stream closes, which would hold written events back
+    # from the transport until the SSE stream ends instead of streaming them
+    # live. `eof` blocks until at least one byte is available or the stream is
+    # closed and drained.
+    while true
+        eof(buf) && return 0
+        available = min(bytesavailable(buf), length(dst))
+        available > 0 && return readbytes!(buf, dst, available)
+    end
 end
 
 # Split `value` into logical lines, treating CR, LF and CRLF all as line

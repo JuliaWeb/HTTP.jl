@@ -289,6 +289,36 @@ end
     end
 end
 
+@testset "HTTP server SSE events stream incrementally" begin
+    # Events must reach the client as they are written, not in a burst when the
+    # stream closes. The producer only writes the second event after the client
+    # callback has observed the first; if the transport buffers until close,
+    # the producer times out and writes a sentinel instead, failing the test
+    # deterministically without wall-clock assertions.
+    saw_first = Threads.Atomic{Bool}(false)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.sse_stream(200) do stream
+                write(stream, HT.SSEEvent("one"))
+                delivered = timedwait(() -> saw_first[], 5.0; pollint = 0.01)
+                write(stream, HT.SSEEvent(delivered === :ok ? "two" : "first event was not delivered before close"))
+            end
+        end
+    address = HT.server_addr(server)
+    try
+        events = String[]
+        response = HT.get("http://$(address)/"; sse_callback = event -> begin
+            push!(events, event.data)
+            event.data == "one" && (saw_first[] = true)
+        end)
+        @test response.status == 200
+        @test events == ["one", "two"]
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
     # Serialize an event offline by writing it into an SSEStream and reading the
     # framed bytes back out, so we can assert on the exact wire output.
