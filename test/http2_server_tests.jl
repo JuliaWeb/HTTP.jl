@@ -195,6 +195,13 @@ function _drain_h2_server_responses!(conn::NC.Conn, reader::IO, decoder::HT.Deco
     return Dict(id => String(bodies[id]) for id in expected)
 end
 
+@testset "HTTP/2 server stream cancellation errors" begin
+    reset_error = HT._h2_server_stream_exception(HT._H2_SERVER_STREAM_RESET)
+    closed_error = HT._h2_server_stream_exception(HT._H2_SERVER_STREAM_CONN_CLOSED)
+    @test reset_error.message == "HTTP/2 stream reset by peer"
+    @test closed_error.message == "HTTP/2 connection is closed"
+end
+
 @testset "HTTP/2 server request handling" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h2:" * request.target))
