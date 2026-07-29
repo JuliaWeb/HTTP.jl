@@ -252,6 +252,7 @@ end
     stream = response.body::HT.SSEStream
     @test HT.header(response.headers, "Content-Type") == "text/event-stream"
     @test HT.header(response.headers, "Cache-Control") == "no-cache"
+    @test HT.body_read!(stream, UInt8[]) == 0
     close(stream)
 end
 
