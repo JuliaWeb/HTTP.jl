@@ -517,19 +517,19 @@ end
     base_url = "http://$(address)"
     seen = Tuple{String, String, String}[]
     server_task = _serve_retry_sequence(listener, [
-        (status = 503, reason = "Service Unavailable"),
+        (status = 503, reason = "Service Unavailable", retry_after = "60"),
     ], seen)
     try
-        # A backoff far beyond the request deadline means the armed retry is
-        # abandoned before it sleeps. The bucket reservation must be refunded
-        # rather than the release erroring (it used to be called with `nothing`
-        # as the failure cost, which has no method).
+        # A fixed backoff far beyond the request deadline means the armed retry
+        # is abandoned before it sleeps. The bucket reservation must be
+        # refunded rather than the release erroring (it used to be called with
+        # `nothing` as the failure cost, which has no method).
         bucket = HT.RetryBucket(capacity = 15, backoff_scale_factor_ms = 60_000, max_backoff_secs = 60)
         response = HT.get(
             "$(base_url)/deadline";
             retries = 2,
             retry_bucket = bucket,
-            request_timeout = 1,
+            request_timeout = 10,
             status_exception = false,
         )
         @test response.status == 503

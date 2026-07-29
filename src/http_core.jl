@@ -897,7 +897,9 @@ end
 Append a header value to `headers`.
 
 If the previous stored header has the same name and the key is not
-`Set-Cookie`, the value is merged into the previous entry with a comma.
+`Set-Cookie`, the value is merged into the previous entry with a comma
+(no whitespace), as permitted by RFC 9110 §5.3 and required by common
+request-signing canonicalizations.
 Otherwise a new pair is appended.
 """
 function appendheader(headers::Headers, header::Pair)
@@ -905,7 +907,7 @@ function appendheader(headers::Headers, header::Pair)
     if !isempty(headers.entries)
         last_header = headers.entries[end]
         if first(item) != "Set-Cookie" && first(last_header) == first(item)
-            headers.entries[end] = first(last_header) => string(last(last_header), ", ", last(item))
+            headers.entries[end] = first(last_header) => string(last(last_header), ",", last(item))
             return headers
         end
     end
