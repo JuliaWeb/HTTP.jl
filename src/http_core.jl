@@ -898,7 +898,8 @@ Append a header value to `headers`.
 
 If the previous stored header has the same name and the key is not
 `Set-Cookie`, the value is merged into the previous entry with a comma
-(no whitespace), the canonical combined-field-value form of RFC 9110 §5.3.
+(no whitespace), as permitted by RFC 9110 §5.3 and required by common
+request-signing canonicalizations.
 Otherwise a new pair is appended.
 """
 function appendheader(headers::Headers, header::Pair)

@@ -74,6 +74,9 @@ function _is_timeout_error_client(err)::Bool
     err isa HT.TimeoutError && return true
     err isa Reseau.IOPoll.DeadlineExceededError && return true
     err isa TL.TLSHandshakeTimeoutError && return true
+    if err isa HT.TLSHandshakeError
+        return _is_timeout_error_client((err::HT.TLSHandshakeError).cause)
+    end
     err isa TL.TLSError || return false
     cause = (err::TL.TLSError).cause
     cause === nothing && return false
