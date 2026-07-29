@@ -252,6 +252,7 @@ end
     stream = response.body::HT.SSEStream
     @test HT.header(response.headers, "Content-Type") == "text/event-stream"
     @test HT.header(response.headers, "Cache-Control") == "no-cache"
+    @test HT.body_read!(stream, UInt8[]) == 0
     close(stream)
 end
 
@@ -286,6 +287,36 @@ end
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")
         @test !isopen(server)
+    end
+end
+
+@testset "HTTP server SSE events stream incrementally" begin
+    # Events must reach the client as they are written, not in a burst when the
+    # stream closes. The producer only writes the second event after the client
+    # callback has observed the first; if the transport buffers until close,
+    # the producer times out and writes a sentinel instead, failing the test
+    # deterministically without wall-clock assertions.
+    saw_first = Channel{Nothing}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.sse_stream(200) do stream
+                write(stream, HT.SSEEvent("one"))
+                delivered = timedwait(() -> isready(saw_first), 5.0; pollint = 0.01)
+                write(stream, HT.SSEEvent(delivered === :ok ? "two" : "first event was not delivered before close"))
+            end
+        end
+    address = HT.server_addr(server)
+    try
+        events = String[]
+        response = HT.get("http://$(address)/"; sse_callback = event -> begin
+            push!(events, event.data)
+            event.data == "one" && put!(saw_first, nothing)
+        end)
+        @test response.status == 200
+        @test events == ["one", "two"]
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
     end
 end
 

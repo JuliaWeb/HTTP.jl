@@ -1158,26 +1158,22 @@ function _write_response_body_h2_server!(
     end
     body isa AbstractBody || throw(ProtocolError("unsupported HTTP/2 response body type $(typeof(body))"))
     buf = Vector{UInt8}(undef, 16 * 1024)
-    pending = UInt8[]
-    have_pending = false
     try
         while true
             n = body_read!(body::AbstractBody, buf)
             if n == 0
-                if have_pending
-                    _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
-                elseif end_stream
-                    _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
-                end
+                end_stream && _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
                 return nothing
             end
-            current = Vector{UInt8}(undef, n)
-            copyto!(current, 1, buf, 1, n)
-            if have_pending
-                _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=false, write_deadline_ns=write_deadline_ns)
-            end
-            pending = current
-            have_pending = true
+            _write_data_frames_h2_server!(
+                conn,
+                write_lock,
+                send_state,
+                stream_id,
+                @view(buf[1:n]);
+                end_stream=false,
+                write_deadline_ns=write_deadline_ns,
+            )
         end
     finally
         @try_ignore begin
