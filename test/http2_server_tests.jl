@@ -237,6 +237,38 @@ end
     end
 end
 
+@testset "HTTP/2 server SSE events stream incrementally" begin
+    # The producer only writes the second event after the client receives the
+    # first. Holding one AbstractBody chunk until the next read or EOF makes the
+    # producer emit the sentinel instead and fails without a latency assertion.
+    saw_first = Channel{Nothing}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.sse_stream(200) do stream
+                write(stream, HT.SSEEvent("one"))
+                delivered = timedwait(() -> isready(saw_first), 5.0; pollint = 0.01)
+                write(stream, HT.SSEEvent(delivered === :ok ? "two" : "first event was not delivered before close"))
+            end
+        end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        response = HT.h2_roundtrip!(conn, request)
+        first_buffer = Vector{UInt8}(undef, 64)
+        first_count = HT.body_read!(response.body, first_buffer)
+        first_event = String(first_buffer[1:first_count])
+        first_event == "data: one\n\n" && put!(saw_first, nothing)
+        remaining = String(_read_all_h2_server(response.body))
+        @test response.status == 200
+        @test first_event * remaining == "data: one\n\ndata: two\n\n"
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server writes unread BytesBody response bytes directly" begin
     payload = collect(codeunits("abcdef"))
     returned_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)

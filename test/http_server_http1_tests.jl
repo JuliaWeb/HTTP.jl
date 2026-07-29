@@ -295,12 +295,12 @@ end
     # callback has observed the first; if the transport buffers until close,
     # the producer times out and writes a sentinel instead, failing the test
     # deterministically without wall-clock assertions.
-    saw_first = Threads.Atomic{Bool}(false)
+    saw_first = Channel{Nothing}(1)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
             return HT.sse_stream(200) do stream
                 write(stream, HT.SSEEvent("one"))
-                delivered = timedwait(() -> saw_first[], 5.0; pollint = 0.01)
+                delivered = timedwait(() -> isready(saw_first), 5.0; pollint = 0.01)
                 write(stream, HT.SSEEvent(delivered === :ok ? "two" : "first event was not delivered before close"))
             end
         end
@@ -309,7 +309,7 @@ end
         events = String[]
         response = HT.get("http://$(address)/"; sse_callback = event -> begin
             push!(events, event.data)
-            event.data == "one" && (saw_first[] = true)
+            event.data == "one" && put!(saw_first, nothing)
         end)
         @test response.status == 200
         @test events == ["one", "two"]
