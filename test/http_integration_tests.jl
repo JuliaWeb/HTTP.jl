@@ -77,7 +77,9 @@ end
     )
     laddr = TL.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_authorization = Ref{Union{Nothing,String}}(nothing)
     server = HT.serve!(listener) do request
+        seen_authorization[] = HT.header(request.headers, "Authorization", nothing)
         payload = collect(codeunits("tls-h1:" * request.target))
         return HT.Response(200, HT.BytesBody(payload); content_length = length(payload))
     end
@@ -93,9 +95,22 @@ end
         prefer_http2 = true,
     )
     try
-        response = HT.get!(client, address, "/auto-tls"; secure = true, protocol = :auto)
+        trace = function(event)
+            if event isa HT.RequestEvent
+                HT.setheader(event.request.headers, "Authorization", "Signature trace-time")
+            end
+            return nothing
+        end
+        response = HT.request(
+            trace,
+            "GET",
+            "https://$(address)/auto-tls";
+            client,
+            protocol = :auto,
+        )
         @test response.status == 200
-        @test String(_read_all_integration(response.body)) == "tls-h1:/auto-tls"
+        @test String(response.body) == "tls-h1:/auto-tls"
+        @test seen_authorization[] == "Signature trace-time"
     finally
         close(client)
         HT.forceclose(server)
