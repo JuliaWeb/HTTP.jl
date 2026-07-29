@@ -118,11 +118,9 @@ function body_read!(stream::SSEStream, dst::Vector{UInt8})::Int
     # from the transport until the SSE stream ends instead of streaming them
     # live. `eof` blocks until at least one byte is available or the stream is
     # closed and drained.
-    while true
-        eof(buf) && return 0
-        available = min(bytesavailable(buf), length(dst))
-        available > 0 && return readbytes!(buf, dst, available)
-    end
+    eof(buf) && return 0
+    available = min(bytesavailable(buf), length(dst))
+    return readbytes!(buf, dst, available)
 end
 
 # Split `value` into logical lines, treating CR, LF and CRLF all as line
