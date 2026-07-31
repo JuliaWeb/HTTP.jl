@@ -815,7 +815,6 @@ function _do_incoming!(
                     catch err
                         _drop_h2_conn!(client, proxy_plan, conn)
                         if protocol == :auto && _should_fallback_h2_to_h1(err)
-                            send_request = _copy_request_for_send(current_request, retry_attempt == 1)
                             _roundtrip_incoming!(
                                 client.transport,
                                 current_address,
