@@ -977,12 +977,13 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         state === nothing && return nothing
         # RFC 9113 §8.1: a server MAY send RST_STREAM with NO_ERROR after a
         # complete response to ask the client to abort the request body;
-        # "clients MUST NOT discard responses as a result". Only surface the
-        # reset as a stream error when it does not follow a complete response.
+        # clients must not discard the response. A reset with another code can
+        # also race with the final response frame. Once END_STREAM completed
+        # the response normally, keep it regardless of the later reset code.
         benign = false
         lock((state::H2StreamState).lock)
         try
-            benign = rst.error_code == UInt32(0) && (state::H2StreamState).stream_done
+            benign = (state::H2StreamState).stream_done && !_stream_failed(state::H2StreamState)
         finally
             unlock((state::H2StreamState).lock)
         end
