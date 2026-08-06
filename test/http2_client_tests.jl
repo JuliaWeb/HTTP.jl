@@ -1944,6 +1944,9 @@ end
         @test String(_read_all_h2_body(response.body)) == "ok"
         failure = only(failures)::TaskFailedException
         @test failure.task.exception isa HT.H2GoAwayError
+        goaway_error = failure.task.exception::HT.H2GoAwayError
+        @test goaway_error.last_stream_id == UInt32(1)
+        @test sprint(showerror, goaway_error) == "HTTP/2 stream rejected by GOAWAY"
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
