@@ -164,7 +164,7 @@ end
     @test get(() -> "fallback", ctx, :missing) == "fallback"
     empty!(ctx)
     @test !haskey(ctx, :route)
-    HT.set_deadline!(ctx, time_ns() + 50_000_000)
+    HT.set_deadline!(ctx, typemax(Int64))
     @test !HT.expired(ctx)
     HT.set_deadline!(ctx, 1)
     @test HT.expired(ctx)

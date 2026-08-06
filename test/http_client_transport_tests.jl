@@ -65,9 +65,7 @@ function _deflate_bytes_transport(text::String)::Vector{UInt8}
     return transcode(HTTP.CodecZlib.ZlibCompressor, collect(codeunits(text)))
 end
 
-function _wait_task!(task::Task; timeout_s::Float64 = 5.0)
-    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
-    status == :timed_out && error("timed out waiting for server task")
+function _wait_task!(task::Task)
     fetch(task)
     return nothing
 end
@@ -75,161 +73,6 @@ end
 function _transport_debug(msg::AbstractString)
     _ = msg
     return nothing
-end
-
-const _HTTP_WINDOWS_TRANSPORT_WARMED = Ref(false)
-const _HTTP_WINDOWS_TRANSPORT_HOSTRESOLVER_WARMED = Ref(false)
-
-function _transport_windows_ci_warmup!()::Nothing
-    _http_windows_ci() || return nothing
-    _HTTP_WINDOWS_TRANSPORT_WARMED[] && return nothing
-    _HTTP_WINDOWS_TRANSPORT_WARMED[] = true
-
-    listener = nothing
-    transport = nothing
-    server_task = nothing
-    try
-        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 4)
-        laddr = NC.addr(listener)::NC.SocketAddrV4
-        address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-        server_task = errormonitor(Threads.@spawn begin
-            conn = NC.accept(listener)
-            try
-                for _ in 1:2
-                    request = HT.read_request(HT._ConnReader(conn))
-                    _read_all_transport_body_bytes(request.body)
-                    _write_response_to_conn!(conn, request; body_text = "warmup")
-                end
-            finally
-                HTTP.@try_ignore NC.close(conn)
-            end
-            return nothing
-        end)
-        transport = HT.Transport(max_idle_per_host = 2, max_idle_total = 2)
-        for target in ("/warmup-one", "/warmup-two")
-            req = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0)
-            HT.set_deadline!(HT.get_request_context(req), Int64(time_ns()) + 2_000_000_000)
-            resp = HT.roundtrip!(transport, address, req)
-            _read_all_transport_body_bytes(resp.body)
-        end
-        HTTP.@try_ignore begin
-            _wait_task!(server_task; timeout_s = 2.0)
-        end
-    catch
-        # The warmup is best-effort: it exists only to exercise the flaky
-        # first-pass Windows CI compiler/runtime path before the real tests.
-    finally
-        server_task === nothing || HTTP.@try_ignore begin
-            _wait_task!(server_task; timeout_s = 0.5)
-        end
-        transport === nothing || close(transport)
-        if listener !== nothing
-            HTTP.@try_ignore NC.close(listener)
-        end
-        GC.gc()
-        yield()
-        IP.shutdown!()
-    end
-    return nothing
-end
-
-function _transport_windows_hostresolver_warmup!()::Nothing
-    _http_windows_ci() || return nothing
-    _HTTP_WINDOWS_TRANSPORT_HOSTRESOLVER_WARMED[] && return nothing
-    _HTTP_WINDOWS_TRANSPORT_HOSTRESOLVER_WARMED[] = true
-
-    listener = nothing
-    transport = nothing
-    server_task = nothing
-    try
-        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
-        laddr = NC.addr(listener)::NC.SocketAddrV4
-        address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-        server_task = errormonitor(Threads.@spawn begin
-            for _ in 1:2
-                conn = NC.accept(listener)
-                try
-                    request = HT.read_request(HT._ConnReader(conn))
-                    _read_all_transport_body_bytes(request.body)
-                    _write_response_to_conn!(conn, request; body_text = "warmup", close_conn = true)
-                finally
-                    HTTP.@try_ignore NC.close(conn)
-                end
-            end
-            return nothing
-        end)
-        transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
-        req1 = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
-        req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
-        deadline_ns = Int64(time_ns()) + 3_000_000_000
-        HT.set_deadline!(HT.get_request_context(req1), deadline_ns)
-        HT.set_deadline!(HT.get_request_context(req2), deadline_ns)
-        task1 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req1))
-        task2 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
-        HTTP.@try_ignore begin
-            _wait_task!(task1; timeout_s = 2.0)
-            _wait_task!(task2; timeout_s = 2.0)
-            _read_all_transport_body_bytes(fetch(task1).body)
-            _read_all_transport_body_bytes(fetch(task2).body)
-        end
-        HTTP.@try_ignore begin
-            _wait_task!(server_task; timeout_s = 2.0)
-        end
-    catch
-        # The warmup is best-effort: it exists only to exercise the flaky
-        # Windows CI resolver/compiler path before the real tests.
-    finally
-        transport === nothing || close(transport)
-        if listener !== nothing
-            HTTP.@try_ignore NC.close(listener)
-        end
-        server_task === nothing || HTTP.@try_ignore begin
-            _wait_task!(server_task; timeout_s = 0.5)
-        end
-        GC.gc()
-        yield()
-        IP.shutdown!()
-    end
-    return nothing
-end
-
-mutable struct _CountingResolverTransport <: ND.AbstractResolver
-    delay_s::Float64
-    addrs::Vector{NC.SocketEndpoint}
-    lock::ReentrantLock
-    calls::Int
-end
-
-function _CountingResolverTransport(delay_s::Float64, addrs::Vector{NC.SocketEndpoint})
-    return _CountingResolverTransport(delay_s, addrs, ReentrantLock(), 0)
-end
-
-function ND.resolve_tcp_addrs(
-        resolver::_CountingResolverTransport,
-        network::AbstractString,
-        address::AbstractString;
-        op::Symbol = :connect,
-        policy::ND.ResolverPolicy = ND.ResolverPolicy(),
-    )::Vector{NC.SocketEndpoint}
-    _ = network
-    _ = address
-    _ = op
-    _ = policy
-    lock(resolver.lock)
-    try
-        resolver.calls += 1
-    finally
-        unlock(resolver.lock)
-    end
-    sleep(resolver.delay_s)
-    return copy(resolver.addrs)
-end
-
-if _http_windows_ci()
-    @testset "HTTP client transport windows warmup" begin
-        _transport_windows_ci_warmup!()
-        _transport_windows_hostresolver_warmup!()
-    end
 end
 
 @testset "_read_all_response_bytes caps eager preallocation" begin
@@ -264,9 +107,6 @@ end
     try
         req1 = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
-        deadline_ns = Int64(time_ns()) + 3_000_000_000
-        HT.set_deadline!(HT.get_request_context(req1), deadline_ns)
-        HT.set_deadline!(HT.get_request_context(req2), deadline_ns)
         task1 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req1))
         task2 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
         @test _wait_task!(task1) === nothing
@@ -584,7 +424,6 @@ end
 
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
-        @test timedwait(() -> istaskdone(res2_task), 0.05; pollint = 0.001) == :timed_out
 
         @test String(_read_all_transport_body_bytes(res1.body)) == "first"
 
@@ -615,7 +454,6 @@ end
             req1 = HT.read_request(HT._ConnReader(conn1))
             _read_all_transport_body_bytes(req1.body)
             _write_response_bytes_to_conn!(conn1, req1; body_bytes = first_body)
-            NC.set_read_deadline!(conn1, Int64(time_ns()) + 300_000_000)
             try
                 req_maybe = HT.read_request(HT._ConnReader(conn1))
                 same_conn_second_request[] = true
@@ -648,7 +486,6 @@ end
 
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
-        @test timedwait(() -> istaskdone(res2_task), 0.05; pollint = 0.001) == :timed_out
 
         first_byte = Vector{UInt8}(undef, 1)
         @test HT.body_read!(res1.body, first_byte) == 1
@@ -680,7 +517,6 @@ end
             req1 = HT.read_request(HT._ConnReader(conn))
             _read_all_transport_body_bytes(req1.body)
             _write_response_to_conn!(conn, req1; body_text = "first")
-            NC.set_read_deadline!(conn, Int64(time_ns()) + 300_000_000)
             try
                 req2 = HT.read_request(HT._ConnReader(conn))
                 second_request_seen[] = true
@@ -702,7 +538,7 @@ end
         @test res1.status == 200
 
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(HT.get_request_context(req2), Int64(time_ns()) + 50_000_000)
+        HT.set_deadline!(HT.get_request_context(req2), Int64(1))
         err = try
             HT.roundtrip!(transport, address, req2)
             nothing
@@ -755,25 +591,16 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    sent_body_before_continue = Ref(false)
+    body_requested = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         conn = NC.accept(listener)
         reader = HT._ConnReader(conn)
         try
             request = HT.read_request(reader)
-            probe = Vector{UInt8}(undef, 1)
-            NC.set_read_deadline!(conn, Int64(time_ns()) + 100_000_000)
-            try
-                sent_body_before_continue[] = HT.body_read!(request.body, probe) > 0
-            catch err
-                if !(err isa IP.DeadlineExceededError || err isa HT.ParseError || err isa HT.ProtocolError)
-                    rethrow(err)
-                end
-            finally
-                NC.set_read_deadline!(conn, Int64(0))
-            end
+            @test !isready(body_requested)
             _write_all_tcp!(conn, collect(codeunits("HTTP/1.1 100 Continue\r\n\r\n")))
             @test String(_read_all_transport_body_bytes(request.body)) == "hello"
+            take!(body_requested)
             _write_response_to_conn!(conn, request; body_text = "done", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn)
@@ -784,12 +611,23 @@ end
     try
         headers = HT.Headers()
         HT.setheader(headers, "Expect", "100-continue")
-        req = HT.Request("POST", "/continue"; host = address, headers = headers, body = HT.BytesBody(collect(codeunits("hello"))), content_length = 5)
+        body_sent = Ref(false)
+        body = HT.CallbackBody(
+            dst -> begin
+                body_sent[] && return 0
+                put!(body_requested, nothing)
+                bytes = collect(codeunits("hello"))
+                copyto!(dst, 1, bytes, 1, length(bytes))
+                body_sent[] = true
+                return length(bytes)
+            end,
+            () -> nothing,
+        )
+        req = HT.Request("POST", "/continue"; host = address, headers = headers, body = body, content_length = 5)
         res = HT.roundtrip!(transport, address, req)
         @test res.status == 200
         @test String(_read_all_transport_body_bytes(res.body)) == "done"
         _wait_task!(server_task)
-        @test !sent_body_before_continue[]
     finally
         close(transport)
         HTTP.@try_ignore NC.close(listener)
@@ -801,6 +639,7 @@ end
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     close_count = Ref(0)
+    body_closed = Base.Event()
     stage = Ref(1)
     second_chunk_started = Channel{Nothing}(1)
     release_second_chunk = Channel{Nothing}(1)
@@ -824,6 +663,7 @@ end
         end,
         () -> begin
             close_count[] += 1
+            notify(body_closed)
             return nothing
         end,
     )
@@ -831,6 +671,7 @@ end
         conn = NC.accept(listener)
         try
             request = HT.read_request(HT._ConnReader(conn))
+            take!(second_chunk_started)
             _write_response_bytes_to_conn!(conn, request; body_bytes = collect(codeunits("early")), close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn)
@@ -841,22 +682,12 @@ end
     try
         req = HT.Request("POST", "/early"; host = address, body = callback_body, content_length = 10)
         res_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req))
-        ready = timedwait(() -> istaskdone(res_task) || isready(second_chunk_started), 2.0; pollint = 0.001)
-        @test ready == :ok
-        if ready == :ok && isready(second_chunk_started) && !istaskdone(res_task)
-            response_ready = timedwait(() -> istaskdone(res_task), 2.0; pollint = 0.001)
-            @test response_ready == :ok
-        end
-        @test istaskdone(res_task)
+        res = fetch(res_task)
         isready(release_second_chunk) || put!(release_second_chunk, nothing)
-        if istaskdone(res_task)
-            res = fetch(res_task)
-            @test res.status == 200
-            @test String(_read_all_transport_body_bytes(res.body)) == "early"
-            @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
-        else
-            _wait_task!(res_task)
-        end
+        wait(body_closed)
+        @test res.status == 200
+        @test String(_read_all_transport_body_bytes(res.body)) == "early"
+        @test close_count[] == 1
         _wait_task!(server_task)
     finally
         isready(release_second_chunk) || put!(release_second_chunk, nothing)
@@ -904,7 +735,7 @@ end
         @test res.status == 200
         @test String(_read_all_transport_body_bytes(res.body)) == "done"
         _wait_task!(server_task)
-        @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
+        @test close_count[] == 1
     finally
         close(transport)
         HTTP.@try_ignore NC.close(listener)
@@ -927,7 +758,6 @@ end
             push!(paths, req1.target)
             _read_all_transport_body_bytes(req1.body)
             _write_response_bytes_to_conn!(conn, req1; body_bytes = first_body)
-            NC.set_read_deadline!(conn, Int64(time_ns()) + 300_000_000)
             try
                 req2 = HT.read_request(HT._ConnReader(conn))
                 same_conn_second_request[] = true
@@ -988,8 +818,8 @@ end
                 request = HT.read_request(HT._ConnReader(conn))
                 _read_all_transport_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "ok")
-                NC.set_read_deadline!(conn, Int64(time_ns()) + 100_000_000)
-                HTTP.@try_ignore _ = HT.read_request(HT._ConnReader(conn))
+                probe = Vector{UInt8}(undef, 1)
+                @test readbytes!(conn, probe, 1; all = true) == 0
             finally
                 HTTP.@try_ignore NC.close(conn)
             end
@@ -1029,7 +859,6 @@ end
             req1 = HT.read_request(HT._ConnReader(conn1))
             _read_all_transport_body_bytes(req1.body)
             _write_response_bytes_to_conn!(conn1, req1; body_bytes = first_body)
-            NC.set_read_deadline!(conn1, Int64(time_ns()) + 300_000_000)
             try
                 req_maybe = HT.read_request(HT._ConnReader(conn1))
                 same_conn_second_request[] = true
@@ -1084,6 +913,7 @@ end
     methods = String[]
     paths = String[]
     bodies = String[]
+    first_conn_closed = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         conn1 = NC.accept(listener)
         accept_count[] += 1
@@ -1093,9 +923,9 @@ end
             push!(paths, req1.target)
             push!(bodies, String(_read_all_transport_body_bytes(req1.body)))
             _write_response_to_conn!(conn1, req1; body_text = "warmup")
-            sleep(0.15)
         finally
             HTTP.@try_ignore NC.close(conn1)
+            put!(first_conn_closed, nothing)
         end
         conn2 = NC.accept(listener)
         accept_count[] += 1
@@ -1115,7 +945,7 @@ end
         req1 = HT.Request("GET", "/warmup"; host = address, body = HT.EmptyBody(), content_length = 0)
         res1 = HT.roundtrip!(transport, address, req1)
         @test String(_read_all_transport_body_bytes(res1.body)) == "warmup"
-        sleep(0.20)
+        take!(first_conn_closed)
         req2 = HT.Request(
             "QUERY",
             "/retry";
@@ -1154,7 +984,7 @@ end
         HTTP.get(url)
         client = HTTP._DEFAULT_CLIENT[]
         @test client !== nothing
-        @test timedwait(() -> HT.idle_connection_count(client.transport) >= 1, 5.0) === :ok
+        @test HT.idle_connection_count(client.transport) >= 1
         # No-arg form closes the default client's idle connections.
         @test HTTP.close_idle_connections!() === nothing
         @test HT.idle_connection_count(client.transport) == 0

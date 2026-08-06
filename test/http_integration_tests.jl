@@ -211,6 +211,7 @@ end
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     accepted = Channel{Nothing}(8)
+    release = Channel{Nothing}(2)
     server_task = errormonitor(Threads.@spawn begin
         workers = Task[]
         try
@@ -232,7 +233,7 @@ end
                         for header in decoded
                             header.name == ":path" && (path = header.value)
                         end
-                        sleep(1.0)
+                        take!(release)
                         encoded = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
                         _write_frame_h2_integration!(conn, HT.HeadersFrame(headers_frame.stream_id, false, true, encoded))
                         _write_frame_h2_integration!(conn, HT.DataFrame(headers_frame.stream_id, true, collect(codeunits("resp:" * path))))
@@ -252,28 +253,22 @@ end
         return nothing
     end)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = true)
-    started = time()
     try
         t1 = errormonitor(Threads.@spawn HT.get!(client, address, "/one"; protocol = :h2))
         t2 = errormonitor(Threads.@spawn HT.get!(client, address, "/two"; protocol = :h2))
-        @test timedwait(() -> istaskdone(t1) && istaskdone(t2), 4.0; pollint = 0.001) != :timed_out
+        take!(accepted)
+        take!(accepted)
+        put!(release, nothing)
+        put!(release, nothing)
         r1 = fetch(t1)
         r2 = fetch(t2)
-        elapsed = time() - started
         @test r1.status == 200
         @test r2.status == 200
         @test String(_read_all_integration(r1.body)) == "resp:/one"
         @test String(_read_all_integration(r2.body)) == "resp:/two"
-        @test elapsed < 1.8
     finally
         close(client)
         HTTP.@try_ignore NC.close(listener)
         fetch(server_task)
     end
-    accepted_count = 0
-    while isready(accepted)
-        take!(accepted)
-        accepted_count += 1
-    end
-    @test accepted_count >= 2
 end

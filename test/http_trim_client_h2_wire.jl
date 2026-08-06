@@ -1,8 +1,6 @@
 include("trim_workload_common.jl")
 
 const _HTTP_TRIM_H2_WIRE_LISTENER = Ref{Union{Nothing,Reseau.TCP.Listener}}(nothing)
-const _HTTP_TRIM_H2_WIRE_STARTED = Ref(false)
-const _HTTP_TRIM_H2_WIRE_DONE = Ref(false)
 
 function _http_trim_write_all_h2!(conn::Reseau.TCP.Conn, bytes::Vector{UInt8})::Nothing
     total = 0
@@ -36,7 +34,6 @@ function _http_trim_write_h2_frame!(conn::Reseau.TCP.Conn, frame::HT.AbstractFra
 end
 
 function _http_trim_h2_wire_server_entry()::Nothing
-    _HTTP_TRIM_H2_WIRE_STARTED[] = true
     listener = _HTTP_TRIM_H2_WIRE_LISTENER[]::Reseau.TCP.Listener
     conn = Reseau.TCP.accept(listener)
     try
@@ -71,7 +68,6 @@ function _http_trim_h2_wire_server_entry()::Nothing
         _http_trim_write_h2_frame!(conn, HT.HeadersFrame(UInt32(1), false, true, response_block))
         _http_trim_write_h2_frame!(conn, HT.DataFrame(UInt32(1), true, collect(codeunits("h2-wire"))))
     finally
-        _HTTP_TRIM_H2_WIRE_DONE[] = true
         HTTP.@try_ignore close(conn)
     end
     return nothing
@@ -84,13 +80,9 @@ function run_http_trim_client_h2_wire()::Nothing
     try
         listener = Reseau.TCP.listen(Reseau.TCP.loopback_addr(0); backlog = 16)
         _HTTP_TRIM_H2_WIRE_LISTENER[] = listener
-        _HTTP_TRIM_H2_WIRE_STARTED[] = false
-        _HTTP_TRIM_H2_WIRE_DONE[] = false
 
         server_task = Task(_http_trim_h2_wire_server_entry)
         schedule(server_task)
-        start_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_WIRE_STARTED[], 5.0; pollint = 0.001)
-        start_status == :timed_out && error("timed out waiting for trim H2 wire server task")
 
         addr = Reseau.TCP.addr(listener)::Reseau.TCP.SocketAddrV4
         address = "127.0.0.1:$(Int(addr.port))"
@@ -129,8 +121,6 @@ function run_http_trim_client_h2_wire()::Nothing
         HTTP.@try_ignore listener === nothing || close(listener::Reseau.TCP.Listener)
         HTTP.@try_ignore begin
             if server_task !== nothing
-                done_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_WIRE_DONE[] || istaskdone(server_task::Task), 5.0; pollint = 0.001)
-                done_status == :timed_out && error("timed out waiting for trim H2 wire server task shutdown")
                 wait(server_task)
             end
         end

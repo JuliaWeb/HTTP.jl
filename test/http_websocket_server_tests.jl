@@ -168,21 +168,25 @@ end
 end
 
 @testset "HTTP.WebSockets client read_idle_timeout over wss (#1062)" begin
+    release = Channel{Nothing}(1)
     server = W.listen!(
         "127.0.0.1",
         0;
         tls_config = TL.Config(verify_peer = false, cert_file = _TLS_CERT_PATH, key_file = _TLS_KEY_PATH),
     ) do ws
         W.send(ws, "hello")
-        sleep(3)                       # stay silent so the client idle timeout fires first
+        take!(release)
     end
     try
         address = W.server_addr(server)
         msgs = String[]
         err = nothing
         try
-            W.open("wss://$address/"; read_idle_timeout = 1.0, require_ssl_verification = false, suppress_close_error = true) do ws
+            W.open("wss://$address/"; read_idle_timeout=60, require_ssl_verification=false, suppress_close_error=true) do ws
                 push!(msgs, String(W.receive(ws)))   # "hello" arrives during activity
+                @test ws.read_idle_timeout_ns == 60_000_000_000
+                ws.read_idle_timeout_ns = Int64(1)
+                W._ws_arm_read_deadline!(ws.stream, Int64(1))
                 W.receive(ws)                          # no more data -> idle timeout
             end
         catch e
@@ -193,6 +197,7 @@ end
         @test err !== nothing && (err::W.WebSocketError).message.code == 1006
         @test err !== nothing && occursin("idle timeout", (err::W.WebSocketError).message.reason)
     finally
+        isready(release) || put!(release, nothing)
         close(server)
     end
 end

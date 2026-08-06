@@ -77,10 +77,11 @@ function _apply_request_timeout_settings!(
     ctx::RequestContext,
     request_timeout_ns::Int64,
     config::Union{Nothing,_RequestTimeoutConfig},
+    ;
+    now_ns::Int64=Int64(time_ns()),
 )::RequestContext
     request_timeout_ns < 0 && throw(ArgumentError("request_timeout_ns must be >= 0"))
     if request_timeout_ns > 0
-        now_ns = Int64(time_ns())
         deadline_ns = now_ns > typemax(Int64) - request_timeout_ns ? typemax(Int64) : now_ns + request_timeout_ns
         set_deadline!(ctx, deadline_ns)
     end

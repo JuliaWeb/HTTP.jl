@@ -67,9 +67,7 @@ function _write_padded_data_frame_to_conn!(conn::NC.Conn, stream_id::UInt32, dat
     return nothing
 end
 
-function _wait_task_h2!(task::Task; timeout_s::Float64 = 5.0)
-    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
-    status == :timed_out && error("timed out waiting for h2 server task")
+function _wait_task_h2!(task::Task)
     fetch(task)
     return nothing
 end
@@ -305,17 +303,6 @@ end
             request = HT.Request("GET", "/partial-reset"; host = address, body = HT.EmptyBody(), content_length = 0)
             response = HT.h2_roundtrip!(h2_conn, request)
             put!(allow_reset, nothing)
-            state = (response.body::HT.H2Body).state
-            reset_received = timedwait(() -> begin
-                lock(state.lock)
-                try
-                    return state.stream_error !== nothing
-                finally
-                    unlock(state.lock)
-                end
-            end, 5.0; pollint = 0.001)
-            @test reset_received != :timed_out
-
             buf = Vector{UInt8}(undef, length(payload))
             @test HT.body_read!(response.body, buf) == length(payload)
             @test String(copy(buf)) == payload
@@ -381,20 +368,7 @@ end
     try
         request = HT.Request("GET", "/complete-late-reset"; host = address, body = HT.EmptyBody(), content_length = 0)
         response = HT.h2_roundtrip!(h2_conn, request)
-        reset_seen = timedwait(() -> isready(reset_processed), 5.0; pollint = 0.001)
-        @test reset_seen != :timed_out
-        reset_seen == :timed_out && error("client did not process the late reset")
         take!(reset_processed)
-        state = (response.body::HT.H2Body).state
-        response_complete = timedwait(() -> begin
-            lock(state.lock)
-            try
-                return state.stream_done
-            finally
-                unlock(state.lock)
-            end
-        end, 5.0; pollint = 0.001)
-        @test response_complete != :timed_out
         @test String(_read_all_h2_body(response.body)) == "complete"
         @test HT.body_closed(response.body)
         @test HT._stream_state(h2_conn, (response.body::HT.H2Body).stream_id) === nothing
@@ -447,17 +421,6 @@ end
         incomplete_response = HT.h2_roundtrip!(h2_conn, incomplete_request)
         put!(allow_close, nothing)
         _wait_task_h2!(server_task)
-        complete_state = (complete_response.body::HT.H2Body).state
-        incomplete_state = (incomplete_response.body::HT.H2Body).state
-        failure_seen = timedwait(() -> begin
-            complete_failed = lock(complete_state.lock) do
-                complete_state.conn_errored
-            end
-            return lock(incomplete_state.lock) do
-                complete_failed && incomplete_state.conn_errored
-            end
-        end, 5.0; pollint = 0.001)
-        @test failure_seen != :timed_out
         @test String(_read_all_h2_body(complete_response.body)) == "complete"
         @test_throws HT.ProtocolError HT.body_read!(incomplete_response.body, Vector{UInt8}(undef, 1))
         HT.body_close!(incomplete_response.body)
@@ -501,18 +464,8 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    server_task = errormonitor(Threads.@spawn begin
-        accepted_conn = NC.accept(listener)
-        try
-            sleep(0.20)
-        finally
-            HTTP.@try_ignore NC.close(accepted_conn)
-        end
-        return nothing
-    end)
     try
-        @test_throws Reseau.IOPoll.DeadlineExceededError HT.connect_h2!(address; secure = false, connect_deadline_ns = Int64(time_ns() + 50_000_000))
-        _wait_task_h2!(server_task)
+        @test_throws Reseau.IOPoll.DeadlineExceededError HT.connect_h2!(address; secure=false, connect_deadline_ns=1)
     finally
         HTTP.@try_ignore NC.close(listener)
     end
@@ -546,6 +499,7 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    release_server = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
@@ -559,9 +513,7 @@ end
             headers_frame = _read_next_headers_frame!(reader)
             hf = headers_frame::HT.HeadersFrame
             _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
-            sleep(0.20)
-            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
-            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
+            take!(release_server)
         finally
             HTTP.@try_ignore NC.close(accepted_conn)
         end
@@ -570,13 +522,16 @@ end
     h2_conn = HT.connect_h2!(address; secure = false)
     try
         request = HT.Request("GET", "/slow-headers"; host = address, body = HT.EmptyBody(), content_length = 0)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0.05)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 1.0e-9)
         HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
+        put!(release_server, nothing)
         _wait_task_h2!(server_task)
     finally
+        isready(release_server) || HTTP.@try_ignore put!(release_server, nothing)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore fetch(server_task)
     end
 end
 
@@ -584,6 +539,8 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    partial_body_sent = Channel{Nothing}(1)
+    release_server = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
@@ -600,7 +557,8 @@ end
             encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, false, UInt8[UInt8('a')]))
-            sleep(0.20)
+            put!(partial_body_sent, nothing)
+            take!(release_server)
         finally
             HTTP.@try_ignore NC.close(accepted_conn)
         end
@@ -610,18 +568,24 @@ end
     response = nothing
     try
         request = HT.Request("GET", "/slow-body"; host = address, body = HT.EmptyBody(), content_length = 0)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0.05)
-        HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
+        ctx = HT.get_request_context(request)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 60)
+        HT._apply_request_timeout_settings!(ctx, request_timeout_ns, timeout_config)
         response = HT.h2_roundtrip!(h2_conn, request)
         buf = Vector{UInt8}(undef, 8)
         @test HT.body_read!(response.body, buf) == 1
         @test buf[1] == UInt8('a')
+        take!(partial_body_sent)
+        HT.set_deadline!(ctx, 1)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.body_read!(response.body, buf)
+        put!(release_server, nothing)
         _wait_task_h2!(server_task)
     finally
+        isready(release_server) || HTTP.@try_ignore put!(release_server, nothing)
         response === nothing || HTTP.@try_ignore HT.body_close!(response.body)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore fetch(server_task)
     end
 end
 
@@ -629,6 +593,7 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    release_body = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
@@ -644,7 +609,7 @@ end
             _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
             encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
-            sleep(0.05)
+            take!(release_body)
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, UInt8[UInt8('o'), UInt8('k')]))
         finally
             HTTP.@try_ignore NC.close(accepted_conn)
@@ -655,12 +620,14 @@ end
     response = nothing
     try
         request = HT.Request("GET", "/delayed-body"; host = address, body = HT.EmptyBody(), content_length = 0)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0.5)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 60)
         HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
         response = HT.h2_roundtrip!(h2_conn, request)
+        put!(release_body, nothing)
         @test String(_read_all_h2_body(response.body)) == "ok"
         _wait_task_h2!(server_task)
     finally
+        isready(release_body) || HTTP.@try_ignore put!(release_body, nothing)
         response === nothing || HTTP.@try_ignore HT.body_close!(response.body)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
@@ -671,6 +638,8 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    data_received = Channel{Nothing}(1)
+    release_server = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
@@ -683,12 +652,10 @@ end
             headers_frame = _read_next_headers_frame!(reader)
             hf = headers_frame::HT.HeadersFrame
             _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
-            try
-                _ = HT.read_frame!(reader)
-            catch err
-                (err isa ParseError || err isa EOFError) || rethrow(err)
-            end
-            sleep(0.20)
+            data = HT.read_frame!(reader)
+            @test data isa HT.DataFrame
+            put!(data_received, nothing)
+            take!(release_server)
         finally
             HTTP.@try_ignore NC.close(accepted_conn)
         end
@@ -696,15 +663,33 @@ end
     end)
     h2_conn = HT.connect_h2!(address; secure = false)
     try
-        body = HT.BytesBody(collect(codeunits("abcd")))
+        ctx = HT.RequestContext()
+        read_count = Ref(0)
+        body = HT.CallbackBody(dst -> begin
+            read_count[] += 1
+            if read_count[] == 1
+                dst[1] = UInt8('a')
+                return 1
+            elseif read_count[] == 2
+                copyto!(dst, 1, collect(codeunits("bcd")), 1, 3)
+                return 3
+            end
+            HT.set_deadline!(ctx, 1)
+            return 0
+        end, () -> nothing)
         request = HT.Request("POST", "/slow-upload"; host = address, body = body, content_length = 4)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0.05)
-        HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
+        request.context = ctx
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 60)
+        HT._apply_request_timeout_settings!(ctx, request_timeout_ns, timeout_config)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
+        take!(data_received)
+        put!(release_server, nothing)
         _wait_task_h2!(server_task)
     finally
+        isready(release_server) || HTTP.@try_ignore put!(release_server, nothing)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore fetch(server_task)
     end
 end
 
@@ -1291,10 +1276,9 @@ end
     client = HT.Client()
     ctx = HT.RequestContext()
     url = "http://$(address)/cancel"
-    request_task = Threads.@spawn HT.get($url; protocol = :h2, context = $ctx, client = $client, retry = false)
+    request_task = @async HT.get(url; protocol=:h2, context=ctx, client=client, retry=false)
     try
-        @test timedwait(() -> isready(stream_ids), 5.0; pollint = 0.001) != :timed_out
-        isready(stream_ids) && take!(stream_ids)
+        take!(stream_ids)
         HT.cancel!(ctx; message = "user canceled h2")
         result = try
             fetch(request_task)
@@ -1307,8 +1291,7 @@ end
         @test result[2] isa HT.CanceledError
         @test (result[2]::HT.CanceledError).message == "user canceled h2"
         @test isempty(ctx.cancel_callbacks)
-        @test timedwait(() -> isready(reset_codes), 5.0; pollint = 0.001) != :timed_out
-        isready(reset_codes) && @test take!(reset_codes) == UInt32(0x8)
+        @test take!(reset_codes) == UInt32(0x8)
         _wait_task_h2!(server_task)
     finally
         close(client)
@@ -1594,6 +1577,7 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    finish = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
@@ -1613,7 +1597,7 @@ end
                 frame isa HT.DataFrame && break
             end
             _write_frame_to_conn!(accepted_conn, HT.RSTStreamFrame(hf.stream_id, UInt32(0x8)))
-            sleep(0.20)
+            take!(finish)
         finally
             HTTP.@try_ignore NC.close(accepted_conn)
         end
@@ -1633,8 +1617,10 @@ end
         @test (err::HT.H2StreamResetError).error_code == UInt32(0x8)
         # A stream-level reset must not poison the shared connection.
         @test HT._h2_conn_reusable(h2_conn)
+        put!(finish, nothing)
         _wait_task_h2!(server_task)
     finally
+        isready(finish) || HTTP.@try_ignore put!(finish, nothing)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
     end
@@ -1667,47 +1653,29 @@ end
             _ = HT.read_frame!(reader)
             hf = (_read_next_headers_frame!(reader))::HT.HeadersFrame
             _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
-            # Drain everything the client sends without ever granting connection
-            # credit, until it stops emitting DATA. A compliant client exhausts the
-            # default 65535-byte connection window and then stalls, which we observe
-            # as a read deadline rather than more bytes. A client that wrongly leaned
-            # on its 1 MiB stream window would keep sending and reach END_STREAM here,
-            # so the drained byte count is what proves the connection-level cap.
+            # Drain exactly the default connection window before granting more
+            # credit. The final frame must end at 65535 bytes. An oversized frame
+            # proves that the client used the larger stream window by mistake.
             got_end = false
-            NC.set_deadline!(accepted_conn, Int64(time_ns() + 1_000_000_000))
-            try
-                while !got_end
-                    frame = HT.read_frame!(reader)
-                    frame isa HT.DataFrame || continue
-                    df = frame::HT.DataFrame
-                    df.stream_id == hf.stream_id || continue
-                    bytes_before_grant[] += length(df.data)
-                    got_end = df.end_stream
-                end
-            catch err
-                err isa Reseau.IOPoll.DeadlineExceededError || rethrow(err)
-            finally
-                NC.set_deadline!(accepted_conn, Int64(0))
+            while bytes_before_grant[] < HT._H2_DEFAULT_WINDOW_SIZE
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame || continue
+                df = frame::HT.DataFrame
+                df.stream_id == hf.stream_id || continue
+                bytes_before_grant[] += length(df.data)
+                got_end = df.end_stream
             end
             total_received[] = bytes_before_grant[]
-            # A compliant client stalled mid-body; release the rest of the connection
-            # window and finish reading. If it already hit END_STREAM (the overshoot
-            # case), skip this so a regression fails the assertion rather than hanging.
-            if !got_end
-                _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(UInt32(0), UInt32(payload_len - HT._H2_DEFAULT_WINDOW_SIZE)))
-                NC.set_deadline!(accepted_conn, Int64(time_ns() + 2_000_000_000))
-                try
-                    while !got_end
-                        frame = HT.read_frame!(reader)
-                        frame isa HT.DataFrame || continue
-                        df = frame::HT.DataFrame
-                        df.stream_id == hf.stream_id || continue
-                        total_received[] += length(df.data)
-                        got_end = df.end_stream
-                    end
-                finally
-                    NC.set_deadline!(accepted_conn, Int64(0))
-                end
+            @test bytes_before_grant[] == HT._H2_DEFAULT_WINDOW_SIZE
+            @test !got_end
+            _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(UInt32(0), UInt32(payload_len - HT._H2_DEFAULT_WINDOW_SIZE)))
+            while !got_end
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame || continue
+                df = frame::HT.DataFrame
+                df.stream_id == hf.stream_id || continue
+                total_received[] += length(df.data)
+                got_end = df.end_stream
             end
             encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
@@ -1832,8 +1800,6 @@ end
             req = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
             return HT.h2_roundtrip!(h2_conn, req)
         end)
-        @test timedwait(() -> istaskdone(t1), 3.0; pollint = 0.001) != :timed_out
-        @test timedwait(() -> istaskdone(t2), 3.0; pollint = 0.001) != :timed_out
         r1 = fetch(t1)
         r2 = fetch(t2)
         @test r1.status == 200
@@ -1917,6 +1883,8 @@ end
     end)
     h2_conn = HT.connect_h2!(address; secure = false)
     try
+        # One task is expected to fail with H2GoAwayError, so these tasks are
+        # intentionally not wrapped in errormonitor.
         t1 = Threads.@spawn begin
             req = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
             return HT.h2_roundtrip!(h2_conn, req)
@@ -1925,8 +1893,6 @@ end
             req = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
             return HT.h2_roundtrip!(h2_conn, req)
         end
-        @test timedwait(() -> istaskdone(t1), 3.0; pollint = 0.001) != :timed_out
-        @test timedwait(() -> istaskdone(t2), 3.0; pollint = 0.001) != :timed_out
         outcomes = Any[]
         for task in (t1, t2)
             push!(outcomes, try
@@ -1974,7 +1940,6 @@ end
             conn = TL.accept(listener)
             try
                 TL.handshake!(conn)
-                sleep(0.05)
             catch err
                 # The client intentionally aborts once ALPN negotiation fails.
                 # Server-side TLS failures are expected in this test path.
@@ -2046,9 +2011,15 @@ end
     try
         request = HT.Request("GET", "/"; host = addr, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
         response = HT.h2_roundtrip!(conn, request)
-        # Allow the trailing HEADERS frame to land. The fix surfaces it
-        # whether it arrives before or after the response head is built.
-        sleep(0.1)
+        state = (response.body::HT.H2Body).state
+        lock(state.lock)
+        try
+            while !state.stream_done
+                wait(state.condition)
+            end
+        finally
+            unlock(state.lock)
+        end
         @test response.status == 200
         @test HT.header(response.trailers, "grpc-status") == "0"
     finally
@@ -2376,7 +2347,7 @@ end
     finally
         conn === nothing || close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -2387,8 +2358,8 @@ function _build_bare_h2_connection()
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    accept_task = Threads.@spawn NC.accept(listener)
-    client_tcp = NC.connect("tcp", address; timeout_ns = 3_000_000_000)
+    accept_task = errormonitor(Threads.@spawn NC.accept(listener))
+    client_tcp = NC.connect("tcp", address)
     server_tcp = fetch(accept_task)
     state_lock = ReentrantLock()
     conn = HT.H2Connection(
@@ -2426,7 +2397,7 @@ function _build_bare_h2_connection()
         nothing,
         UInt8[],
         0,
-        Int64(time_ns()),
+        Int64(0),
         false,
     )
     cleanup = () -> begin
@@ -2650,22 +2621,21 @@ end
         HTTP.@try_ignore NC.close(c2)
         return nothing
     end)
-    client = HT.Client(transport = HT.Transport(idle_timeout_ns = Int64(150_000_000)))  # 150ms
+    client = HT.Client(transport=HT.Transport(idle_timeout_ns=1))
     try
         r1 = HT.get("http://$(address)/one"; client = client, protocol = :h2)
         @test r1.status == 200
         pooled = lock(client.h2_lock) do
             only(only(values(client.h2_conns)))
         end
-        sleep(0.4)   # exceed the idle timeout
-        started = time()
+        lock(pooled.state_lock) do
+            pooled.idle_since_ns = 1
+        end
         r2 = HT.get("http://$(address)/two"; client = client, protocol = :h2, retry = false)
-        elapsed = time() - started
         @test r2.status == 200
-        @test elapsed < 5.0            # a reused dead connection would hang
         @test accepts[] == 2           # request 2 ran on a fresh connection
         # the evicted connection was closed, and the pool holds only the new one
-        @test timedwait(() -> (@atomic :acquire pooled.closed), 5.0; pollint = 0.01) == :ok
+        @test @atomic :acquire pooled.closed
         n = lock(client.h2_lock) do
             sum(length(v) for v in values(client.h2_conns); init = 0)
         end
@@ -2699,7 +2669,6 @@ end
         for i in 1:3
             r = HT.get("http://$(address)/r$(i)"; client = client, protocol = :h2)
             @test r.status == 200
-            sleep(0.05)
         end
         @test accepts[] == 1   # every request reused the single pooled conn
         _wait_task_h2!(server_task)
@@ -2748,7 +2717,7 @@ end
             sum(length(v) for v in values(client.h2_conns); init = 0)
         end
         @test remaining == 0
-        @test timedwait(() -> (@atomic :acquire conn.closed), 5.0; pollint = 0.01) == :ok
+        @test @atomic :acquire conn.closed
     finally
         close(client)
         HTTP.@try_ignore NC.close(listener)

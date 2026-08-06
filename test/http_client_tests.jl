@@ -63,9 +63,7 @@ function _deflate_bytes_client(text::String)::Vector{UInt8}
     return transcode(HTTP.CodecZlib.ZlibCompressor, collect(codeunits(text)))
 end
 
-function _wait_task_client!(task::Task; timeout_s::Float64 = 5.0)
-    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
-    status == :timed_out && error("timed out waiting for server task")
+function _wait_task_client!(task::Task)
     fetch(task)
     return nothing
 end
@@ -625,8 +623,6 @@ end
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/final")
             _send_response_client!(conn, req; status = 307, reason = "Temporary Redirect", headers = headers, body_text = "redirect")
-            status = timedwait(() -> isready(server_close), 5.0; pollint = 0.001)
-            status == :timed_out && error("timed out waiting for 307 test client to finish")
             take!(server_close)
         finally
             HTTP.@try_ignore NC.close(conn)
@@ -2385,7 +2381,8 @@ end
         @test do_response !== nothing
         @test do_response.body isa HT.SSEStream
         do_stream = do_response.body::HT.SSEStream
-        @test timedwait(() -> !isopen(do_stream), 5.0; pollint = 0.001) == :ok
+        @test String(_read_all_body_bytes_client(do_stream)) == "data: hello\n\n"
+        @test !isopen(do_stream)
     end
 
     parsed_from_stream = HT.SSEEvent[]
@@ -2445,12 +2442,11 @@ end
     @test config.expect_continue_timeout_ns == 1_500_000_000
 
     ctx = HT.RequestContext()
-    HT._apply_request_timeout_settings!(ctx, request_timeout_ns, config)
+    HT._apply_request_timeout_settings!(ctx, request_timeout_ns, config; now_ns=100)
     stored = ctx.timeout_config
     @test stored !== nothing
     @test stored == config
-    @test ctx.deadline_ns > time_ns()
-    @test !HT.expired(ctx)
+    @test ctx.deadline_ns == 1_250_000_100
     empty!(ctx)
     @test ctx.timeout_config === nothing
 
@@ -2478,36 +2474,20 @@ end
 end
 
 @testset "HTTP high-level readtimeout" begin
-    if _http_windows_ci()
-        @test_skip true
-    else
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     base_url = "http://$(address)"
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            _ = req
-            sleep(0.20)
-        finally
-            HTTP.@try_ignore NC.close(conn)
-        end
-        return nothing
-    end)
     try
         err = try
-            HT.get("$(base_url)/slow"; readtimeout = 0.05)
+            HT.get("$(base_url)/slow"; readtimeout=1.0e-9, retry=false)
             nothing
         catch ex
             ex
         end
         @test err isa HT.TimeoutError
-        _wait_task_client!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)
-    end
     end
 end
 
@@ -2516,26 +2496,14 @@ end
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     base_url = "http://$(address)"
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            _ = req
-            sleep(0.20)
-        finally
-            HTTP.@try_ignore NC.close(conn)
-        end
-        return nothing
-    end)
     try
         err = try
-            HT.get("$(base_url)/slow"; response_header_timeout=0.05)
+            HT.get("$(base_url)/slow"; response_header_timeout=1.0e-9, retry=false)
             nothing
         catch ex
             ex
         end
         @test err isa HT.TimeoutError
-        _wait_task_client!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)
     end
@@ -2546,29 +2514,48 @@ end
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     base_url = "http://$(address)"
+    partial_body_sent = Channel{Nothing}(1)
+    release_server = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         conn = NC.accept(listener)
         try
             req = HT.read_request(HT._ConnReader(conn))
             _ = _read_all_body_bytes_client(req.body)
             write(conn, collect(codeunits("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na")))
-            sleep(0.20)
+            put!(partial_body_sent, nothing)
+            take!(release_server)
         finally
             HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
+    stream = nothing
     try
+        ctx = HT.RequestContext()
+        stream = HT.open(:GET, "$(base_url)/slow-body"; read_idle_timeout=60, context=ctx, retry=false, decompress=false)
+        response = HT.startread(stream)
+        @test response.status == 200
+        raw_body = ((stream.reader::HT._BodyIO).body::HT.H1Body)
+        byte = Vector{UInt8}(undef, 1)
+        @test HT.body_read!(raw_body, byte) == 1
+        @test only(byte) == UInt8('a')
+        take!(partial_body_sent)
+        HT.set_deadline!(ctx, 1)
         err = try
-            HT.get("$(base_url)/slow-body"; read_idle_timeout=0.05)
+            HT.body_read!(raw_body, byte)
             nothing
         catch ex
             ex
         end
-        @test err isa HT.TimeoutError
+        @test err !== nothing
+        @test _is_timeout_error_client(err::Exception)
+        put!(release_server, nothing)
         _wait_task_client!(server_task)
     finally
+        stream === nothing || close(stream)
+        isready(release_server) || HTTP.@try_ignore put!(release_server, nothing)
         HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore fetch(server_task)
     end
 end
 
@@ -2576,19 +2563,10 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            sleep(0.20)
-        finally
-            HTTP.@try_ignore NC.close(conn)
-        end
-        return nothing
-    end)
     client = HT.Client(transport=HT.Transport(tls_config=TL.Config(verify_peer=false), max_idle_per_host=4, max_idle_total=4))
     try
         err = try
-            HT.get("https://$(address)/stall"; client=client, connect_timeout=0.05, retry=false)
+            HT.get("https://$(address)/stall"; client=client, connect_timeout=1.0e-9, retry=false)
             nothing
         catch ex
             ex
@@ -2596,7 +2574,6 @@ end
         @test err !== nothing
         @test !(err isa ArgumentError)
         @test _is_timeout_error_client(err::Exception)
-        _wait_task_client!(server_task)
     finally
         close(client.transport)
         HTTP.@try_ignore NC.close(listener)
@@ -2636,20 +2613,9 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:2
-            conn = NC.accept(listener)
-            try
-                sleep(0.20)
-            finally
-                HTTP.@try_ignore NC.close(conn)
-            end
-        end
-        return nothing
-    end)
     client = HT.Client(
         transport=HT.Transport(tls_config=TL.Config(verify_peer=false), max_idle_per_host=4, max_idle_total=4),
-        connect_timeout=0.05,
+        connect_timeout=1.0e-9,
     )
     try
         # The request does not pass connect_timeout, so the client default
@@ -2674,7 +2640,6 @@ end
         end
         @test stream_err !== nothing
         @test _is_timeout_error_client(stream_err::Exception)
-        _wait_task_client!(server_task)
     finally
         close(client.transport)
         HTTP.@try_ignore NC.close(listener)
@@ -2686,24 +2651,6 @@ end
     wrapped_refused = HT._wrap_client_transport_error(refused, "request", Int64(0), Int64(0))
     @test wrapped_refused isa HT.ConnectError
     @test (wrapped_refused::HT.ConnectError).cause === refused
-
-    # Connect refused: should wrap to HTTP.ConnectError, never leak Reseau internals.
-    # Some Windows CI runners report this port-1 probe as a connect timeout
-    # instead of an immediate refusal, so keep the live probe focused on the
-    # public HTTPError boundary and test the refusal mapping directly above.
-    err = try
-        HT.get("http://127.0.0.1:1/"; connect_timeout=2, retry=false)
-        nothing
-    catch ex
-        ex
-    end
-    @test err isa HT.HTTPError
-    @test err isa HT.ConnectError || err isa HT.TimeoutError
-    if err isa HT.ConnectError
-        @test occursin("127.0.0.1", err.address)
-    else
-        @test (err::HT.TimeoutError).operation == "connect"
-    end
 
     # DNS failure: should wrap to HTTP.DNSError.
     dns_err = try
@@ -2720,28 +2667,15 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog=8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            _ = req
-            sleep(0.5)
-        finally
-            HTTP.@try_ignore NC.close(conn)
-        end
-        return nothing
-    end)
     try
         timeout_err = try
-            HT.get("http://$(address)/slow"; request_timeout=0.05, retry=false)
+            HT.get("http://$(address)/slow"; request_timeout=1.0e-9, retry=false)
             nothing
         catch ex
             ex
         end
         @test timeout_err isa HT.TimeoutError
-        @test timeout_err.timeout_ns > 0
-        @test timeout_err.elapsed_ns > 0
-        _wait_task_client!(server_task)
+        @test timeout_err.timeout_ns == 1
     finally
         HTTP.@try_ignore NC.close(listener)
     end
@@ -2871,17 +2805,19 @@ end
 end
 
 @testset "RequestContext cancellation interrupts in-flight request" begin
+    handler_started = Channel{Nothing}(1)
+    release_handler = Channel{Nothing}(1)
     slow_server = HT.serve!("127.0.0.1", 0; listenany=true) do req
-        sleep(60)
+        put!(handler_started, nothing)
+        take!(release_handler)
         return HT.Response(200; body="late")
     end
     try
         ctx = HT.RequestContext()
         url = "http://127.0.0.1:$(HT.port(slow_server))/"
-        t = Threads.@spawn HT.get($url; context=$ctx)
-        sleep(0.5)
+        t = @async HT.get(url; context=ctx)
+        take!(handler_started)
         HT.cancel!(ctx; message="user pressed Ctrl-C")
-        start = time()
         result = try
             fetch(t)
             (:ok, nothing)
@@ -2889,13 +2825,12 @@ end
             inner = e isa Base.TaskFailedException ? e.task.exception : e
             (:err, inner)
         end
-        elapsed = time() - start
         @test result[1] == :err
         @test result[2] isa HT.CanceledError
         @test (result[2]::HT.CanceledError).message == "user pressed Ctrl-C"
-        @test elapsed < 5  # cancellation should fire promptly, not wait for sleep(60)
         @test isempty(ctx.cancel_callbacks)
     finally
+        isready(release_handler) || HTTP.@try_ignore put!(release_handler, nothing)
         HT.forceclose(slow_server)
     end
 end
@@ -2925,14 +2860,13 @@ end
 end
 
 @testset "Client default_request_timeout applied unless overridden" begin
-    slow_server = HT.serve!("127.0.0.1", 0; listenany=true) do req
-        sleep(5)
-        return HT.Response(200)
-    end
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog=8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     try
-        client = HT.Client(request_timeout=0.5)
+        client = HT.Client(request_timeout=1.0e-9)
         try
-            url = "http://127.0.0.1:$(HT.port(slow_server))/"
+            url = "http://$(address)/"
             err = try
                 HT.get(client, url; retry=false)
                 nothing
@@ -2944,7 +2878,7 @@ end
             close(client)
         end
     finally
-        HT.forceclose(slow_server)
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 

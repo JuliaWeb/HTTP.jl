@@ -1,8 +1,6 @@
 include("trim_workload_common.jl")
 
 const _HTTP_TRIM_H2_ROUNDTRIP_LISTENER = Ref{Union{Nothing,Reseau.TCP.Listener}}(nothing)
-const _HTTP_TRIM_H2_ROUNDTRIP_STARTED = Ref(false)
-const _HTTP_TRIM_H2_ROUNDTRIP_DONE = Ref(false)
 
 function _http_trim_h2_roundtrip_write_all!(conn::Reseau.TCP.Conn, bytes::Vector{UInt8})::Nothing
     total = 0
@@ -47,7 +45,6 @@ function _http_trim_h2_roundtrip_next_headers!(reader::IO)::HT.HeadersFrame
 end
 
 function _http_trim_h2_roundtrip_server_entry()::Nothing
-    _HTTP_TRIM_H2_ROUNDTRIP_STARTED[] = true
     listener = _HTTP_TRIM_H2_ROUNDTRIP_LISTENER[]::Reseau.TCP.Listener
     conn = Reseau.TCP.accept(listener)
     try
@@ -78,7 +75,6 @@ function _http_trim_h2_roundtrip_server_entry()::Nothing
         _http_trim_h2_roundtrip_write_frame!(conn, HT.HeadersFrame(UInt32(1), false, true, response_block))
         _http_trim_h2_roundtrip_write_frame!(conn, HT.DataFrame(UInt32(1), true, collect(codeunits("h2-roundtrip"))))
     finally
-        _HTTP_TRIM_H2_ROUNDTRIP_DONE[] = true
         HTTP.@try_ignore close(conn)
     end
     return nothing
@@ -91,13 +87,9 @@ function run_http_trim_client_h2_roundtrip()::Nothing
     try
         listener = Reseau.TCP.listen(Reseau.TCP.loopback_addr(0); backlog = 16)
         _HTTP_TRIM_H2_ROUNDTRIP_LISTENER[] = listener
-        _HTTP_TRIM_H2_ROUNDTRIP_STARTED[] = false
-        _HTTP_TRIM_H2_ROUNDTRIP_DONE[] = false
 
         server_task = Task(_http_trim_h2_roundtrip_server_entry)
         schedule(server_task)
-        start_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_ROUNDTRIP_STARTED[], 5.0; pollint = 0.001)
-        start_status == :timed_out && error("timed out waiting for trim H2 roundtrip server task")
 
         addr = Reseau.TCP.addr(listener)::Reseau.TCP.SocketAddrV4
         address = "127.0.0.1:$(Int(addr.port))"
@@ -115,8 +107,6 @@ function run_http_trim_client_h2_roundtrip()::Nothing
         HTTP.@try_ignore listener === nothing || close(listener::Reseau.TCP.Listener)
         HTTP.@try_ignore begin
             if server_task !== nothing
-                done_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_ROUNDTRIP_DONE[] || istaskdone(server_task::Task), 5.0; pollint = 0.001)
-                done_status == :timed_out && error("timed out waiting for trim H2 roundtrip server task shutdown")
                 wait(server_task)
             end
         end
