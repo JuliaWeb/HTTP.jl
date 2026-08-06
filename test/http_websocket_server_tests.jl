@@ -124,7 +124,9 @@ end
 end
 
 @testset "HTTP.WebSockets server listen! over ws" begin
+    handler_pool = Channel{Symbol}(1)
     server = W.listen!("127.0.0.1", 0) do ws
+        put!(handler_pool, Threads.threadpool())
         msg = W.receive(ws)
         W.send(ws, msg)
     end
@@ -134,6 +136,8 @@ end
         try
             W.send(ws, "hello")
             @test W.receive(ws) == "hello"
+            expected_pool = Threads.nthreads(:interactive) > 0 ? :interactive : :default
+            @test take!(handler_pool) == expected_pool
         finally
             close(ws)
         end

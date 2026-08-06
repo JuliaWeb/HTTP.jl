@@ -119,6 +119,14 @@ Each callback receives an `HTTP.SSEEvent` with the parsed `data`, `event`,
 
 Use `HTTP.serve!` for request/response handlers:
 
+> HTTP.jl schedules server tasks on Julia's `:interactive` thread pool so they
+> can remain responsive when the default pool is busy. Start production servers
+> with at least one interactive thread, for example
+> `julia --threads=4,1 server.jl`. Without an interactive thread, Julia falls
+> back to the default pool and non-yielding compute tasks can delay HTTP work,
+> including health checks. See the
+> [server guide][server-guide-url] for configuration and handler guidance.
+
 ```julia
 using HTTP
 
@@ -174,3 +182,4 @@ HTTP.WebSockets.forceclose(server)
 
 [issues-url]: https://github.com/JuliaWeb/HTTP.jl/issues
 [migration-guide-url]: https://juliaweb.github.io/HTTP.jl/dev/guides/migration-1x/
+[server-guide-url]: https://juliaweb.github.io/HTTP.jl/dev/guides/server/

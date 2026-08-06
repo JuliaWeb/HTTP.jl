@@ -33,6 +33,7 @@ import ..canceled
 import ..body_close!
 import ..get_request_context
 import .._request_with_context
+import ..@_spawn_interactive
 import ..@try_ignore
 
 """
@@ -429,7 +430,7 @@ function (middleware::_HandlerTimeoutMiddleware)(req::Request)
     derived_ctx = _timeout_child_context(get_request_context(req), middleware.timeout_ns)
     timed_req = _request_with_context(req, derived_ctx)
     result = Channel{Tuple{Bool,Any}}(1)
-    Threads.@spawn begin
+    @_spawn_interactive begin
         try
             put!(result, (true, middleware.handler(timed_req)))
         catch err

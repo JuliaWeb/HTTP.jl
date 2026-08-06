@@ -63,6 +63,11 @@ The handle owns the listener, background task, active-connection set, and
 timeout configuration. Keep it around for lifecycle operations such as
 [`port`](@ref), `wait(server)`, `close(server)`, or [`forceclose`](@ref).
 
+HTTP.jl schedules server tasks on Julia's `:interactive` thread pool. Start
+Julia with at least one interactive thread, such as `--threads=4,1`, to keep
+server and health-check work isolated from non-yielding tasks on the default
+pool. Without an interactive thread, Julia falls back to the default pool.
+
 Timeout fields are stored in nanoseconds. Use the convenience `listen!` and
 `serve!` keywords to configure request-read, header-read, response-write, and
 idle deadlines without constructing a `Server` manually.
@@ -1238,7 +1243,7 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
         end
         tracked = _ServerConn(conn, ReentrantLock(), nothing, _ConnState.NEW, floor(Int64, time()))
         _track_conn!(server, tracked)
-        Threads.@spawn _serve_conn!(server, tracked)
+        @_spawn_interactive _serve_conn!(server, tracked)
     end
     return nothing
 end
@@ -1262,7 +1267,7 @@ function _start_server_task!(f::F, server::Server)::Server where {F}
     state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
     state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
     ready = Threads.Event(true)
-    task = Threads.@spawn begin
+    task = @_spawn_interactive begin
         try
             f(ready)
         catch
@@ -1355,6 +1360,9 @@ request and writing the response. Timeout keywords ending in `_ns` are
 nanoseconds; `read_timeout`, `read_header_timeout`, `write_timeout`, and
 `idle_timeout` accept seconds. The older `readtimeout` keyword is accepted as a
 seconds-valued migration alias for `read_timeout`.
+
+Server tasks use Julia's `:interactive` thread pool. Configure at least one
+interactive thread; see [`Server`](@ref) and the [Server Guide](@ref).
 """
 function listen!(
     handler::F, host::AbstractString="127.0.0.1", port_num::Integer=8080;
@@ -1519,6 +1527,9 @@ Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
 keyword is accepted as a seconds-valued migration alias for `read_timeout`.
 Ordinary request handlers buffer request bodies before dispatch; `max_body_bytes`
 caps that buffering, and `0` restores the legacy unbounded behavior.
+
+Server tasks use Julia's `:interactive` thread pool. Configure at least one
+interactive thread; see [`Server`](@ref) and the [Server Guide](@ref).
 """
 function serve!(
     handler::F,

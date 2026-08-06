@@ -203,7 +203,9 @@ end
 end
 
 @testset "HTTP/2 server request handling" begin
+    handler_pools = Channel{Symbol}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            put!(handler_pools, Threads.threadpool())
             payload = collect(codeunits("h2:" * request.target))
             return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
@@ -218,6 +220,9 @@ end
         @test res2.status == 200
         @test String(_read_all_h2_server(res1.body)) == "h2:/one"
         @test String(_read_all_h2_server(res2.body)) == "h2:/two"
+        expected_pool = Threads.nthreads(:interactive) > 0 ? :interactive : :default
+        @test take!(handler_pools) == expected_pool
+        @test take!(handler_pools) == expected_pool
     finally
         close(conn)
         HT.forceclose(server)

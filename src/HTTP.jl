@@ -26,6 +26,10 @@ using URIs
 
 const VERSION = v"2.0.0"
 
+macro _spawn_interactive(ex)
+    return esc(:(errormonitor(Threads.@spawn :interactive $ex)))
+end
+
 export WebSockets
 export escape
 
