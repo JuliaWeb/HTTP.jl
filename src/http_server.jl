@@ -1162,6 +1162,15 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         @try_ignore begin
                             setstatus(stream, status === nothing ? 500 : status::Int)
                             stream.response.close = true
+                            # The handler's response may declare framing for a
+                            # body the error path never writes (e.g. a reused
+                            # response whose body is already closed); reset it
+                            # so closewrite can flush the error head instead of
+                            # failing a Content-Length check before the head
+                            # reaches the wire.
+                            stream.response.content_length = 0
+                            removeheader(stream.response.headers, "Content-Length")
+                            removeheader(stream.response.headers, "Transfer-Encoding")
                             startwrite(stream)
                             closewrite(stream)
                         end
