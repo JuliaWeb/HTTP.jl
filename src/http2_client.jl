@@ -1626,8 +1626,6 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                 # like a successful clean EOF.
                 if body.state.stream_error !== nothing
                     terminal_error = body.state.stream_error
-                elseif body.state.conn_errored
-                    terminal_error = _stream_conn_error(body.conn)
                 else
                     _publish_h2_response_trailers!(body.state)
                     done = true
