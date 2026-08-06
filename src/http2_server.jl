@@ -1593,7 +1593,10 @@ function _dispatch_h2_stream!(
         _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
         return nothing
     end
-    Threads.@spawn _handle_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state.stream_id, state, decoded_headers::Vector{HeaderField})
+    @_spawn_interactive _handle_h2_stream!(
+        server, tracked, conn, write_lock, send_state, states_lock, states,
+        state.stream_id, state, decoded_headers::Vector{HeaderField},
+    )
     return nothing
 end
 

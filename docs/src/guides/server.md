@@ -8,6 +8,43 @@ CurrentModule = HTTP
 handlers. The right choice depends on how much control you need over read/write
 sequencing.
 
+## Interactive Thread Pool
+
+HTTP.jl schedules its server tasks on Julia's `:interactive` thread pool. This
+includes listener, connection, request-handler, HTTP/2 stream, server-side SSE,
+and WebSocket server tasks. Keeping this work separate from the `:default` pool
+allows the server to accept and handle requests, including health checks, while
+the default pool runs compute-intensive tasks that may not yield.
+
+Configure at least one interactive thread when starting a production server.
+For example, this command creates four default worker threads and one
+interactive thread:
+
+```sh
+julia --threads=4,1 --project=. server.jl
+```
+
+The equivalent environment setting is `JULIA_NUM_THREADS=4,1`. Check the live
+configuration with `Threads.nthreads(:interactive)`, which should return at
+least `1`.
+
+If no interactive thread exists, Julia runs tasks requested for `:interactive`
+on the default pool. The server still starts, but it loses isolation from
+default-pool work. Non-yielding compute tasks can then delay all HTTP work and
+make health checks appear unresponsive.
+
+Interactive tasks should remain responsive. Do not run long, non-yielding
+compute kernels directly in a server handler. Move that work to the default
+pool and wait for it from the handler so the interactive task can yield:
+
+```julia
+result = fetch(Threads.@spawn :default expensive_work())
+```
+
+A non-yielding handler can still monopolize the interactive pool. The separate
+pool protects HTTP work from compute tasks assigned to `:default`; it cannot
+make non-yielding handler code cooperative.
+
 ## Request Handlers
 
 Use `HTTP.serve!` or `HTTP.serve` when your application naturally maps

@@ -145,13 +145,17 @@ end
 end
 
 @testset "HTTP handlers request timeout middleware" begin
+    handler_pool = Channel{Symbol}(1)
     fast = HT.Handlers.handlertimeout(5.0)(req -> begin
         _ = req
+        put!(handler_pool, Threads.threadpool())
         return _response_with_text("ok")
     end)
     fast_resp = fast(HT.Request("GET", "/"))
     @test fast_resp.status == 200
     @test String(_read_all_handler_bytes(fast_resp.body)) == "ok"
+    expected_pool = Threads.nthreads(:interactive) > 0 ? :interactive : :default
+    @test take!(handler_pool) == expected_pool
 
     slow = HT.Handlers.handlertimeout(0.02; status = 504, body = "custom timeout")(req -> begin
         _ = req

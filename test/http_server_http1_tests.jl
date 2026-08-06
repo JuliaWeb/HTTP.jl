@@ -8,6 +8,18 @@ const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
 const IOP = Reseau.IOPoll
 
+mutable struct _DefaultPoolBlockState
+    @atomic started::Int
+    @atomic stop::Bool
+end
+
+function _block_default_pool!(state::_DefaultPoolBlockState, deadline_ns::Int64)::Nothing
+    @atomic state.started += 1
+    while !(@atomic :acquire state.stop) && time_ns() < deadline_ns
+    end
+    return nothing
+end
+
 function _read_all_server_bytes(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 32)
@@ -246,6 +258,54 @@ function _read_until_close(conn::NC.Conn; timeout_s::Float64 = 1.0, wait_for_fir
     end
 end
 
+@testset "HTTP server remains responsive on the interactive pool" begin
+    if Threads.nthreads(:interactive) == 0
+        @test true
+    else
+        state = _DefaultPoolBlockState(0, false)
+        blockers = Task[]
+        server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            @atomic :release state.stop = true
+            return HT.Response(200, string(Threads.threadpool()))
+        end
+        address = HT.server_addr(server)
+        try
+            warm = HT.get(
+                "http://$(address)/warm";
+                headers = ["Connection" => "close"],
+                proxy = HT.ProxyConfig(),
+            )
+            @test String(warm.body) == "interactive"
+            @atomic :release state.stop = false
+            worker_count = Threads.nthreads(:default)
+            deadline_ns = Int64(time_ns()) + Int64(4_000_000_000)
+            for _ in 1:worker_count
+                push!(blockers, errormonitor(Threads.@spawn :default _block_default_pool!(state, deadline_ns)))
+            end
+            started = timedwait(
+                () -> (@atomic :acquire state.started) == worker_count,
+                2.0;
+                pollint=0.001,
+            )
+            @test started == :ok
+            elapsed = @elapsed response = HT.get(
+                "http://$(address)/health";
+                headers = ["Connection" => "close"],
+                proxy = HT.ProxyConfig(),
+            )
+            @test response.status == 200
+            @test String(response.body) == "interactive"
+            @test elapsed < 2.0
+        finally
+            @atomic :release state.stop = true
+            wait.(blockers)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
 @testset "HTTP server SSE helper" begin
     response = HT.sse_stream(200)
     @test response.body isa HT.SSEStream
@@ -257,9 +317,11 @@ end
 end
 
 @testset "HTTP server SSE roundtrip" begin
+    producer_pool = Channel{Symbol}(1)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
             response = HT.sse_stream(200) do stream
+                put!(producer_pool, Threads.threadpool())
                 write(stream, HT.SSEEvent("first"))
                 write(stream, HT.SSEEvent("second"; event = "update", id = "2", retry = 2500))
                 write(stream, HT.SSEEvent("multi\nline\ndata"))
@@ -283,6 +345,8 @@ end
         @test events[2].id == "2"
         @test events[2].retry == 2500
         @test events[3].data == "multi\nline\ndata"
+        expected_pool = Threads.nthreads(:interactive) > 0 ? :interactive : :default
+        @test take!(producer_pool) == expected_pool
     finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")

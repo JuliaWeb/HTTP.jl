@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `HTTP.peeraddr(::HTTP.Stream)`, returning the remote (client) `SocketAddr` of a server stream for both plain-TCP and TLS connections and both HTTP/1 and HTTP/2. This is the supported way to obtain the client IP (for rate limiting, audit logging, and per-client policy) without reaching into transport internals, and restores the capability `Sockets.getpeername(::HTTP.Stream)` provided in HTTP.jl 1.x.
 
 ### Fixed
+- Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
+  thread pool so default-pool compute work cannot starve server and health-check
+  tasks when an interactive thread is configured. ([#1342])
 - Percent-decode `userinfo` before building the `Basic` auth header (RFC 3986); fixes wrong credentials for request URLs and proxies containing percent-encoded characters.
 
 ## [v2.0.0] - 2026-04-27
@@ -822,3 +825,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1119]: https://github.com/JuliaWeb/HTTP.jl/issues/1119
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
+[#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342

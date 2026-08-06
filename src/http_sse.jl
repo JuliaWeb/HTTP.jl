@@ -239,7 +239,7 @@ end
 
 function sse_stream(response::Response, f::Function; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)::SSEStream
     stream = sse_stream(response; max_len=max_len)
-    Threads.@spawn begin
+    @_spawn_interactive begin
         try
             f(stream)
         catch err

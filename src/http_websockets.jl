@@ -92,6 +92,7 @@ import .._is_transport_timeout
 import .._wrap_transport_timeout
 import ..Stream
 import .._clear_deadlines!
+import ..@_spawn_interactive
 
 include("http_websocket_pmce.jl")
 include("http_websocket_codec.jl")
@@ -1744,7 +1745,7 @@ function serve!(server::Server, listener, ready::Threads.Event)::Server
             err isa EOFError && return server
             rethrow(err)
         end
-        Threads.@spawn _serve_ws_conn!(server, conn)
+        @_spawn_interactive _serve_ws_conn!(server, conn)
     end
     return server
 end
@@ -1846,6 +1847,11 @@ read the actual address afterwards with [`server_addr`](@ref). Pass
 ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)); it is negotiated per
 connection and clients must also opt in. `maxframesize` defaults to 16 MiB
 and bounds incoming frame/message buffering.
+
+WebSocket server tasks use Julia's `:interactive` thread pool. Start Julia with
+at least one interactive thread, such as `--threads=4,1`, to isolate server work
+from non-yielding tasks on the default pool. Without an interactive thread,
+Julia falls back to the default pool.
 """
 function listen!(
     handler::Function,
@@ -1874,7 +1880,7 @@ function listen!(
         compress=compress,
     )
     ready = Threads.Event(true)
-    server.serve_task = Threads.@spawn begin
+    server.serve_task = @_spawn_interactive begin
         try
             _listen_ws(server, ready)
         catch
