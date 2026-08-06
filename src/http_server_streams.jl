@@ -452,10 +452,14 @@ function _write_response_body_to_stream!(stream::Stream, body)::Nothing
         return nothing
     end
     if body isa AbstractBody
-        if body_closed(body) &&
-           _server_stream_allows_body(stream) &&
-           stream.response.content_length != 0
-            throw(ArgumentError("body is closed"))
+        if body_closed(body) && _server_stream_allows_body(stream)
+            # The handler may declare an empty payload via the Content-Length
+            # header alone; the content_length field stays -1 until startwrite
+            # resolves it, so consult the header before rejecting the body.
+            declared = stream.response.content_length >= 0 ?
+                stream.response.content_length :
+                _parse_content_length(stream.response.headers)
+            declared == 0 || throw(ArgumentError("body is closed"))
         end
         buf = Vector{UInt8}(undef, 16 * 1024)
         try
