@@ -310,16 +310,21 @@ function _apply_h2_window_update!(send_state::_H2SendWindowState, frame::WindowU
     return nothing
 end
 
-function _wait_h2_send_window_locked!(send_state::_H2SendWindowState, deadline_ns::Int64)::Nothing
+function _wait_h2_send_window_locked!(
+    send_state::_H2SendWindowState,
+    deadline_ns::Int64;
+    clock_ns::Function=time_ns,
+    wait_ns::Function=IOPoll.sleep_ns,
+)::Nothing
     if deadline_ns == 0
         wait(send_state.window_condition)
         return nothing
     end
-    remaining_ns = deadline_ns - Int64(time_ns())
+    remaining_ns = deadline_ns - Int64(clock_ns())
     remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
     unlock(send_state.state_lock)
     try
-        IOPoll.sleep_ns(min(remaining_ns, Int64(1_000_000)))
+        wait_ns(min(remaining_ns, Int64(1_000_000)))
     finally
         lock(send_state.state_lock)
     end

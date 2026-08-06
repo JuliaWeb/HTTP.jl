@@ -70,6 +70,18 @@ function _wait_task!(task::Task)
     return nothing
 end
 
+function _wait_for_transport_waiter!(transport::HT.Transport, key::String)::Nothing
+    lock(transport.lock)
+    try
+        while isempty(get(() -> HT._ConnWaiter[], transport.waiters, key))
+            wait(transport.waiter_condition)
+        end
+    finally
+        unlock(transport.lock)
+    end
+    return nothing
+end
+
 function _transport_debug(msg::AbstractString)
     _ = msg
     return nothing
@@ -84,6 +96,31 @@ end
 
 @testset "HTTP transport constructor validates max_conns_per_host" begin
     @test_throws ArgumentError HT.Transport(max_conns_per_host = -1)
+end
+
+@testset "HTTP transport waiter uses deterministic wake state" begin
+    transport = HT.Transport()
+    waiter = HT._ConnWaiter("http://waiter.test")
+    wait_calls = Ref(0)
+    wait_for = (predicate, _timeout_seconds; kwargs...) -> begin
+        wait_calls[] += 1
+        @atomic :release waiter.state = HT._CONN_WAITER_DIAL
+        @test predicate()
+        return :ok
+    end
+    try
+        result = HT._wait_for_conn!(
+            transport,
+            waiter,
+            Int64(10);
+            clock_ns = () -> Int64(0),
+            wait_for = wait_for,
+        )
+        @test result === :dial
+        @test wait_calls[] == 1
+    finally
+        close(transport)
+    end
 end
 
 @testset "HTTP client transport handles duplicate concurrent requests" begin
@@ -145,6 +182,24 @@ end
         @test request.target == "/upload"
         @test request.content_length == 5
         @test String(_read_all_transport_body_bytes(request.body)) == "hello"
+    finally
+        client === nothing || HTTP.@try_ignore NC.close(client)
+        conn === nothing || HTTP.@try_ignore NC.close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "_ConnReader reads a byte through the refill path" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    client = nothing
+    conn = nothing
+    try
+        client = ND.connect("tcp", address)
+        conn = NC.accept(listener)
+        write(client, UInt8('x'))
+        @test HT._read_u8(HT._ConnReader(conn, 1)) == UInt8('x')
     finally
         client === nothing || HTTP.@try_ignore NC.close(client)
         conn === nothing || HTTP.@try_ignore NC.close(conn)
@@ -425,6 +480,8 @@ end
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
 
+        _wait_for_transport_waiter!(transport, "http://$address")
+
         @test String(_read_all_transport_body_bytes(res1.body)) == "first"
 
         res2 = fetch(res2_task)
@@ -486,6 +543,8 @@ end
 
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
+
+        _wait_for_transport_waiter!(transport, "http://$address")
 
         first_byte = Vector{UInt8}(undef, 1)
         @test HT.body_read!(res1.body, first_byte) == 1

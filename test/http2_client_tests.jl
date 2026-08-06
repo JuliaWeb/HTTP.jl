@@ -2408,6 +2408,60 @@ function _build_bare_h2_connection()
     return conn, cleanup
 end
 
+@testset "HTTP/2 client send-window waiter lifecycle" begin
+    conn, cleanup = _build_bare_h2_connection()
+    stream_id = UInt32(1)
+    wait_calls = Ref(0)
+    try
+        lock(conn.state_lock)
+        try
+            conn.stream_send_window[stream_id] = 0
+            conn.conn_send_window = 0
+            @test !HT._h2_send_window_ready_locked(conn, stream_id)
+
+            @atomic :release conn.closed = true
+            @test HT._h2_send_window_ready_locked(conn, stream_id)
+            @atomic :release conn.closed = false
+
+            conn.conn_error = HT.ProtocolError("test connection error")
+            @test HT._h2_send_window_ready_locked(conn, stream_id)
+            conn.conn_error = nothing
+
+            push!(conn.send_closed_streams, stream_id)
+            @test HT._h2_send_window_ready_locked(conn, stream_id)
+            delete!(conn.send_closed_streams, stream_id)
+
+            delete!(conn.stream_send_window, stream_id)
+            @test HT._h2_send_window_ready_locked(conn, stream_id)
+
+            conn.stream_send_window[stream_id] = 1
+            conn.conn_send_window = 1
+            @test HT._h2_send_window_ready_locked(conn, stream_id)
+
+            conn.stream_send_window[stream_id] = 0
+            conn.conn_send_window = 0
+            wait_for = (predicate, _timeout_seconds; kwargs...) -> begin
+                wait_calls[] += 1
+                @test !predicate()
+                return :timed_out
+            end
+            @test_throws Reseau.IOPoll.DeadlineExceededError HT._wait_h2_send_window_locked!(
+                conn,
+                stream_id,
+                Int64(10);
+                clock_ns = () -> Int64(0),
+                wait_for = wait_for,
+            )
+            @test conn.stream_send_window[stream_id] == 0
+        finally
+            unlock(conn.state_lock)
+        end
+        @test wait_calls[] == 1
+    finally
+        cleanup()
+    end
+end
+
 # Regression for the HPACK desync when a HEADERS/CONTINUATION block arrives for
 # an unknown/closed stream (ANT-2026-SCEWC4G3 / RFC 7541 §4). The client must
 # still pass every header block through `conn.decoder` so the connection-scoped

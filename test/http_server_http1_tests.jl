@@ -238,6 +238,9 @@ end
 end
 
 @testset "HTTP server top-level wrapper kwargs and stream abort state" begin
+    @test HT._resolve_server_timeout_ns("read_timeout_ns", 0, "read_timeout", 1.25) == 1_250_000_000
+    @test_throws ArgumentError HT._resolve_server_timeout_ns("read_timeout_ns", 1, "read_timeout", 1.25)
+
     aborted_states = Channel{Bool}(2)
     server = HT.listen!("127.0.0.1", 0;
         listenany = true,

@@ -319,6 +319,7 @@ end
 @testset "HTTP.WebSockets server close notifies active sessions" begin
     started = Channel{Nothing}(1)
     finished = Channel{Nothing}(1)
+    release_handler = Channel{Nothing}(1)
     server = W.listen!("127.0.0.1", 0) do ws
         put!(started, nothing)
         try
@@ -328,16 +329,20 @@ end
         catch
         finally
             put!(finished, nothing)
+            take!(release_handler)
         end
     end
     ws = nothing
+    forceclose_task = nothing
     try
         address = W.server_addr(server)
         ws = W.open("ws://$address/shutdown")
         take!(started)
-        close(server)
-        @test isready(finished)
+        forceclose_task = errormonitor(Threads.@spawn W.forceclose(server))
         take!(finished)
+        fetch(forceclose_task::Task)
+        put!(release_handler, nothing)
+        wait(server)
         err = try
             W.receive(ws::W.WebSocket)
             nothing
@@ -347,6 +352,10 @@ end
         @test err isa W.WebSocketError
         @test (err::W.WebSocketError).message.code == 1001
     finally
+        isready(release_handler) || HTTP.@try_ignore put!(release_handler, nothing)
+        forceclose_task === nothing || HTTP.@try_ignore fetch(forceclose_task::Task)
         ws === nothing || HTTP.@try_ignore close(ws::W.WebSocket)
+        HTTP.@try_ignore W.forceclose(server)
+        HTTP.@try_ignore wait(server)
     end
 end

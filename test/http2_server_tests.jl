@@ -1744,6 +1744,21 @@ end
         unlock(send_state.state_lock)
     end
     @test_throws Reseau.IOPoll.DeadlineExceededError HT._reserve_h2_send_window!(send_state, UInt32(1), 1, Int64(1))
+
+    waited = Int64[]
+    lock(send_state.state_lock)
+    try
+        HT._wait_h2_send_window_locked!(
+            send_state,
+            Int64(10);
+            clock_ns = () -> Int64(4),
+            wait_ns = ns -> push!(waited, ns),
+        )
+        @test send_state.conn_send_window == 0
+    finally
+        unlock(send_state.state_lock)
+    end
+    @test waited == Int64[6]
 end
 
 @testset "HTTP/2 server keeps the connection usable after stream resets" begin
