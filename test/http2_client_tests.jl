@@ -269,6 +269,210 @@ end
     end
 end
 
+@testset "HTTP/2 client surfaces a reset after buffered response DATA" begin
+    for payload in ("x", "partial", repeat("z", 4097))
+        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        laddr = NC.addr(listener)::NC.SocketAddrV4
+        address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+        allow_reset = Channel{Nothing}(1)
+        finish = Channel{Nothing}(1)
+        server_task = errormonitor(Threads.@spawn begin
+            accepted_conn = NC.accept(listener)
+            reader = HT._ConnReader(accepted_conn)
+            server_encoder = HT.Encoder()
+            server_decoder = HT.Decoder()
+            try
+                _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+                _ = HT.read_frame!(reader)
+                _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+                _ = HT.read_frame!(reader)
+                headers_frame = _read_next_headers_frame!(reader)
+                hf = headers_frame::HT.HeadersFrame
+                _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+                encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+                _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+                _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, false, collect(codeunits(payload))))
+                take!(allow_reset)
+                _write_frame_to_conn!(accepted_conn, HT.RSTStreamFrame(hf.stream_id, UInt32(0x8)))
+                take!(finish)
+            finally
+                HTTP.@try_ignore NC.close(accepted_conn)
+            end
+            return nothing
+        end)
+        h2_conn = HT.connect_h2!(address; secure = false)
+        try
+            request = HT.Request("GET", "/partial-reset"; host = address, body = HT.EmptyBody(), content_length = 0)
+            response = HT.h2_roundtrip!(h2_conn, request)
+            put!(allow_reset, nothing)
+            state = (response.body::HT.H2Body).state
+            reset_received = timedwait(() -> begin
+                lock(state.lock)
+                try
+                    return state.stream_error !== nothing
+                finally
+                    unlock(state.lock)
+                end
+            end, 5.0; pollint = 0.001)
+            @test reset_received != :timed_out
+
+            buf = Vector{UInt8}(undef, length(payload))
+            @test HT.body_read!(response.body, buf) == length(payload)
+            @test String(copy(buf)) == payload
+            err = try
+                HT.body_read!(response.body, buf)
+                nothing
+            catch e
+                e
+            end
+            @test err isa HT.H2StreamResetError
+            @test (err::HT.H2StreamResetError).error_code == UInt32(0x8)
+            @test HT.body_closed(response.body)
+            @test HT._stream_state(h2_conn, (response.body::HT.H2Body).stream_id) === nothing
+            @test isempty(HT.get_request_context(request).cancel_callbacks)
+            @test HT._h2_conn_reusable(h2_conn)
+        finally
+            isready(allow_reset) || put!(allow_reset, nothing)
+            put!(finish, nothing)
+            _wait_task_h2!(server_task)
+            close(h2_conn)
+            HTTP.@try_ignore NC.close(listener)
+        end
+    end
+end
+
+@testset "HTTP/2 client keeps a complete response after a late reset" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    reset_processed = Channel{Nothing}(1)
+    finish = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("complete"))))
+            _write_frame_to_conn!(accepted_conn, HT.RSTStreamFrame(hf.stream_id, UInt32(0x8)))
+            ping_data = ntuple(UInt8, 8)
+            _write_frame_to_conn!(accepted_conn, HT.PingFrame(false, ping_data))
+            while true
+                frame = HT.read_frame!(reader)
+                frame isa HT.PingFrame && (frame::HT.PingFrame).ack && break
+            end
+            put!(reset_processed, nothing)
+            take!(finish)
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/complete-late-reset"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        reset_seen = timedwait(() -> isready(reset_processed), 5.0; pollint = 0.001)
+        @test reset_seen != :timed_out
+        reset_seen == :timed_out && error("client did not process the late reset")
+        take!(reset_processed)
+        state = (response.body::HT.H2Body).state
+        response_complete = timedwait(() -> begin
+            lock(state.lock)
+            try
+                return state.stream_done
+            finally
+                unlock(state.lock)
+            end
+        end, 5.0; pollint = 0.001)
+        @test response_complete != :timed_out
+        @test String(_read_all_h2_body(response.body)) == "complete"
+        @test HT.body_closed(response.body)
+        @test HT._stream_state(h2_conn, (response.body::HT.H2Body).stream_id) === nothing
+        @test isempty(HT.get_request_context(request).cancel_callbacks)
+        @test HT._h2_conn_reusable(h2_conn)
+    finally
+        put!(finish, nothing)
+        _wait_task_h2!(server_task)
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client keeps a complete response when another stream fails with the connection" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    allow_close = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            first_headers_frame = _read_next_headers_frame!(reader)
+            first_hf = first_headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, first_hf.header_block_fragment)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(first_hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(first_hf.stream_id, true, collect(codeunits("complete"))))
+            second_headers_frame = _read_next_headers_frame!(reader)
+            second_hf = second_headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, second_hf.header_block_fragment)
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(second_hf.stream_id, false, true, encoded))
+            take!(allow_close)
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        complete_request = HT.Request("GET", "/complete"; host = address, body = HT.EmptyBody(), content_length = 0)
+        complete_response = HT.h2_roundtrip!(h2_conn, complete_request)
+        incomplete_request = HT.Request("GET", "/incomplete"; host = address, body = HT.EmptyBody(), content_length = 0)
+        incomplete_response = HT.h2_roundtrip!(h2_conn, incomplete_request)
+        put!(allow_close, nothing)
+        _wait_task_h2!(server_task)
+        complete_state = (complete_response.body::HT.H2Body).state
+        incomplete_state = (incomplete_response.body::HT.H2Body).state
+        failure_seen = timedwait(() -> begin
+            complete_failed = lock(complete_state.lock) do
+                complete_state.conn_errored
+            end
+            return lock(incomplete_state.lock) do
+                complete_failed && incomplete_state.conn_errored
+            end
+        end, 5.0; pollint = 0.001)
+        @test failure_seen != :timed_out
+        @test String(_read_all_h2_body(complete_response.body)) == "complete"
+        @test_throws HT.ProtocolError HT.body_read!(incomplete_response.body, Vector{UInt8}(undef, 1))
+        HT.body_close!(incomplete_response.body)
+        @test HT.body_closed(complete_response.body)
+        @test HT._stream_state(h2_conn, (complete_response.body::HT.H2Body).stream_id) === nothing
+        @test isempty(HT.get_request_context(complete_request).cancel_callbacks)
+        @test !HT._h2_conn_reusable(h2_conn)
+    finally
+        isready(allow_close) || put!(allow_close, nothing)
+        _wait_task_h2!(server_task)
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 client requires initial SETTINGS before other frames" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -1740,6 +1944,9 @@ end
         @test String(_read_all_h2_body(response.body)) == "ok"
         failure = only(failures)::TaskFailedException
         @test failure.task.exception isa HT.H2GoAwayError
+        goaway_error = failure.task.exception::HT.H2GoAwayError
+        @test goaway_error.last_stream_id == UInt32(1)
+        @test sprint(showerror, goaway_error) == "HTTP/2 stream rejected by GOAWAY"
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)

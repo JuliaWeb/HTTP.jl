@@ -977,12 +977,13 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         state === nothing && return nothing
         # RFC 9113 §8.1: a server MAY send RST_STREAM with NO_ERROR after a
         # complete response to ask the client to abort the request body;
-        # "clients MUST NOT discard responses as a result". Only surface the
-        # reset as a stream error when it does not follow a complete response.
+        # clients must not discard the response. A reset with another code can
+        # also race with the final response frame. Once END_STREAM completed
+        # the response normally, keep it regardless of the later reset code.
         benign = false
         lock((state::H2StreamState).lock)
         try
-            benign = rst.error_code == UInt32(0) && (state::H2StreamState).stream_done
+            benign = (state::H2StreamState).stream_done && !_stream_failed(state::H2StreamState)
         finally
             unlock((state::H2StreamState).lock)
         end
@@ -1598,6 +1599,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         nread = 0
         done = false
         too_many = false
+        terminal_error::Union{Nothing,Exception} = nothing
         wait_deadline_ns = Int64(0)
         lock(body.state.lock)
         try
@@ -1618,8 +1620,16 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                     notify(body.state.condition)
                 end
             elseif body.state.stream_done
-                _publish_h2_response_trailers!(body.state)
-                done = true
+                # DATA buffered before a stream reset is still readable, but
+                # once it is drained the terminal stream error must surface.
+                # Otherwise a partial response without Content-Length looks
+                # like a successful clean EOF.
+                if body.state.stream_error !== nothing
+                    terminal_error = body.state.stream_error
+                else
+                    _publish_h2_response_trailers!(body.state)
+                    done = true
+                end
             else
                 _throw_stream_error(body.conn, body.state)
                 deadline_ns = _request_read_deadline_ns(body.request)
@@ -1633,6 +1643,12 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
             unlock(body.state.lock)
         end
         wait_deadline_ns == 0 || (_wait_h2_body_progress!(body.state, wait_deadline_ns); continue)
+        if terminal_error !== nothing
+            @atomic :release body.closed = true
+            _clear_h2_cancel_callback!(body)
+            _unregister_stream!(body.conn, body.stream_id)
+            throw(terminal_error::Exception)
+        end
         if too_many
             @atomic :release body.closed = true
             @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
