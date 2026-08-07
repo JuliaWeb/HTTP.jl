@@ -280,7 +280,7 @@ end
 
     stale = HT.Cookie("stale", "1"; domain = "example.com", path = "/")
     stale.persistent = true
-    stale.expires = HT.Cookies.Dates.now(HT.Cookies.Dates.UTC) - HT.Cookies.Dates.Second(1)
+    stale.expires = HT.Cookies.Dates.DateTime(2000, 1, 1)
     stale.creation = old_creation
     stale.lastaccess = old_creation
     Base.@lock jar.lock begin

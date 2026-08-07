@@ -267,7 +267,7 @@ end
             # _ConnReader pulls it into one buffer fill -> later lines are served
             # from the buffered fast path.
             write(client, bytes)
-            Reseau.IOPoll.timedwait(() -> server_conn[] !== nothing, 5.0; pollint = 0.001)
+            fetch(t)
             return HT._ConnReader(server_conn[]::Reseau.TCP.Conn), client, listener
         catch
             HT.@try_ignore close(listener)
@@ -326,7 +326,7 @@ end
             t = Task(() -> (server_conn[] = Reseau.TCP.accept(listener)))
             schedule(t)
             client = Reseau.TCP.connect(Reseau.TCP.loopback_addr(Int(addr.port)))
-            Reseau.IOPoll.timedwait(() -> server_conn[] !== nothing, 5.0; pollint = 0.001)
+            fetch(t)
             for c in chunks
                 write(client, c)
             end

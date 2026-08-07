@@ -310,16 +310,22 @@ end
     end
 end
 
-function _wait_h2_send_window_locked!(conn::H2Connection, stream_id::UInt32, deadline_ns::Int64)::Nothing
+function _wait_h2_send_window_locked!(
+    conn::H2Connection,
+    stream_id::UInt32,
+    deadline_ns::Int64;
+    clock_ns::Function=time_ns,
+    wait_for::Function=IOPoll.timedwait,
+)::Nothing
     if deadline_ns == 0
         wait(conn.window_condition)
         return nothing
     end
-    remaining_ns = deadline_ns - Int64(time_ns())
+    remaining_ns = deadline_ns - Int64(clock_ns())
     remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
     unlock(conn.state_lock)
     try
-        status = IOPoll.timedwait(() -> begin
+        status = wait_for(() -> begin
             lock(conn.state_lock)
             try
                 return _h2_send_window_ready_locked(conn, stream_id)

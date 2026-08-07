@@ -36,28 +36,21 @@ function _write_frame_h2_server_raw!(conn::NC.Conn, frame::HT.AbstractFrame)
     return nothing
 end
 
-const _RAW_H2_SERVER_FRAME_TIMEOUT_S = Sys.iswindows() ? 10.0 : 5.0
-
-function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = _RAW_H2_SERVER_FRAME_TIMEOUT_S)
-    NC.set_deadline!(conn, Int64(time_ns() + round(Int, timeout_s * 1_000_000_000)))
-    try
-        return HT.read_frame!(reader)
-    finally
-        NC.set_deadline!(conn, Int64(0))
-    end
+function _read_h2_server_frame!(conn::NC.Conn, reader::IO)
+    _ = conn
+    return HT.read_frame!(reader)
 end
 
 function _open_raw_h2_server_conn(
         address::String;
         settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[],
-        timeout_s::Float64 = _RAW_H2_SERVER_FRAME_TIMEOUT_S,
     )
     conn = ND.connect("tcp", address)
     reader = HT._ConnReader(conn)
     _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
     _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, settings))
-    first = _read_h2_server_frame!(conn, reader; timeout_s)
-    second = _read_h2_server_frame!(conn, reader; timeout_s)
+    first = _read_h2_server_frame!(conn, reader)
+    second = _read_h2_server_frame!(conn, reader)
     frames = (first, second)
     count(frame -> frame isa HT.SettingsFrame && !(frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS frame")
     count(frame -> frame isa HT.SettingsFrame && (frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS ACK frame")
@@ -118,17 +111,13 @@ function _read_h2_server_data_frame!(conn::NC.Conn, reader::IO)::HT.DataFrame
     end
 end
 
-function _read_h2_server_frame_until!(conn::NC.Conn, reader::IO, predicate; timeout_s::Float64 = 1.0)
-    NC.set_deadline!(conn, Int64(time_ns() + round(Int, timeout_s * 1_000_000_000)))
-    try
-        for _ in 1:64
-            frame = HT.read_frame!(reader)
-            predicate(frame) && return frame
-        end
-        error("timed out waiting for expected HTTP/2 frame")
-    finally
-        NC.set_deadline!(conn, Int64(0))
+function _read_h2_server_frame_until!(conn::NC.Conn, reader::IO, predicate)
+    _ = conn
+    for _ in 1:64
+        frame = HT.read_frame!(reader)
+        predicate(frame) && return frame
     end
+    error("expected HTTP/2 frame was not found")
 end
 
 function _read_h2_server_text_response!(conn::NC.Conn, reader::IO, decoder::HT.Decoder, stream_id::UInt32)::String
@@ -167,30 +156,25 @@ end
 function _drain_h2_server_responses!(conn::NC.Conn, reader::IO, decoder::HT.Decoder, expected::Set{UInt32})
     bodies = Dict{UInt32, Vector{UInt8}}(id => UInt8[] for id in expected)
     done = Set{UInt32}()
-    NC.set_deadline!(conn, Int64(time_ns() + 5_000_000_000))
-    try
-        while length(done) < length(expected)
-            frame = HT.read_frame!(reader)
-            if frame isa HT.HeadersFrame
-                hf = frame::HT.HeadersFrame
-                # Decode regardless of stream to keep the decoder in sync.
-                decoded = HT.decode_header_block(decoder, hf.header_block_fragment)
-                if hf.stream_id in expected
-                    @test any(field -> field.name == ":status" && field.value == "200", decoded)
-                    hf.end_stream && push!(done, hf.stream_id)
-                end
-            elseif frame isa HT.DataFrame
-                df = frame::HT.DataFrame
-                if df.stream_id in expected
-                    append!(bodies[df.stream_id], df.data)
-                    df.end_stream && push!(done, df.stream_id)
-                end
-            elseif frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id in expected
-                error("unexpected RST_STREAM for stream $((frame::HT.RSTStreamFrame).stream_id)")
+    while length(done) < length(expected)
+        frame = HT.read_frame!(reader)
+        if frame isa HT.HeadersFrame
+            hf = frame::HT.HeadersFrame
+            # Decode regardless of stream to keep the decoder in sync.
+            decoded = HT.decode_header_block(decoder, hf.header_block_fragment)
+            if hf.stream_id in expected
+                @test any(field -> field.name == ":status" && field.value == "200", decoded)
+                hf.end_stream && push!(done, hf.stream_id)
             end
+        elseif frame isa HT.DataFrame
+            df = frame::HT.DataFrame
+            if df.stream_id in expected
+                append!(bodies[df.stream_id], df.data)
+                df.end_stream && push!(done, df.stream_id)
+            end
+        elseif frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id in expected
+            error("unexpected RST_STREAM for stream $((frame::HT.RSTStreamFrame).stream_id)")
         end
-    finally
-        NC.set_deadline!(conn, Int64(0))
     end
     return Dict(id => String(bodies[id]) for id in expected)
 end
@@ -226,7 +210,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -245,7 +229,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -258,8 +242,8 @@ end
             _ = request
             return HT.sse_stream(200) do stream
                 write(stream, HT.SSEEvent("one"))
-                delivered = timedwait(() -> isready(saw_first), 5.0; pollint = 0.01)
-                write(stream, HT.SSEEvent(delivered === :ok ? "two" : "first event was not delivered before close"))
+                take!(saw_first)
+                write(stream, HT.SSEEvent("two"))
             end
         end
     address = HT.server_addr(server)
@@ -277,7 +261,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -307,7 +291,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -341,7 +325,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -368,7 +352,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -405,7 +389,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -436,7 +420,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -473,7 +457,7 @@ end
         finally
             close(conn)
             HT.forceclose(server)
-            _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+            HTTP.@try_ignore wait(server.serve_task::Task)
         end
     end
 end
@@ -511,19 +495,24 @@ end
         finally
             close(conn)
             HT.forceclose(server)
-            _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+            HTTP.@try_ignore wait(server.serve_task::Task)
         end
     end
 end
 
 @testset "HTTP/2 server request handler timeout middleware" begin
-    handler = HT.Handlers.handlertimeout(0.05)(request -> begin
-        if request.target == "/fast"
-            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
-        end
-        sleep(0.15)
+    slow_started = Channel{HT.RequestContext}(1)
+    release_slow = Channel{Nothing}(1)
+    slow_handler = HT.Handlers.handlertimeout(1.0e-9)(request -> begin
+        put!(slow_started, HT.get_request_context(request))
+        take!(release_slow)
         return HT.Response(200, HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]); content_length = 4, proto_major = 2, proto_minor = 0)
     end)
+    fast_handler = HT.Handlers.handlertimeout(60.0)(request -> begin
+        _ = request
+        return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
+    end)
+    handler = request -> request.target == "/fast" ? fast_handler(request) : slow_handler(request)
     server = HT.serve!(handler, "127.0.0.1", 0; listenany = true)
     address = HT.server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -532,6 +521,9 @@ end
         slow_res = HT.h2_roundtrip!(conn, slow_req)
         @test slow_res.status == 503
         @test String(_read_all_h2_server(slow_res.body)) == "handler timed out"
+        slow_context = take!(slow_started)
+        @test HT.canceled(slow_context)
+        put!(release_slow, nothing)
 
         fast_req = HT.Request("GET", "/fast"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
         fast_res = HT.h2_roundtrip!(conn, fast_req)
@@ -540,7 +532,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -567,7 +559,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -607,7 +599,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -624,36 +616,31 @@ end
         _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/bad-trailer"; end_stream = false)
         bad_trailer_block = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField(":path", "/oops", false)])
         _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, true, bad_trailer_block))
-        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
         saw_goaway = false
         saw_exception = false
         goaway_error_code = UInt32(0)
-        try
-            while true
-                frame_or_err = try
-                    HT.read_frame!(reader)
-                catch err
-                    err
-                end
-                if frame_or_err isa HT.GoAwayFrame
-                    saw_goaway = true
-                    goaway_error_code = (frame_or_err::HT.GoAwayFrame).error_code
-                    break
-                end
-                if frame_or_err isa Exception
-                    saw_exception = true
-                    break
-                end
+        while true
+            frame_or_err = try
+                HT.read_frame!(reader)
+            catch err
+                err
             end
-        finally
-            NC.set_deadline!(conn::NC.Conn, Int64(0))
+            if frame_or_err isa HT.GoAwayFrame
+                saw_goaway = true
+                goaway_error_code = (frame_or_err::HT.GoAwayFrame).error_code
+                break
+            end
+            if frame_or_err isa Exception
+                saw_exception = true
+                break
+            end
         end
         @test saw_goaway || saw_exception
         saw_goaway && @test goaway_error_code == UInt32(0x1)
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -681,7 +668,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -715,7 +702,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -743,7 +730,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -773,7 +760,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -812,7 +799,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -854,7 +841,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -900,7 +887,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -927,10 +914,8 @@ end
         _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/streaming")
         take!(first_written)
 
-        NC.set_read_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
         headers_frame, header_block, _ = _read_h2_server_header_block!(conn, reader)
         first_data = _read_h2_server_data_frame!(conn, reader)
-        NC.set_read_deadline!(conn::NC.Conn, Int64(0))
 
         decoded_headers = HT.decode_header_block(decoder, header_block)
         first_payload = copy(first_data.data)
@@ -951,7 +936,7 @@ end
         isready(release) || put!(release, nothing)
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -981,7 +966,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1008,7 +993,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1061,14 +1046,8 @@ end
             () -> nothing,
         )
         request = HT.Request("POST", "/stream-body"; host = address, body = request_body, content_length = 11, proto_major = 2, proto_minor = 0)
-        response_task = Threads.@spawn HT.h2_roundtrip!(conn, request)
-        final_requested = timedwait(() -> isready(final_chunk_requested), 3.0; pollint = 0.001)
-        @test final_requested != :timed_out
-        final_requested == :timed_out && error("timed out waiting for final request chunk")
+        response_task = errormonitor(Threads.@spawn HT.h2_roundtrip!(conn, request))
         take!(final_chunk_requested)
-        first_seen = timedwait(() -> isready(first_chunk_seen), 3.0; pollint = 0.001)
-        @test first_seen != :timed_out
-        first_seen == :timed_out && error("timed out waiting for handler to read first chunk")
         first_chunk = take!(first_chunk_seen)
         @test first_chunk == "hello"
         put!(release_final_chunk, nothing)
@@ -1079,13 +1058,16 @@ end
         HTTP.@try_ignore isready(release_final_chunk) || put!(release_final_chunk, nothing)
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
 @testset "HTTP/2 server handles concurrent streams on one connection" begin
+    entered = Channel{String}(2)
+    release = Channel{Nothing}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
-            sleep(1.0)
+            put!(entered, request.target)
+            take!(release)
             payload = collect(codeunits(request.target))
             return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
@@ -1094,27 +1076,27 @@ end
     try
         req1 = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
-        started = time()
-        task1 = Threads.@spawn begin
+        task1 = errormonitor(Threads.@spawn begin
             response = HT.h2_roundtrip!(conn, req1)
             return (response.status, String(_read_all_h2_server(response.body)))
-        end
-        sleep(0.1)
-        task2 = Threads.@spawn begin
+        end)
+        task2 = errormonitor(Threads.@spawn begin
             response = HT.h2_roundtrip!(conn, req2)
             return (response.status, String(_read_all_h2_server(response.body)))
-        end
+        end)
+        entered_paths = Set((take!(entered), take!(entered)))
+        @test entered_paths == Set(("/one", "/two"))
+        put!(release, nothing)
+        put!(release, nothing)
         res1 = fetch(task1)
         res2 = fetch(task2)
-        elapsed = time() - started
         @test res1[1] == 200
         @test res2[1] == 200
         @test Set((res1[2], res2[2])) == Set(("/one", "/two"))
-        @test elapsed < 1.75
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1133,7 +1115,7 @@ end
         close(conn)
     end
     HT.forceclose(server)
-    _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    HTTP.@try_ignore wait(server.serve_task::Task)
     fail_fast_resolver = ND.HostResolver(timeout_ns = Int64(1_000_000_000))
     @test_throws Exception HT.connect_h2!(address; secure = false, host_resolver = fail_fast_resolver)
 end
@@ -1189,7 +1171,7 @@ end
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         close_task === nothing || HTTP.@try_ignore fetch(close_task::Task)
         isopen(server) && HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1211,7 +1193,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1238,7 +1220,7 @@ end
     finally
         close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1268,13 +1250,10 @@ end
         split_idx = max(1, length(header_block) ÷ 2)
         _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), false, false, header_block[1:split_idx]))
         _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), true, UInt8[]))
-        NC.set_deadline!(conn, Int64(time_ns() + 1_000_000_000))
         frame_or_err = try
             HT.read_frame!(reader)
         catch err
             err
-        finally
-            NC.set_deadline!(conn, Int64(0))
         end
         @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
         if frame_or_err isa HT.GoAwayFrame
@@ -1283,7 +1262,7 @@ end
     finally
         HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1329,13 +1308,10 @@ end
             try
                 conn, reader = _open_raw_h2_server_conn(address)
                 _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, HT.encode_header_block(HT.Encoder(), header_fields)))
-                NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
                 frame_or_err = try
                     HT.read_frame!(reader)
                 catch err
                     err
-                finally
-                    NC.set_deadline!(conn::NC.Conn, Int64(0))
                 end
                 @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
                 if frame_or_err isa HT.GoAwayFrame
@@ -1347,7 +1323,7 @@ end
         end
     finally
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1510,7 +1486,7 @@ end
         end
     finally
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1539,7 +1515,7 @@ end
         HTTP.@try_ignore put!(release, nothing)
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1566,13 +1542,10 @@ end
         split_idx = max(1, length(header_block) ÷ 2)
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, false, header_block[1:split_idx]))
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.ContinuationFrame(UInt32(1), true, header_block[(split_idx + 1):end]))
-        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
         frame_or_err = try
             HT.read_frame!(reader)
         catch err
             err
-        finally
-            NC.set_deadline!(conn::NC.Conn, Int64(0))
         end
         @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
         if frame_or_err isa HT.GoAwayFrame
@@ -1581,7 +1554,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1606,13 +1579,10 @@ end
         header_block = HT.encode_header_block(encoder, header_fields)
         @test length(header_block) <= 192
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, header_block))
-        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
         frame_or_err = try
             HT.read_frame!(reader)
         catch err
             err
-        finally
-            NC.set_deadline!(conn::NC.Conn, Int64(0))
         end
         @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
         if frame_or_err isa HT.GoAwayFrame
@@ -1621,7 +1591,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1668,7 +1638,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1699,7 +1669,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1744,17 +1714,6 @@ end
             received += length((frame::HT.DataFrame).data)
         end
         @test received == 65_535
-        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 250_000_000))
-        stalled = try
-            HT.read_frame!(reader)
-            false
-        catch
-            true
-        finally
-            NC.set_deadline!(conn::NC.Conn, Int64(0))
-        end
-        @test stalled
-
         remaining = length(payload) - received
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(0), UInt32(remaining)))
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(remaining)))
@@ -1771,7 +1730,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1784,17 +1743,31 @@ end
     finally
         unlock(send_state.state_lock)
     end
-    deadline_ns = Int64(time_ns()) + Int64(50_000_000)
-    elapsed = @elapsed begin
-        @test_throws Reseau.IOPoll.DeadlineExceededError HT._reserve_h2_send_window!(send_state, UInt32(1), 1, deadline_ns)
+    @test_throws Reseau.IOPoll.DeadlineExceededError HT._reserve_h2_send_window!(send_state, UInt32(1), 1, Int64(1))
+
+    waited = Int64[]
+    lock(send_state.state_lock)
+    try
+        HT._wait_h2_send_window_locked!(
+            send_state,
+            Int64(10);
+            clock_ns = () -> Int64(4),
+            wait_ns = ns -> push!(waited, ns),
+        )
+        @test send_state.conn_send_window == 0
+    finally
+        unlock(send_state.state_lock)
     end
-    @test elapsed < 0.5
+    @test waited == Int64[6]
 end
 
 @testset "HTTP/2 server keeps the connection usable after stream resets" begin
+    cancel_started = Channel{Nothing}(1)
+    release_cancel = Channel{Nothing}(1)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             if request.target == "/cancel"
-                sleep(0.3)
+                put!(cancel_started, nothing)
+                take!(release_cancel)
                 return HT.Response(200, HT.BytesBody(collect(codeunits("cancel"))); content_length = 6, proto_major = 2, proto_minor = 0)
             end
             return HT.Response(200, HT.BytesBody(collect(codeunits("ok"))); content_length = 2, proto_major = 2, proto_minor = 0)
@@ -1806,6 +1779,7 @@ end
         encoder = HT.Encoder()
         decoder = HT.Decoder()
         _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/cancel")
+        take!(cancel_started)
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.RSTStreamFrame(UInt32(1), UInt32(0x8)))
         _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
 
@@ -1836,10 +1810,12 @@ end
         end
         @test saw_headers
         @test String(response_body) == "ok"
+        put!(release_cancel, nothing)
     finally
+        isready(release_cancel) || HTTP.@try_ignore put!(release_cancel, nothing)
         HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1885,14 +1861,13 @@ end
         @test (HT._H2_SETTINGS_MAX_CONCURRENT_STREAMS => UInt32(17)) in server_settings.settings
         @test (HT._H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(1_048_576)) in server_settings.settings
         wu = _read_h2_server_frame_until!(conn, reader,
-            f -> f isa HT.WindowUpdateFrame && (f::HT.WindowUpdateFrame).stream_id == UInt32(0);
-            timeout_s = 3.0)::HT.WindowUpdateFrame
+            f -> f isa HT.WindowUpdateFrame && (f::HT.WindowUpdateFrame).stream_id == UInt32(0))::HT.WindowUpdateFrame
         @test wu.stream_id == UInt32(0)
         @test wu.window_size_increment == UInt32(2_097_152 - 65_535)
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1911,7 +1886,7 @@ end
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -1963,8 +1938,7 @@ end
             # error code must be REFUSED_STREAM (0x7), not a normal response.
             _write_h2_server_request_headers!(conn, encoder, UInt32(5), address, "/c")
             rst = _read_h2_server_frame_until!(conn, reader,
-                f -> f isa HT.RSTStreamFrame && (f::HT.RSTStreamFrame).stream_id == UInt32(5);
-                timeout_s = 3.0)
+                f -> f isa HT.RSTStreamFrame && (f::HT.RSTStreamFrame).stream_id == UInt32(5))
             @test (rst::HT.RSTStreamFrame).error_code == HT._H2_ERROR_REFUSED_STREAM
             # The refused stream's HPACK header block must still be decoded into
             # the shared decoder so a later legitimate stream stays in sync. Free
@@ -1986,7 +1960,7 @@ end
         end
     finally
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -2008,13 +1982,13 @@ end
         # (GOAWAY) rather than dispatching the handler again.
         _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/replay")
         goaway = _read_h2_server_frame_until!(conn, reader,
-            f -> f isa HT.GoAwayFrame; timeout_s = 3.0)
+            f -> f isa HT.GoAwayFrame)
         @test goaway isa HT.GoAwayFrame
         @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_PROTOCOL
     finally
         HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 

@@ -131,9 +131,7 @@ function _send_response_proxy!(conn::NC.Conn, request::HT.Request; status::Int =
     return nothing
 end
 
-function _wait_task_proxy!(task::Task; timeout_s::Float64 = 5.0)
-    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
-    status == :timed_out && error("timed out waiting for proxy task")
+function _wait_task_proxy!(task::Task)
     fetch(task)
     return nothing
 end
@@ -261,8 +259,8 @@ function _proxy_windows_ci_warmup!()::Nothing
                 bridge1 = errormonitor(Threads.@spawn _bridge_proxy!(client_conn, origin_conn))
                 bridge2 = errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
                 HTTP.@try_ignore begin
-                    _wait_task_proxy!(bridge1; timeout_s = 2.0)
-                    _wait_task_proxy!(bridge2; timeout_s = 2.0)
+                    _wait_task_proxy!(bridge1)
+                    _wait_task_proxy!(bridge2)
                 end
             finally
                 HTTP.@try_ignore NC.close(client_conn)
@@ -285,15 +283,14 @@ function _proxy_windows_ci_warmup!()::Nothing
             prefer_http2 = false,
         )
         request = HT.Request("GET", "/warmup"; host = origin_address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
         HTTP.@try_ignore begin
             request_task = errormonitor(Threads.@spawn HT.do!(client, origin_address, request; secure = true, protocol = :h1))
-            _wait_task_proxy!(request_task; timeout_s = 2.0)
+            _wait_task_proxy!(request_task)
             response = fetch(request_task)
             _read_all_proxy(response.body)
             close(client)
-            _wait_task_proxy!(origin_task; timeout_s = 2.0)
-            _wait_task_proxy!(proxy_task; timeout_s = 2.0)
+            _wait_task_proxy!(origin_task)
+            _wait_task_proxy!(proxy_task)
         end
     catch
         # The warmup is best-effort: it exists only to exercise the flaky
@@ -303,13 +300,13 @@ function _proxy_windows_ci_warmup!()::Nothing
         HTTP.@try_ignore origin_listener === nothing || TL.close(origin_listener)
         HTTP.@try_ignore proxy_listener === nothing || NC.close(proxy_listener)
         origin_task === nothing || HTTP.@try_ignore begin
-            _wait_task_proxy!(origin_task; timeout_s = 0.5)
+            _wait_task_proxy!(origin_task)
         end
         proxy_task === nothing || HTTP.@try_ignore begin
-            _wait_task_proxy!(proxy_task; timeout_s = 0.5)
+            _wait_task_proxy!(proxy_task)
         end
         request_task === nothing || HTTP.@try_ignore begin
-            _wait_task_proxy!(request_task; timeout_s = 0.5)
+            _wait_task_proxy!(request_task)
         end
         GC.gc()
         yield()
@@ -916,8 +913,8 @@ end
             _socks_write_success_proxy!(client_conn)
             bridge1 = errormonitor(Threads.@spawn _bridge_proxy!(client_conn, origin_conn))
             bridge2 = errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
-            _wait_task_proxy!(bridge1; timeout_s = 5.0)
-            _wait_task_proxy!(bridge2; timeout_s = 5.0)
+            _wait_task_proxy!(bridge1)
+            _wait_task_proxy!(bridge2)
         finally
             HTTP.@try_ignore NC.close(client_conn)
             HTTP.@try_ignore NC.close(origin_conn)
@@ -939,7 +936,6 @@ end
     )
     try
         request = HT.Request("GET", "/via-socks-tls"; host = target_address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
         response = HT.do!(client, target_address, request; secure = true, protocol = :h1)
         @test response.status == 200
         @test String(_read_all_proxy(response.body)) == "tls-socks-proxied"
@@ -1053,8 +1049,8 @@ end
             _send_response_proxy!(client_conn, connect_req; status = 200, reason = "Connection Established", headers = headers)
             bridge1 = errormonitor(Threads.@spawn _bridge_proxy!(client_conn, origin_conn))
             bridge2 = errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
-            _wait_task_proxy!(bridge1; timeout_s = 5.0)
-            _wait_task_proxy!(bridge2; timeout_s = 5.0)
+            _wait_task_proxy!(bridge1)
+            _wait_task_proxy!(bridge2)
         finally
             HTTP.@try_ignore NC.close(client_conn)
             HTTP.@try_ignore NC.close(origin_conn)
@@ -1076,7 +1072,6 @@ end
     )
     try
         request = HT.Request("GET", "/via-proxy"; host = origin_address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
         response = HT.do!(client, origin_address, request; secure = true, protocol = :h1)
         @test response.status == 200
         @test String(_read_all_proxy(response.body)) == "tls-proxied"

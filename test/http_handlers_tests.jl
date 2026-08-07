@@ -157,15 +157,20 @@ end
     expected_pool = Threads.nthreads(:interactive) > 0 ? :interactive : :default
     @test take!(handler_pool) == expected_pool
 
-    slow = HT.Handlers.handlertimeout(0.02; status = 504, body = "custom timeout")(req -> begin
-        _ = req
-        sleep(0.1)
+    slow_started = Channel{HT.RequestContext}(1)
+    release_slow = Channel{Nothing}(1)
+    slow = HT.Handlers.handlertimeout(1.0e-9; status = 504, body = "custom timeout")(req -> begin
+        put!(slow_started, HT.get_request_context(req))
+        take!(release_slow)
         return _response_with_text("late")
     end)
     slow_resp = slow(HT.Request("GET", "/"))
     @test slow_resp.status == 504
     @test HT.header(slow_resp.headers, "Content-Type") == "text/plain; charset=utf-8"
     @test String(_read_all_handler_bytes(slow_resp.body)) == "custom timeout"
+    slow_context = take!(slow_started)
+    @test HT.canceled(slow_context)
+    put!(release_slow, nothing)
 end
 
 @testset "HTTP streamhandler helper" begin

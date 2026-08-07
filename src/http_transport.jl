@@ -217,6 +217,7 @@ mutable struct Transport
     max_conns_per_host::Int
     idle_timeout_ns::Int64
     lock::ReentrantLock
+    waiter_condition::Threads.Condition
     idle::Dict{String,Vector{Conn}}
     waiters::Dict{String,Vector{_ConnWaiter}}
     conns_per_host::Dict{String,Int}
@@ -280,6 +281,7 @@ function Transport(;
     max_conns_per_host >= 0 || throw(ArgumentError("max_conns_per_host must be >= 0"))
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     host_resolver = HostResolvers.HostResolver(local_addr=_normalize_local_addr(local_addr))
+    lock = ReentrantLock()
     return Transport(
         host_resolver,
         tls_config,
@@ -289,7 +291,8 @@ function Transport(;
         Int(max_idle_total),
         Int(max_conns_per_host),
         Int64(idle_timeout_ns),
-        ReentrantLock(),
+        lock,
+        Threads.Condition(lock),
         Dict{String,Vector{Conn}}(),
         Dict{String,Vector{_ConnWaiter}}(),
         Dict{String,Int}(),
@@ -541,6 +544,7 @@ function _enqueue_waiter_locked!(transport::Transport, waiter::_ConnWaiter)
     queue = get(() -> _ConnWaiter[], transport.waiters, waiter.key)
     push!(queue, waiter)
     transport.waiters[waiter.key] = queue
+    notify(transport.waiter_condition; all=true)
     return waiter
 end
 
@@ -643,7 +647,13 @@ function _deliver_waiter_error_locked!(waiter::_ConnWaiter, err::Exception)::Boo
     return true
 end
 
-function _wait_for_conn!(transport::Transport, waiter::_ConnWaiter, deadline_ns::Int64)
+function _wait_for_conn!(
+    transport::Transport,
+    waiter::_ConnWaiter,
+    deadline_ns::Int64;
+    clock_ns::Function=time_ns,
+    wait_for::Function=IOPoll.timedwait,
+)
     while true
         state = @atomic :acquire waiter.state
         if state == _CONN_WAITER_CONN
@@ -659,7 +669,7 @@ function _wait_for_conn!(transport::Transport, waiter::_ConnWaiter, deadline_ns:
             wait(waiter.signal)
             continue
         end
-        now_ns = Int64(time_ns())
+        now_ns = Int64(clock_ns())
         if now_ns >= deadline_ns
             lock(transport.lock)
             try
@@ -674,7 +684,7 @@ function _wait_for_conn!(transport::Transport, waiter::_ConnWaiter, deadline_ns:
             continue
         end
         timeout_s = min((deadline_ns - now_ns) / 1.0e9, 0.05)
-        IOPoll.timedwait(() -> (@atomic :acquire waiter.state) != _CONN_WAITER_WAITING, timeout_s; pollint=0.001)
+        wait_for(() -> (@atomic :acquire waiter.state) != _CONN_WAITER_WAITING, timeout_s; pollint=0.001)
     end
 end
 

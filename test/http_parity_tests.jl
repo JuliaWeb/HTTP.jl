@@ -17,9 +17,7 @@ function _read_all_parity(body::HT.AbstractBody)::Vector{UInt8}
     return out
 end
 
-function _wait_task_parity!(task::Task; timeout_s::Float64 = 5.0)
-    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
-    status == :timed_out && error("timed out waiting for task")
+function _wait_task_parity!(task::Task)
     fetch(task)
     return nothing
 end

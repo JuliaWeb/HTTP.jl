@@ -164,7 +164,7 @@ end
     @test get(() -> "fallback", ctx, :missing) == "fallback"
     empty!(ctx)
     @test !haskey(ctx, :route)
-    HT.set_deadline!(ctx, time_ns() + 50_000_000)
+    HT.set_deadline!(ctx, typemax(Int64))
     @test !HT.expired(ctx)
     HT.set_deadline!(ctx, 1)
     @test HT.expired(ctx)
@@ -313,7 +313,16 @@ end
     @test HT.ConnectError(addr, cause).address == addr
     @test HT.ConnectError(addr, cause).cause === cause
     @test HT.DNSError("host.invalid", cause).hostname == "host.invalid"
+    @test HT.TLSHandshakeError(cause).cause === cause
     @test HT.AddressInUseError(addr).address == addr
+
+    tls_error = Reseau.TLS.TLSError("handshake", Int32(-1), "boom", nothing)
+    wrapped_tls_error = HT._wrap_client_transport_error(tls_error)
+    @test wrapped_tls_error isa HT.TLSHandshakeError
+    @test (wrapped_tls_error::HT.TLSHandshakeError).cause === tls_error
+
+    bytes = UInt8[0x41]
+    @test HT._response_body_arg(bytes) === bytes
 
     # TimeoutError carries operation, timeout_ns, and elapsed_ns.
     err = HT.TimeoutError("connect", Int64(2_000_000_000), Int64(1_999_000_000))

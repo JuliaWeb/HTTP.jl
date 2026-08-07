@@ -174,7 +174,10 @@ function _retry_after_delay_ns(headers::Headers)::Union{Nothing,Int64}
     return _parse_retry_after_delay_ns(value::String)
 end
 
-function _parse_retry_after_delay_ns(value::AbstractString)::Union{Nothing,Int64}
+function _parse_retry_after_delay_ns(
+    value::AbstractString;
+    now::Dates.DateTime=Dates.now(Dates.UTC),
+)::Union{Nothing,Int64}
     stripped = strip(String(value))
     isempty(stripped) && return nothing
     parsed_secs = try
@@ -190,7 +193,7 @@ function _parse_retry_after_delay_ns(value::AbstractString)::Union{Nothing,Int64
     end
     parsed_dt = Cookies._parse_http_gmt_datetime(stripped)
     parsed_dt === nothing && return nothing
-    delta = parsed_dt::Dates.DateTime - Dates.now(Dates.UTC)
+    delta = parsed_dt::Dates.DateTime - now
     millis = Dates.value(delta)
     millis <= 0 && return Int64(0)
     millis > typemax(Int64) ÷ 1_000_000 && return typemax(Int64)

@@ -161,10 +161,13 @@ end
 
 @testset "HTTP.WebSockets.upgrade mixes HTTP and WebSocket routes" begin
     # Manual upgrade from a normal HTTP.listen! stream handler (1.x parity): one
-    # server serves both a normal HTTP route and a WebSocket route. read_timeout
-    # is short to prove upgrade() clears the server's per-request read deadline.
-    server = HT.listen!("127.0.0.1", 0; listenany = true, read_timeout = 1) do stream
+    # server serves both a normal HTTP route and a WebSocket route.
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
         if W.isupgrade(stream.message)
+            # The HTTP server arms a request read deadline before calling the
+            # handler. Make it already expired so a working upgrade must clear
+            # it before the WebSocket read task starts.
+            NC.set_read_deadline!(stream.tracked.conn::NC.Conn, Int64(1))
             W.upgrade(stream) do ws
                 for msg in ws
                     W.send(ws, msg)
@@ -189,12 +192,9 @@ end
             W.send(ws, UInt8[1, 2, 3])
             @test W.receive(ws) == UInt8[1, 2, 3]
         end
-        # upgrade() must clear the per-request read deadline: a pause longer than
-        # read_timeout (1s) must not tear down the WebSocket session.
         W.open("ws://$address/ws") do ws
             W.send(ws, "a")
             @test W.receive(ws) == "a"
-            sleep(1.5)
             W.send(ws, "b")
             @test W.receive(ws) == "b"
         end
@@ -224,7 +224,7 @@ end
         W.open("ws://$address/isready") do ws
             @test !isready(ws)                                    # nothing buffered yet
             W.send(ws, "ping")
-            @test timedwait(() -> isready(ws), 5.0) != :timed_out # echo arrives in the channel
+            wait(ws.readchannel)
             @test isready(ws)                                     # a message is ready; receive won't block
             @test W.receive(ws) == "ping"
             @test !isready(ws)                                    # drained
@@ -238,17 +238,21 @@ end
     # The read idle timeout resets on each received message and fires only after
     # `read_idle_timeout` seconds with no data: it must not interrupt an active
     # stream, but must surface a silently-stalled connection.
+    release = Channel{Nothing}(1)
     server = W.listen!("127.0.0.1", 0) do ws
         W.send(ws, "hello")
-        sleep(3)                       # stay silent so the client idle timeout fires first
+        take!(release)
     end
     try
         url = "ws://$(W.server_addr(server))/"
         msgs = String[]
         err = nothing
         try
-            W.open(url; read_idle_timeout = 1.0, suppress_close_error = true) do ws
+            W.open(url; read_idle_timeout=60, suppress_close_error=true) do ws
                 push!(msgs, String(W.receive(ws)))   # "hello" arrives during activity
+                @test ws.read_idle_timeout_ns == 60_000_000_000
+                ws.read_idle_timeout_ns = Int64(1)
+                W._ws_arm_read_deadline!(ws.stream, Int64(1))
                 W.receive(ws)                          # no more data -> idle timeout
             end
         catch e
@@ -259,6 +263,7 @@ end
         @test err !== nothing && (err::W.WebSocketError).message.code == 1006
         @test err !== nothing && occursin("idle timeout", (err::W.WebSocketError).message.reason)
     finally
+        isready(release) || put!(release, nothing)
         close(server)
     end
 end

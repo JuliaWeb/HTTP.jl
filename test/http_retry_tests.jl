@@ -52,9 +52,7 @@ function _send_response_retry!(
     return nothing
 end
 
-function _wait_task_retry!(task::Task; timeout_s::Float64 = 5.0)
-    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
-    status == :timed_out && error("timed out waiting for retry test task")
+function _wait_task_retry!(task::Task)
     fetch(task)
     return nothing
 end
@@ -512,36 +510,20 @@ end
 end
 
 @testset "retry arming refunds the bucket when the deadline preempts the backoff" begin
-    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
-    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
-    base_url = "http://$(address)"
-    seen = Tuple{String, String, String}[]
-    server_task = _serve_retry_sequence(listener, [
-        (status = 503, reason = "Service Unavailable", retry_after = "60"),
-    ], seen)
-    try
-        # A fixed backoff far beyond the request deadline means the armed retry
-        # is abandoned before it sleeps. The bucket reservation must be
-        # refunded rather than the release erroring (it used to be called with
-        # `nothing` as the failure cost, which has no method).
-        bucket = HT.RetryBucket(capacity = 15, backoff_scale_factor_ms = 60_000, max_backoff_secs = 60)
-        response = HT.get(
-            "$(base_url)/deadline";
-            retries = 2,
-            retry_bucket = bucket,
-            request_timeout = 10,
-            status_exception = false,
-        )
-        @test response.status == 503
-        _wait_task_retry!(server_task)
-        @test seen == [("GET", "/deadline", "")]
-        # Full refund: with capacity 15 a second reservation (cost 10) only
-        # succeeds if the abandoned one returned its 10.
-        token = Base.acquire(bucket, only(keys(bucket.partitions)))
-        Base.release(bucket, token, 0)
-    finally
-        HTTP.@try_ignore NC.close(listener)
-    end
+    bucket = HT.RetryBucket(capacity=15, backoff_scale_factor_ms=60_000, max_backoff_secs=60)
+    controller = HT._RetryController(true, 2, false, nothing, true, bucket)
+    request = HT.Request("GET", "/deadline"; host="example.com", context=HT.RequestContext(deadline_ns=1))
+    response = HT.Response(503; headers=["Retry-After" => "60"])
+
+    armed, token, delay_ns = HT._arm_request_retry!(controller, "example.com:80", request, 1, response)
+    @test !armed
+    @test token === nothing
+    @test delay_ns == 60_000_000_000
+
+    # Full refund: with capacity 15 a second reservation (cost 10) only
+    # succeeds if the abandoned one returned its 10.
+    refunded = Base.acquire(bucket, only(keys(bucket.partitions)))
+    Base.release(bucket, refunded, 0)
 end
 
 @testset "HTTP.open retries idempotent buffered requests" begin
@@ -598,11 +580,10 @@ end
     headers = HT.Headers(["Retry-After" => "0"])
     @test HT._retry_after_delay_ns(headers) == 0
 
-    future = HTTP.Dates.now(HTTP.Dates.UTC) + HTTP.Dates.Second(1)
+    now = HTTP.Dates.DateTime(2026, 1, 2, 3, 4, 5)
+    future = now + HTTP.Dates.Second(1)
     headers_date = HT.Headers(["Retry-After" => HTTP.Dates.format(future, HTTP.Dates.RFC1123Format) * " GMT"])
-    delay_ns = HT._retry_after_delay_ns(headers_date)
-    @test delay_ns !== nothing
-    @test delay_ns >= 0
+    @test HT._parse_retry_after_delay_ns(HT.header(headers_date, "Retry-After"); now=now) == 1_000_000_000
 
     invalid_headers = HT.Headers(["Retry-After" => "nonsense"])
     @test HT._retry_after_delay_ns(invalid_headers) === nothing
