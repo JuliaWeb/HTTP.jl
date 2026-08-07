@@ -317,45 +317,54 @@ end
 end
 
 @testset "HTTP.WebSockets server close notifies active sessions" begin
-    started = Channel{Nothing}(1)
-    finished = Channel{Nothing}(1)
-    release_handler = Channel{Nothing}(1)
-    server = W.listen!("127.0.0.1", 0) do ws
-        put!(started, nothing)
-        try
-            while true
-                W.receive(ws)
-            end
-        catch
-        finally
-            put!(finished, nothing)
-            take!(release_handler)
-        end
-    end
-    ws = nothing
-    forceclose_task = nothing
-    try
-        address = W.server_addr(server)
-        ws = W.open("ws://$address/shutdown")
-        take!(started)
-        forceclose_task = errormonitor(Threads.@spawn W.forceclose(server))
-        take!(finished)
-        fetch(forceclose_task::Task)
-        put!(release_handler, nothing)
-        wait(server)
-        err = try
-            W.receive(ws::W.WebSocket)
+    for secure in (false, true)
+        started = Channel{Nothing}(1)
+        finished = Channel{Nothing}(1)
+        release_handler = Channel{Nothing}(1)
+        tls_config = secure ?
+            TL.Config(verify_peer = false, cert_file = _TLS_CERT_PATH, key_file = _TLS_KEY_PATH) :
             nothing
-        catch err
-            err
+        server = W.listen!("127.0.0.1", 0; tls_config = tls_config) do ws
+            put!(started, nothing)
+            try
+                while true
+                    W.receive(ws)
+                end
+            catch
+            finally
+                put!(finished, nothing)
+                take!(release_handler)
+            end
         end
-        @test err isa W.WebSocketError
-        @test (err::W.WebSocketError).message.code == 1001
-    finally
-        isready(release_handler) || HTTP.@try_ignore put!(release_handler, nothing)
-        forceclose_task === nothing || HTTP.@try_ignore fetch(forceclose_task::Task)
-        ws === nothing || HTTP.@try_ignore close(ws::W.WebSocket)
-        HTTP.@try_ignore W.forceclose(server)
-        HTTP.@try_ignore wait(server)
+        ws = nothing
+        forceclose_task = nothing
+        try
+            address = W.server_addr(server)
+            scheme = secure ? "wss" : "ws"
+            ws = W.open(
+                "$scheme://$address/shutdown";
+                require_ssl_verification = false,
+            )
+            take!(started)
+            forceclose_task = errormonitor(Threads.@spawn W.forceclose(server))
+            take!(finished)
+            fetch(forceclose_task::Task)
+            put!(release_handler, nothing)
+            wait(server)
+            err = try
+                W.receive(ws::W.WebSocket)
+                nothing
+            catch err
+                err
+            end
+            @test err isa W.WebSocketError
+            @test (err::W.WebSocketError).message.code == 1001
+        finally
+            isready(release_handler) || HTTP.@try_ignore put!(release_handler, nothing)
+            forceclose_task === nothing || HTTP.@try_ignore fetch(forceclose_task::Task)
+            ws === nothing || HTTP.@try_ignore close(ws::W.WebSocket)
+            HTTP.@try_ignore W.forceclose(server)
+            HTTP.@try_ignore wait(server)
+        end
     end
 end
