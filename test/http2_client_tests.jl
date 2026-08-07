@@ -2104,12 +2104,57 @@ end
             client,
             plan,
             address,
-            true,
-            nothing,
-            nothing,
-            true,
-            true,
+            true;
+            allow_h1_alpn = true,
+            auto_protocol = true,
         )
+    finally
+        close(client)
+    end
+end
+
+@testset "HTTP/2 transient connect failure does not cache HTTP/1.1 origin" begin
+    # Reserve a loopback port, then close the listener so connects are refused.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    NC.close(listener)
+    client = HT.Client()
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+    try
+        err = try
+            HT._acquire_h2_conn!(
+                client,
+                plan,
+                address,
+                true;
+                allow_h1_alpn = true,
+                auto_protocol = true,
+            )
+            nothing
+        catch ex
+            ex
+        end
+        # Only a genuine ALPN h1 negotiation may populate the cache; a refused
+        # connect must leave the origin eligible for future HTTP/2 attempts.
+        @test err !== nothing
+        @test !(err isa HT.H2NegotiationError)
+        @test isempty(client.h1_origins)
+        @test HT._use_h2(client, plan, true, :auto)
+    finally
+        close(client)
+    end
+end
+
+@testset "HTTP/2 close_idle_connections! clears cached HTTP/1.1 origins" begin
+    client = HT.Client()
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, "cached-h1.example:443")
+    push!(client.h1_origins, HT._h2_key(plan))
+    try
+        @test !HT._use_h2(client, plan, true, :auto)
+        HT.close_idle_connections!(client)
+        @test isempty(client.h1_origins)
+        @test HT._use_h2(client, plan, true, :auto)
     finally
         close(client)
     end

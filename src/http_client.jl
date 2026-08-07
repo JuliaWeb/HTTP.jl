@@ -1,6 +1,12 @@
 # High-level HTTP client orchestration, HTTP/2 integration, cookies, response sinks, and convenience APIs.
 
+# Copy-loop buffer for response bodies that are known (or likely) to be large:
+# 64 KiB measured faster than 8 KiB and 256 KiB for high-throughput downloads.
+# Loops whose payload is typically small — unknown-size accumulation of
+# chunked responses and decompression output — keep 8 KiB buffers so a tiny
+# response doesn't pay a 64 KiB allocation per request.
 const _RESPONSE_COPY_BUFFER_BYTES = 64 * 1024
+const _RESPONSE_SMALL_COPY_BUFFER_BYTES = 8 * 1024
 
 """
     Client(; ...)
@@ -17,7 +23,11 @@ Keyword arguments:
   followed
 - `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
 - `max_redirects`: maximum redirect hops before failing
-- `prefer_http2`: whether secure requests should try HTTP/2 when available
+- `prefer_http2`: whether secure requests should try HTTP/2 when available.
+  When automatic negotiation (`protocol = :auto`) learns an origin only
+  speaks HTTP/1.1, that result is cached and later automatic requests skip
+  the HTTP/2 attempt; [`close_idle_connections!`](@ref) clears the cache.
+  An explicit `protocol = :h2` always attempts HTTP/2.
 - `http2_settings`: an [`HTTP2Settings`](@ref) configuring HTTP/2 receive
   flow-control windows for connections this client opens
 - `default_headers`: headers applied to every request issued through this
@@ -50,6 +60,11 @@ mutable struct Client{CR}
     http2_settings::HTTP2Settings
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
+    # Origins that negotiated HTTP/1.1 during `protocol = :auto`. Guarded by
+    # its own lock (never `h2_lock`): `h2_lock` is held across full TCP+TLS
+    # dials in `_acquire_h2_conn!`, and the hot-path membership check in
+    # `_use_h2` must not serialize behind those dials.
+    h1_origins_lock::ReentrantLock
     h1_origins::Set{String}
     default_headers::Headers
     default_query::Union{Nothing,Vector{Pair{String,String}}}
@@ -345,6 +360,7 @@ function Client(;
         http2_settings,
         ReentrantLock(),
         Dict{String,Vector{H2Connection}}(),
+        ReentrantLock(),
         Set{String}(),
         _normalize_headers_input(default_headers),
         _normalize_default_query(default_query),
@@ -449,11 +465,16 @@ function _acquire_h2_conn!(
     address::String,
     secure::Bool,
     request::Union{Nothing,Request}=nothing,
-    server_name::Union{Nothing,String}=nothing,
+    server_name::Union{Nothing,String}=nothing;
     allow_h1_alpn::Bool=false,
     auto_protocol::Bool=false,
 )::H2Connection
     key = _h2_key(plan)
+    # Fail fast (and without touching `h2_lock`) when another task cached this
+    # origin as HTTP/1.1 after our caller's `_use_h2` check.
+    if auto_protocol && _h1_origin_cached(client, key)
+        throw(H2NegotiationError("http2: origin previously negotiated HTTP/1.1"))
+    end
     base_host_resolver = client.transport.host_resolver
     connect_host_resolver = request === nothing ? base_host_resolver : _request_connect_host_resolver(base_host_resolver, request::Request)
     connect_deadline_ns = request === nothing ? _phase_deadline_ns(base_host_resolver.timeout_ns, base_host_resolver.deadline_ns) : _request_connect_phase_deadline_ns(base_host_resolver, request::Request)
@@ -464,9 +485,6 @@ function _acquire_h2_conn!(
     to_close = H2Connection[]
     lock(client.h2_lock)
     try
-        if auto_protocol && key in client.h1_origins
-            throw(H2NegotiationError("http2: origin previously negotiated HTTP/1.1"))
-        end
         conns = get(() -> H2Connection[], client.h2_conns, key)
         idle_timeout_ns = client.transport.idle_timeout_ns
         now_ns = Int64(time_ns())
@@ -546,7 +564,7 @@ function _acquire_h2_conn!(
             end
         catch err
             if auto_protocol && _should_fallback_h2_to_h1(err)
-                push!(client.h1_origins, key)
+                _cache_h1_origin!(client, key)
             end
             rethrow()
         end
@@ -609,12 +627,26 @@ function _use_h2(client::Client, plan::_ProxyPlan, secure::Bool, protocol::Symbo
     if cfg !== nothing && !isempty(cfg.alpn_protocols) && !in("h2", cfg.alpn_protocols)
         return false
     end
-    lock(client.h2_lock)
+    return !_h1_origin_cached(client, _h2_key(plan))
+end
+
+@inline function _h1_origin_cached(client::Client, key::String)::Bool
+    lock(client.h1_origins_lock)
     try
-        return !(_h2_key(plan) in client.h1_origins)
+        return key in client.h1_origins
     finally
-        unlock(client.h2_lock)
+        unlock(client.h1_origins_lock)
     end
+end
+
+function _cache_h1_origin!(client::Client, key::String)::Nothing
+    lock(client.h1_origins_lock)
+    try
+        push!(client.h1_origins, key)
+    finally
+        unlock(client.h1_origins_lock)
+    end
+    return nothing
 end
 
 function _host_path_from_request(address::String, request::Request)::Tuple{String,String}
@@ -828,9 +860,9 @@ function _do_incoming!(
                             current_address,
                             current_secure,
                             send_request,
-                            current_server_name,
-                            protocol == :auto,
-                            protocol == :auto,
+                            current_server_name;
+                            allow_h1_alpn=(protocol == :auto),
+                            auto_protocol=(protocol == :auto),
                         )
                         _h2_roundtrip_incoming!(conn::H2Connection, send_request; pending_slot_claimed=true)
                     catch err
@@ -1207,6 +1239,14 @@ end
 
 function close_idle_connections!(client::Client)
     close_idle_connections!(client.transport)
+    # Drop cached HTTP/1.1 negotiation results so long-lived clients re-probe
+    # origins that may have enabled HTTP/2 since they were first contacted.
+    lock(client.h1_origins_lock)
+    try
+        empty!(client.h1_origins)
+    finally
+        unlock(client.h1_origins_lock)
+    end
     # Also close pooled HTTP/2 connections with no in-flight streams — these
     # live on the Client (not the Transport pool) and are equally subject to
     # silent idle drops by NATs/load balancers (#1331). Connections carrying
@@ -1259,7 +1299,7 @@ end
 
 function _read_all_response_bytes(io::IO, limit::Int=0)::Vector{UInt8}
     out = UInt8[]
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_SMALL_COPY_BUFFER_BYTES)
     total = 0
     while true
         n = readbytes!(io, buf, length(buf))
@@ -1281,7 +1321,10 @@ function _read_all_response_bytes(body::AbstractBody, content_length_hint::Int64
     end
     out = UInt8[]
     content_length_hint > 0 && sizehint!(out, Int(min(content_length_hint, _MAX_EAGER_RESPONSE_PREALLOC)))
-    buf = Vector{UInt8}(undef, 8192)
+    # A hint above the prealloc cap means a known-large download; without a
+    # hint (chunked/EOF-framed) the body is usually small, so stay at 8 KiB.
+    buf_bytes = content_length_hint > _MAX_EAGER_RESPONSE_PREALLOC ? _RESPONSE_COPY_BUFFER_BYTES : _RESPONSE_SMALL_COPY_BUFFER_BYTES
+    buf = Vector{UInt8}(undef, buf_bytes)
     while true
         n = body_read!(body, buf)
         n == 0 && return out
@@ -1290,7 +1333,7 @@ function _read_all_response_bytes(body::AbstractBody, content_length_hint::Int64
 end
 
 function _copy_response_bytes!(dest::IO, io::IO, limit::Int=0)::Int64
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_SMALL_COPY_BUFFER_BYTES)
     total = Int64(0)
     while true
         n = readbytes!(io, buf, length(buf))
@@ -1302,9 +1345,12 @@ function _copy_response_bytes!(dest::IO, io::IO, limit::Int=0)::Int64
 end
 
 function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO, limit::Int=0)::Int64
-    buf = Vector{UInt8}(undef, _RESPONSE_COPY_BUFFER_BYTES)
-    total = 0
     capacity = length(dest)
+    # `dest` is preallocated to the expected size; a small response should not
+    # pay a 64 KiB scratch allocation. The 1-byte floor keeps the capacity
+    # overflow check below reachable when `dest` is empty.
+    buf = Vector{UInt8}(undef, min(max(capacity, 1), _RESPONSE_COPY_BUFFER_BYTES))
+    total = 0
     while true
         n = readbytes!(io, buf, length(buf))
         n == 0 && break
@@ -1330,9 +1376,10 @@ function _copy_response_bytes!(dest::IO, body::AbstractBody)::Int64
 end
 
 function _copy_response_bytes!(dest::AbstractVector{UInt8}, body::AbstractBody)::Int64
-    buf = Vector{UInt8}(undef, _RESPONSE_COPY_BUFFER_BYTES)
-    total = 0
     capacity = length(dest)
+    # See the sizing rationale on the `io::IO` method above.
+    buf = Vector{UInt8}(undef, min(max(capacity, 1), _RESPONSE_COPY_BUFFER_BYTES))
+    total = 0
     while true
         n = body_read!(body, buf)
         n == 0 && break
@@ -1377,7 +1424,7 @@ end
 end
 
 function _pump_response_body!(stream::Base.BufferStream, body::AbstractBody)::Nothing
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_COPY_BUFFER_BYTES)
     try
         while true
             n = body_read!(body, buf)
@@ -1487,7 +1534,7 @@ end
 
 function Base.read(io::_BodyIO)::Vector{UInt8}
     out = UInt8[]
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_SMALL_COPY_BUFFER_BYTES)
     while true
         n = readbytes!(io, buf)
         n == 0 && break

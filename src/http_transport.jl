@@ -1199,7 +1199,9 @@ connection pool.
 
 The `Client` and no-argument forms also close the client's pooled HTTP/2
 connections that have no in-flight streams; the `Transport` form covers only
-the HTTP/1 pool it owns.
+the HTTP/1 pool it owns. They additionally clear the client's cache of origins
+that negotiated HTTP/1.1 under `protocol = :auto`, so subsequent automatic
+requests re-attempt HTTP/2 against origins that may have enabled it since.
 """
 function close_idle_connections!(transport::Transport)
     to_close = Conn[]
