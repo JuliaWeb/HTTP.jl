@@ -2082,7 +2082,8 @@ end
     client = HT.Client(transport = transport, prefer_http2 = true)
     try
         # `_use_h2` should refuse h2 because the ALPN list excludes it.
-        @test !HT._use_h2(client, true, :auto)
+        plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+        @test !HT._use_h2(client, plan, true, :auto)
         # Verify end-to-end that protocol=:auto picks h1.
         response = HT.get!(client, address, "/"; secure = true, protocol = :auto)
         @test response.status == 200

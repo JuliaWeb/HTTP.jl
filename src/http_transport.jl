@@ -60,7 +60,14 @@ end
     return reader.stop - reader.next + 1
 end
 
+@inline function _request_write_deadline_needs_refresh(request::Request)::Bool
+    return _request_write_idle_timeout_ns(request) > 0
+end
+
 @inline function _apply_request_write_deadline!(io::_RequestDeadlineWriteIO)::Nothing
+    # The overall request deadline is applied once when the connection is
+    # acquired. Only an idle timeout moves after each write and needs refresh.
+    _request_write_deadline_needs_refresh(io.request) || return nothing
     _set_conn_write_deadline!(io.conn::Conn, _request_write_deadline_ns(io.request))
     return nothing
 end

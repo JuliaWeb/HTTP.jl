@@ -95,8 +95,10 @@ end
         prefer_http2 = true,
     )
     try
+        protocols = Symbol[]
         trace = function(event)
             if event isa HT.RequestEvent
+                push!(protocols, event.protocol)
                 HT.setheader(event.request.headers, "Authorization", "Signature trace-time")
             end
             return nothing
@@ -111,6 +113,17 @@ end
         @test response.status == 200
         @test String(response.body) == "tls-h1:/auto-tls"
         @test seen_authorization[] == "Signature trace-time"
+
+        response = HT.request(
+            trace,
+            "GET",
+            "https://$(address)/cached-h1";
+            client,
+            protocol = :auto,
+        )
+        @test response.status == 200
+        @test String(response.body) == "tls-h1:/cached-h1"
+        @test protocols == [:h2, :h1]
     finally
         close(client)
         HT.forceclose(server)

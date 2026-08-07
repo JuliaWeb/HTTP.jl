@@ -1,5 +1,7 @@
 # High-level HTTP client orchestration, HTTP/2 integration, cookies, response sinks, and convenience APIs.
 
+const _RESPONSE_COPY_BUFFER_BYTES = 64 * 1024
+
 """
     Client(; ...)
 
@@ -48,6 +50,7 @@ mutable struct Client{CR}
     http2_settings::HTTP2Settings
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
+    h1_origins::Set{String}
     default_headers::Headers
     default_query::Union{Nothing,Vector{Pair{String,String}}}
     default_basicauth::Any
@@ -342,6 +345,7 @@ function Client(;
         http2_settings,
         ReentrantLock(),
         Dict{String,Vector{H2Connection}}(),
+        Set{String}(),
         _normalize_headers_input(default_headers),
         _normalize_default_query(default_query),
         default_basicauth,
@@ -447,6 +451,7 @@ function _acquire_h2_conn!(
     request::Union{Nothing,Request}=nothing,
     server_name::Union{Nothing,String}=nothing,
     allow_h1_alpn::Bool=false,
+    auto_protocol::Bool=false,
 )::H2Connection
     key = _h2_key(plan)
     base_host_resolver = client.transport.host_resolver
@@ -459,6 +464,9 @@ function _acquire_h2_conn!(
     to_close = H2Connection[]
     lock(client.h2_lock)
     try
+        if auto_protocol && key in client.h1_origins
+            throw(H2NegotiationError("http2: origin previously negotiated HTTP/1.1"))
+        end
         conns = get(() -> H2Connection[], client.h2_conns, key)
         idle_timeout_ns = client.transport.idle_timeout_ns
         now_ns = Int64(time_ns())
@@ -504,36 +512,43 @@ function _acquire_h2_conn!(
             nothing
         end
         conn = nothing
-        conn = if plan.mode == _ProxyPlanMode.DIRECT
-            connect_h2!(
-                address;
-                secure=secure,
-                host_resolver=connect_host_resolver,
-                tls_config=tls_cfg,
-                connect_deadline_ns=connect_deadline_ns,
-                http2_settings=client.http2_settings,
-            )
-        elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL || _proxy_plan_is_socks(plan)
-            proxy = plan.proxy
-            proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
-            tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
-            try
+        conn = try
+            if plan.mode == _ProxyPlanMode.DIRECT
                 connect_h2!(
-                    tcp,
                     address;
                     secure=secure,
+                    host_resolver=connect_host_resolver,
                     tls_config=tls_cfg,
                     connect_deadline_ns=connect_deadline_ns,
                     http2_settings=client.http2_settings,
                 )
-            catch
-                @try_ignore begin
-                    TCP.close(tcp)
+            elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL || _proxy_plan_is_socks(plan)
+                proxy = plan.proxy
+                proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
+                tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
+                try
+                    connect_h2!(
+                        tcp,
+                        address;
+                        secure=secure,
+                        tls_config=tls_cfg,
+                        connect_deadline_ns=connect_deadline_ns,
+                        http2_settings=client.http2_settings,
+                    )
+                catch
+                    @try_ignore begin
+                        TCP.close(tcp)
+                    end
+                    rethrow()
                 end
-                rethrow()
+            else
+                throw(ArgumentError("HTTP/2 is not supported for proxy plan mode $(plan.mode)"))
             end
-        else
-            throw(ArgumentError("HTTP/2 is not supported for proxy plan mode $(plan.mode)"))
+        catch err
+            if auto_protocol && _should_fallback_h2_to_h1(err)
+                push!(client.h1_origins, key)
+            end
+            rethrow()
         end
         # Claim a slot on the freshly opened connection up front so subsequent
         # acquirers that race in see this caller's pending request.
@@ -581,7 +596,7 @@ function _drop_h2_conn!(client::Client, plan::_ProxyPlan, target::Union{Nothing,
     return nothing
 end
 
-function _use_h2(client::Client, secure::Bool, protocol::Symbol)::Bool
+function _use_h2(client::Client, plan::_ProxyPlan, secure::Bool, protocol::Symbol)::Bool
     protocol == :h1 && return false
     protocol == :h2 && return true
     protocol == :auto || throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
@@ -594,7 +609,12 @@ function _use_h2(client::Client, secure::Bool, protocol::Symbol)::Bool
     if cfg !== nothing && !isempty(cfg.alpn_protocols) && !in("h2", cfg.alpn_protocols)
         return false
     end
-    return true
+    lock(client.h2_lock)
+    try
+        return !(_h2_key(plan) in client.h1_origins)
+    finally
+        unlock(client.h2_lock)
+    end
 end
 
 function _host_path_from_request(address::String, request::Request)::Tuple{String,String}
@@ -678,11 +698,10 @@ function _store_set_cookies!(
 end
 
 function _clone_bytes_body(body::BytesBody)::BytesBody
-    remaining = (length(body.data) - body.next_index) + 1
-    remaining <= 0 && return BytesBody(UInt8[])
-    copied = Vector{UInt8}(undef, remaining)
-    copyto!(copied, 1, body.data, body.next_index, remaining)
-    return BytesBody(copied)
+    # BytesBody retains its backing bytes by contract. A replay only needs an
+    # independent cursor and closed flag; copying the payload makes every
+    # buffered upload allocate and copy the complete request body again.
+    return BytesBody(body.data, body.next_index, false)
 end
 
 function _clone_body(body::AbstractBody)::AbstractBody
@@ -792,7 +811,8 @@ function _do_incoming!(
             send_request = _copy_request_for_send(current_request, retry_attempt == 1)
             request_url = _request_url(current_secure, current_address, current_request.target)
             proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
-            use_h2 = _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
+            use_h2 = proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
+                _use_h2(client, proxy_plan, current_secure, protocol)
             _emit_trace(trace, RequestEvent(send_request, request_url, retry_attempt, redirect_count, use_h2 ? :h2 : :h1))
             host, path = _host_path_from_request(current_address, current_request)
             manual_cookies = cookies === false ? Cookie[] : Cookies.readcookies(send_request.headers, "")
@@ -809,6 +829,7 @@ function _do_incoming!(
                             current_secure,
                             send_request,
                             current_server_name,
+                            protocol == :auto,
                             protocol == :auto,
                         )
                         _h2_roundtrip_incoming!(conn::H2Connection, send_request; pending_slot_claimed=true)
@@ -1281,7 +1302,7 @@ function _copy_response_bytes!(dest::IO, io::IO, limit::Int=0)::Int64
 end
 
 function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO, limit::Int=0)::Int64
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_COPY_BUFFER_BYTES)
     total = 0
     capacity = length(dest)
     while true
@@ -1298,7 +1319,7 @@ function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO, limit::Int=0
 end
 
 function _copy_response_bytes!(dest::IO, body::AbstractBody)::Int64
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_COPY_BUFFER_BYTES)
     total = Int64(0)
     while true
         n = body_read!(body, buf)
@@ -1309,7 +1330,7 @@ function _copy_response_bytes!(dest::IO, body::AbstractBody)::Int64
 end
 
 function _copy_response_bytes!(dest::AbstractVector{UInt8}, body::AbstractBody)::Int64
-    buf = Vector{UInt8}(undef, 8192)
+    buf = Vector{UInt8}(undef, _RESPONSE_COPY_BUFFER_BYTES)
     total = 0
     capacity = length(dest)
     while true

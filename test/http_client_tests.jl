@@ -1806,6 +1806,20 @@ end
     end
 end
 
+@testset "HTTP buffered request replay retains payload storage" begin
+    payload = collect(codeunits("replay-body"))
+    body = HT.BytesBody(payload)
+    scratch = Vector{UInt8}(undef, 3)
+    @test HT.body_read!(body, scratch) == 3
+
+    replay = HT._clone_bytes_body(body)
+    @test replay !== body
+    @test replay.data === payload
+    @test replay.next_index == body.next_index
+    @test String(_read_all_body_bytes_client(replay)) == "lay-body"
+    @test body.next_index == 4
+end
+
 @testset "HTTP high-level request body inputs" begin
     if _http_windows_ci()
         @test_skip true
@@ -2451,6 +2465,16 @@ end
     @test legacy_config.response_header_timeout_ns == 0
 
     @test_throws ArgumentError HT._resolve_request_timeout_settings(0, 0, 0, 0.05, 0, nothing, 0.05)
+
+    request = HT.Request("POST", "/upload")
+    @test !HT._request_write_deadline_needs_refresh(request)
+    HT._apply_request_timeout_settings!(
+        HT.get_request_context(request), Int64(1_000_000_000), nothing)
+    @test !HT._request_write_deadline_needs_refresh(request)
+    _, write_idle_config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0.25)
+    HT._apply_request_timeout_settings!(
+        HT.get_request_context(request), Int64(0), write_idle_config)
+    @test HT._request_write_deadline_needs_refresh(request)
 end
 
 @testset "HTTP high-level readtimeout" begin
