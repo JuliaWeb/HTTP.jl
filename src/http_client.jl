@@ -483,8 +483,15 @@ function _acquire_h2_conn!(
     # closing an H2Connection waits for its read loop to exit, and that must
     # not happen while holding the pool lock.
     to_close = H2Connection[]
-    lock(client.h2_lock)
+    waited_for_h2_lock = !trylock(client.h2_lock)
+    waited_for_h2_lock && lock(client.h2_lock)
     try
+        # The origin can be cached while this task waits for `h2_lock`. Only
+        # contended acquisitions need this second check, so the uncontended h2
+        # fast path does not pay for another cache lookup.
+        if waited_for_h2_lock && auto_protocol && _h1_origin_cached(client, key)
+            throw(H2NegotiationError("http2: origin previously negotiated HTTP/1.1"))
+        end
         conns = get(() -> H2Connection[], client.h2_conns, key)
         idle_timeout_ns = client.transport.idle_timeout_ns
         now_ns = Int64(time_ns())

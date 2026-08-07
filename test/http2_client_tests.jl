@@ -2113,6 +2113,56 @@ end
     end
 end
 
+@testset "HTTP/2 automatic acquire rechecks HTTP/1.1 origin after waiting" begin
+    # Reserve a loopback port, then close the listener. A stale HTTP/2 attempt
+    # will fail with a connection error instead of the expected cached-origin
+    # negotiation error.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    NC.close(listener)
+    client = HT.Client()
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+    key = HT._h2_key(plan)
+    started = Channel{Nothing}(4)
+    results = Channel{Any}(4)
+    tasks = Task[]
+    lock(client.h2_lock)
+    try
+        for _ in 1:4
+            task = Threads.@spawn begin
+                put!(started, nothing)
+                result = try
+                    HT._acquire_h2_conn!(
+                        client,
+                        plan,
+                        address,
+                        true;
+                        allow_h1_alpn = true,
+                        auto_protocol = true,
+                    )
+                catch ex
+                    ex
+                end
+                put!(results, result)
+            end
+            push!(tasks, errormonitor(task))
+        end
+        for _ in tasks
+            take!(started)
+        end
+        HT._cache_h1_origin!(client, key)
+    finally
+        unlock(client.h2_lock)
+    end
+    try
+        foreach(wait, tasks)
+        @test all(_ -> take!(results) isa HT.H2NegotiationError, tasks)
+    finally
+        close(client)
+    end
+end
+
 @testset "HTTP/2 transient connect failure does not cache HTTP/1.1 origin" begin
     # Reserve a loopback port, then close the listener so connects are refused.
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
