@@ -977,7 +977,18 @@ end
         response = HT._read_response(HT._ConnReader(sock), request)
         @test response.status == 200
         @test String(_read_all_server_bytes(response.body)) == "ok"
-        @test isempty(read(sock))
+        # The timeout response is best-effort. Depending on whether its write
+        # wins the race with transport shutdown, the peer observes either a
+        # clean EOF or a complete 408 response followed by EOF.
+        trailing = read(sock)
+        if !isempty(trailing)
+            timeout_io = IOBuffer(trailing)
+            timeout_response = HT._read_response(timeout_io)
+            @test timeout_response.status == 408
+            @test timeout_response.close
+            @test timeout_response.content_length == 0
+            @test eof(timeout_io)
+        end
     finally
         HT.@try_ignore begin
             NC.close(sock)
