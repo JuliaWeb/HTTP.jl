@@ -2082,7 +2082,8 @@ end
     client = HT.Client(transport = transport, prefer_http2 = true)
     try
         # `_use_h2` should refuse h2 because the ALPN list excludes it.
-        @test !HT._use_h2(client, true, :auto)
+        plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+        @test !HT._use_h2(client, plan, true, :auto)
         # Verify end-to-end that protocol=:auto picks h1.
         response = HT.get!(client, address, "/"; secure = true, protocol = :auto)
         @test response.status == 200
@@ -2090,6 +2091,122 @@ end
     finally
         close(client)
         HTTP.forceclose(server)
+    end
+end
+
+@testset "HTTP/2 automatic acquire observes cached HTTP/1.1 origin" begin
+    client = HT.Client()
+    address = "cached-h1.example:443"
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+    push!(client.h1_origins, HT._h2_key(plan))
+    try
+        @test_throws HT.H2NegotiationError HT._acquire_h2_conn!(
+            client,
+            plan,
+            address,
+            true;
+            allow_h1_alpn = true,
+            auto_protocol = true,
+        )
+    finally
+        close(client)
+    end
+end
+
+@testset "HTTP/2 automatic acquire rechecks HTTP/1.1 origin after waiting" begin
+    # Reserve a loopback port, then close the listener. A stale HTTP/2 attempt
+    # will fail with a connection error instead of the expected cached-origin
+    # negotiation error.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    NC.close(listener)
+    client = HT.Client()
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+    key = HT._h2_key(plan)
+    started = Channel{Nothing}(4)
+    results = Channel{Any}(4)
+    tasks = Task[]
+    lock(client.h2_lock)
+    try
+        for _ in 1:4
+            task = Threads.@spawn begin
+                put!(started, nothing)
+                result = try
+                    HT._acquire_h2_conn!(
+                        client,
+                        plan,
+                        address,
+                        true;
+                        allow_h1_alpn = true,
+                        auto_protocol = true,
+                    )
+                catch ex
+                    ex
+                end
+                put!(results, result)
+            end
+            push!(tasks, errormonitor(task))
+        end
+        for _ in tasks
+            take!(started)
+        end
+        HT._cache_h1_origin!(client, key)
+    finally
+        unlock(client.h2_lock)
+    end
+    try
+        foreach(wait, tasks)
+        @test all(_ -> take!(results) isa HT.H2NegotiationError, tasks)
+    finally
+        close(client)
+    end
+end
+
+@testset "HTTP/2 transient connect failure does not cache HTTP/1.1 origin" begin
+    # Reserve a loopback port, then close the listener so connects are refused.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    NC.close(listener)
+    client = HT.Client()
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+    try
+        err = try
+            HT._acquire_h2_conn!(
+                client,
+                plan,
+                address,
+                true;
+                allow_h1_alpn = true,
+                auto_protocol = true,
+            )
+            nothing
+        catch ex
+            ex
+        end
+        # Only a genuine ALPN h1 negotiation may populate the cache; a refused
+        # connect must leave the origin eligible for future HTTP/2 attempts.
+        @test err !== nothing
+        @test !(err isa HT.H2NegotiationError)
+        @test isempty(client.h1_origins)
+        @test HT._use_h2(client, plan, true, :auto)
+    finally
+        close(client)
+    end
+end
+
+@testset "HTTP/2 close_idle_connections! clears cached HTTP/1.1 origins" begin
+    client = HT.Client()
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, "cached-h1.example:443")
+    push!(client.h1_origins, HT._h2_key(plan))
+    try
+        @test !HT._use_h2(client, plan, true, :auto)
+        HT.close_idle_connections!(client)
+        @test isempty(client.h1_origins)
+        @test HT._use_h2(client, plan, true, :auto)
+    finally
+        close(client)
     end
 end
 

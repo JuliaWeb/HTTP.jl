@@ -1313,6 +1313,60 @@ end
     end
 end
 
+@testset "HTTP proxy closes tunnel after H2 setup failure" begin
+    if _http_windows_ci()
+        @test_skip true
+    else
+        proxy_listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        proxy_addr = NC.addr(proxy_listener)::NC.SocketAddrV4
+        proxy_address = ND.join_host_port("127.0.0.1", Int(proxy_addr.port))
+        server_task = errormonitor(Threads.@spawn begin
+            conn = NC.accept(proxy_listener)
+            try
+                request = HT.read_request(HT._ConnReader(conn))
+                @test request.method == "CONNECT"
+                @test request.target == "origin.invalid:443"
+                _send_response_proxy!(
+                    conn,
+                    request;
+                    status = 200,
+                    reason = "Connection Established",
+                    headers = HT.Headers(),
+                )
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+            return nothing
+        end)
+        client = HT.Client(
+            transport = HT.Transport(
+                proxy = HT.ProxyURL("http://$(proxy_address)"),
+                tls_config = TL.Config(verify_peer = false),
+            ),
+            prefer_http2 = true,
+        )
+        try
+            err = try
+                HT.get!(
+                    client,
+                    "origin.invalid:443",
+                    "/";
+                    secure = true,
+                    protocol = :h2,
+                )
+                nothing
+            catch ex
+                ex
+            end
+            @test err !== nothing
+            _wait_task_proxy!(server_task)
+        finally
+            close(client)
+            HTTP.@try_ignore NC.close(proxy_listener)
+        end
+    end
+end
+
 @testset "HTTP SOCKS5H proxy supports tunneled H2 requests" begin
     if _http_windows_ci()
         @test_skip true

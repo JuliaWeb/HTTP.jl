@@ -60,7 +60,14 @@ end
     return reader.stop - reader.next + 1
 end
 
+@inline function _request_write_deadline_needs_refresh(request::Request)::Bool
+    return _request_write_idle_timeout_ns(request) > 0
+end
+
 @inline function _apply_request_write_deadline!(io::_RequestDeadlineWriteIO)::Nothing
+    # The overall request deadline is applied once when the connection is
+    # acquired. Only an idle timeout moves after each write and needs refresh.
+    _request_write_deadline_needs_refresh(io.request) || return nothing
     _set_conn_write_deadline!(io.conn::Conn, _request_write_deadline_ns(io.request))
     return nothing
 end
@@ -1192,7 +1199,9 @@ connection pool.
 
 The `Client` and no-argument forms also close the client's pooled HTTP/2
 connections that have no in-flight streams; the `Transport` form covers only
-the HTTP/1 pool it owns.
+the HTTP/1 pool it owns. They additionally clear the client's cache of origins
+that negotiated HTTP/1.1 under `protocol = :auto`, so subsequent automatic
+requests re-attempt HTTP/2 against origins that may have enabled it since.
 """
 function close_idle_connections!(transport::Transport)
     to_close = Conn[]
