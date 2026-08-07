@@ -2094,6 +2094,27 @@ end
     end
 end
 
+@testset "HTTP/2 automatic acquire observes cached HTTP/1.1 origin" begin
+    client = HT.Client()
+    address = "cached-h1.example:443"
+    plan = HT._proxy_plan(HT.ProxyConfig(), true, address)
+    push!(client.h1_origins, HT._h2_key(plan))
+    try
+        @test_throws HT.H2NegotiationError HT._acquire_h2_conn!(
+            client,
+            plan,
+            address,
+            true,
+            nothing,
+            nothing,
+            true,
+            true,
+        )
+    finally
+        close(client)
+    end
+end
+
 @testset "HTTP/2 client advertises configured flow-control windows" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
