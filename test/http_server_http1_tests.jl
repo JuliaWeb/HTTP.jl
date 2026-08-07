@@ -99,9 +99,11 @@ function _raw_http_request(
                         NC.closewrite(sock)
                     end
                 end
-                # master hardening kept: longer first-byte budget on Windows,
-                # combined with the re-dial retry below
-                first_byte_timeout_s = max(Sys.iswindows() ? 5.0 : 2.0, settle_s + 1.0)
+                # Hosted Linux runners can delay an otherwise immediate local
+                # response past two seconds under load. Keep a five-second
+                # first-byte budget on every platform. A persistent no-response
+                # condition still fails, and re-dial retries remain Windows-only.
+                first_byte_timeout_s = max(5.0, settle_s + 1.0)
                 return _read_until_quiet(
                     sock;
                     timeout_s = first_byte_timeout_s,
