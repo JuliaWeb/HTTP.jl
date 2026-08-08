@@ -216,19 +216,23 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     written_bytes::Int64
 end
 
+# Rebuild through the positional internal constructor rather than the public
+# keyword form: a `Core.kwcall` in this path is not statically resolvable
+# under `juliac --trim` on current Julia master, and the keyword
+# constructor's copy semantics are reproduced explicitly here.
 function _stream_request_metadata(request::Request)::Request{EmptyBody}
-    return Request(
+    return _request_nocopy(
         request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=EmptyBody(),
-        host=request.host,
-        content_length=request.content_length,
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        EmptyBody(),
+        request.host,
+        Int64(request.content_length),
+        UInt8(request.proto_major),
+        UInt8(request.proto_minor),
+        request.close,
+        get_request_context(request),
     )
 end
 
@@ -869,6 +873,26 @@ function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integ
     return take!(out)
 end
 
+function _rebuffered_request(
+    request::Request,
+    body::B,
+    content_length::Int64,
+)::Request{B} where {B<:AbstractBody}
+    return _request_nocopy(
+        request.method,
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        body,
+        request.host,
+        content_length,
+        UInt8(request.proto_major),
+        UInt8(request.proto_minor),
+        request.close,
+        get_request_context(request),
+    )
+end
+
 function _buffer_server_request(request::Request, max_body_bytes::Integer; close_body_on_error::Bool=true)::Request
     body = request.body
     body isa EmptyBody && return request
@@ -884,20 +908,14 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
         rethrow()
     end
     @try_ignore body_close!(body)
-    buffered_body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
-    return Request(
-        request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=buffered_body,
-        host=request.host,
-        content_length=length(body_bytes),
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
-    )
+    # Positional internal constructor, one call per concrete body type: the
+    # keyword form's `Core.kwcall` is not statically resolvable under
+    # `juliac --trim` on current Julia master, and a Union-typed body would
+    # widen the rebuilt request. Copy semantics of the keyword constructor
+    # are reproduced explicitly.
+    return isempty(body_bytes) ?
+           _rebuffered_request(request, EmptyBody(), Int64(0)) :
+           _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))
 end
 
 @inline function _request_body_fully_consumed(request::Request)::Bool
