@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using Dates
 
 const HT = HTTP
 
@@ -34,6 +35,24 @@ end
     @test occursin("; HttpOnly", rendered)
     @test occursin("; Secure", rendered)
     @test occursin("; SameSite=Lax", rendered)
+
+    expires = DateTime(2030, 1, 2, 3, 4, 5)
+    complete = HT.Cookie(
+        " complete ",
+        "a b";
+        path="/docs;private",
+        domain="example.com",
+        expires,
+        maxage=-1,
+        httponly=true,
+        secure=true,
+        samesite=HT.SameSiteStrictMode,
+    )
+    expires_text = Dates.format(expires, Dates.RFC1123Format)
+    @test HT.stringify(complete) == "complete=\"a b\""
+    @test HT.stringify(complete, false) ==
+          "complete=\"a b\"; Path=/docsprivate; Domain=example.com; " *
+          "Expires=$expires_text GMT; Max-Age=0; HttpOnly; Secure; SameSite=Strict"
 
     req_headers = HT.Headers()
     HT.appendheader(req_headers, "Cookie", "a=1; b=two")
