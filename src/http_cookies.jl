@@ -124,12 +124,30 @@ function stringify(c::Cookie, isrequest::Bool=true)::String
     nm = strip(c.name)
     !iscookienamevalid(nm) && return ""
     io = IOBuffer()
-    write(io, sanitizeCookieName(nm), '=', sanitizeCookieValue(c.value))
+    # One value per `write`: Base's varargs `write(io, x1, xs...)` iterates a
+    # heterogeneous tuple and dispatches each element dynamically, which
+    # juliac --trim cannot resolve; single-argument writes are direct.
+    write(io, sanitizeCookieName(nm))
+    write(io, '=')
+    write(io, sanitizeCookieValue(c.value))
     if !isrequest
-        length(c.path) > 0 && write(io, "; Path=", sanitizeCookiePath(c.path))
-        length(c.domain) > 0 && validCookieDomain(c.domain) && write(io, "; Domain=", c.domain[1] == '.' ? SubString(c.domain, 2) : c.domain)
-        validCookieExpires(c.expires) && write(io, "; Expires=", Dates.format(c.expires, Dates.RFC1123Format), " GMT")
-        c.maxage > 0 && write(io, "; Max-Age=", string(c.maxage))
+        if length(c.path) > 0
+            write(io, "; Path=")
+            write(io, sanitizeCookiePath(c.path))
+        end
+        if length(c.domain) > 0 && validCookieDomain(c.domain)
+            write(io, "; Domain=")
+            write(io, c.domain[1] == '.' ? SubString(c.domain, 2) : c.domain)
+        end
+        if validCookieExpires(c.expires)
+            write(io, "; Expires=")
+            write(io, Dates.format(c.expires, Dates.RFC1123Format))
+            write(io, " GMT")
+        end
+        if c.maxage > 0
+            write(io, "; Max-Age=")
+            write(io, string(c.maxage))
+        end
         c.maxage < 0 && write(io, "; Max-Age=0")
         c.httponly && write(io, "; HttpOnly")
         c.secure && write(io, "; Secure")

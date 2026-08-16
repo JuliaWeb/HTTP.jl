@@ -157,6 +157,7 @@ end
             ("http_trim_client_h2_tcp_roundtrip.jl", "http_trim_client_h2_tcp_roundtrip"),
             ("http_trim_client_h2_roundtrip.jl", "http_trim_client_h2_roundtrip"),
             ("http_trim_client_server.jl", "http_trim_client_server"),
+            ("http_trim_cookies.jl", "http_trim_cookies"),
             ("http_trim_open_fileserver.jl", "http_trim_open_fileserver"),
             ("http_trim_http2.jl", "http_trim_http2"),
             ("http_trim_websocket.jl", "http_trim_websocket"),
