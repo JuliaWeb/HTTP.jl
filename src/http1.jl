@@ -339,6 +339,15 @@ function _body_allowed_for_status(status::Integer)::Bool
     return true
 end
 
+# RFC 9110 §8.6 forbids Content-Length on 1xx and 204 responses, but other
+# bodyless responses may still advertise one: a HEAD response carries the
+# header fields a GET would have produced (§9.3.2), and a 304 may repeat the
+# Content-Length of the representation it revalidates (§15.4.5).
+function _content_length_allowed_for_status(status::Integer)::Bool
+    status == 304 && return true
+    return _body_allowed_for_status(status)
+end
+
 function _read_exact!(io::IO, dst::Vector{UInt8}, nbytes::Integer)::Int
     nbytes < 0 && throw(ArgumentError("nbytes must be >= 0"))
     nbytes == 0 && return 0
@@ -842,7 +851,9 @@ function write_response!(io::IO, response::Response)
     allows_body = status_allows_body && !response_to_head
     use_chunked = allows_body && _parse_transfer_encoding!(headers, response.proto_major, response.proto_minor)
     if !status_allows_body
-        removeheader(headers, "Content-Length")
+        # 1xx/204 must not advertise framing; a 304 keeps an explicitly
+        # provided Content-Length.
+        _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
     elseif response_to_head
         removeheader(headers, "Transfer-Encoding")

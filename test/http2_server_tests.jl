@@ -891,6 +891,39 @@ end
     end
 end
 
+@testset "HTTP/2 server stream handlers keep an explicit Content-Length for HEAD" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        request = HT.startread(stream)
+        HT.setheader(stream, "Content-Length" => "5")
+        HT.setstatus(stream, 200)
+        if request.method == "HEAD"
+            HT.startwrite(stream)
+        else
+            write(stream, "hello")
+        end
+        return nothing
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        get_req = HT.Request("GET", "/sized"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        get_res = HT.h2_roundtrip!(conn, get_req)
+        @test get_res.status == 200
+        @test HT.header(get_res.headers, "Content-Length") == "5"
+        @test String(_read_all_h2_server(get_res.body)) == "hello"
+
+        head_req = HT.Request("HEAD", "/sized"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        head_res = HT.h2_roundtrip!(conn, head_req)
+        @test head_res.status == 200
+        @test HT.header(head_res.headers, "Content-Length") == "5"
+        @test isempty(_read_all_h2_server(head_res.body))
+    finally
+        close(conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server stream handlers flush DATA before handler return" begin
     first_written = Channel{Nothing}(1)
     release = Channel{Nothing}(1)
