@@ -27,6 +27,7 @@ HTTP.TooManyRedirectsError
 HTTP.ConnectError
 HTTP.DNSError
 HTTP.TLSHandshakeError
+HTTP.TLSTransportError
 HTTP.AddressInUseError
 ```
 

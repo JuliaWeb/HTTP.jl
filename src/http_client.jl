@@ -145,6 +145,35 @@ struct RetryEvent <: ClientEvent
 end
 
 """
+    RetrySkippedEvent
+
+Trace event emitted when the retry policy wanted to retry an attempt but the
+retry was not armed, so the attempt's failure becomes the request's outcome.
+Without this event a denied retry is indistinguishable from a non-retryable
+failure.
+
+Fields:
+- `request`: request metadata for the attempt that will not be retried
+- `url`: absolute request URL for the attempt
+- `attempt`: current 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `reason`: `:retry_bucket` when the transport's [`RetryBucket`](@ref) denied
+  retry capacity; `:deadline` when the request deadline preempted the retry
+  backoff
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+"""
+struct RetrySkippedEvent <: ClientEvent
+    request::Request
+    url::String
+    attempt::Int
+    redirect_count::Int
+    reason::Symbol
+    response::Union{Nothing,Response}
+    err::Union{Nothing,Exception}
+end
+
+"""
     RedirectEvent
 
 Trace event emitted when a redirect response is accepted and a follow-up request
@@ -305,6 +334,18 @@ function (trace::_VerboseTrace)(event::RetryEvent)::Nothing
         "retry"
     end
     _verbose_line!(string("retry ", event.attempt, " -> ", event.next_attempt, " after ", detail, " (", event.delay_ns, " ns)"))
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::RetrySkippedEvent)::Nothing
+    detail = if event.err !== nothing
+        sprint(showerror, event.err::Exception)
+    elseif event.response !== nothing
+        string("status ", (event.response::Response).status)
+    else
+        "failure"
+    end
+    _verbose_line!(string("retry of attempt ", event.attempt, " skipped (", event.reason, ") after ", detail))
     return nothing
 end
 
@@ -845,18 +886,29 @@ function _do_incoming!(
     previous_response = nothing
     retry_attempt = 1
     retry_token = nothing
+    retry_custom_wanted = false
     for redirect_count in 0:redirect_policy.max_redirects
         while true
-            send_request = _copy_request_for_send(current_request, retry_attempt == 1)
-            request_url = _request_url(current_secure, current_address, current_request.target)
-            proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
-            use_h2 = proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
-                _use_h2(client, proxy_plan, current_secure, protocol)
-            _emit_trace(trace, RequestEvent(send_request, request_url, retry_attempt, redirect_count, use_h2 ? :h2 : :h1))
-            host, path = _host_path_from_request(current_address, current_request)
-            manual_cookies = cookies === false ? Cookie[] : Cookies.readcookies(send_request.headers, "")
-            cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path, manual_cookies)
-            cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
+            send_request, request_url, proxy_plan, use_h2, host, path = try
+                next_request = _copy_request_for_send(current_request, retry_attempt == 1)
+                next_url = _request_url(current_secure, current_address, current_request.target)
+                next_proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
+                next_use_h2 = next_proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
+                    _use_h2(client, next_proxy_plan, current_secure, protocol)
+                _emit_trace(trace, RequestEvent(next_request, next_url, retry_attempt, redirect_count, next_use_h2 ? :h2 : :h1))
+                next_host, next_path = _host_path_from_request(current_address, current_request)
+                manual_cookies = cookies === false ? Cookie[] : Cookies.readcookies(next_request.headers, "")
+                cookie_value = _cookie_header(cookiejar, cookies, current_secure, next_host, next_path, manual_cookies)
+                cookie_value === nothing || setheader(next_request.headers, "Cookie", cookie_value)
+                (next_request, next_url, next_proxy_plan, next_use_h2, next_host, next_path)
+            catch
+                if retry_token !== nothing
+                    @try_ignore _settle_request_retry_token!(retry_token::RetryToken, 0)
+                    retry_token = nothing
+                    retry_custom_wanted = false
+                end
+                rethrow()
+            end
             response = try
                 if use_h2
                     conn = nothing
@@ -898,59 +950,107 @@ function _do_incoming!(
                     )
                 end
             catch err
-                if retry_controller !== nothing && retry_controller.bucket !== nothing && retry_token !== nothing
-                    release(retry_controller.bucket::RetryBucket, retry_token::RetryToken, _RETRY_BUCKET_ACQUIRE_COST)
+                if retry_token !== nothing
+                    _settle_request_retry_token!(retry_token::RetryToken, _RETRY_BUCKET_ACQUIRE_COST)
                 end
                 retry_token = nothing
+                retry_custom_wanted = false
                 if retry_controller !== nothing
-                    if _should_retry_request_attempt(retry_controller, retry_attempt, current_request, RequestRetryError(err::Exception), nothing)
-                        scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
+                    can_retry = retry_controller.enabled && retry_controller.remaining > 0
+                    retry_wanted, custom_wanted = can_retry ?
+                        _retry_policy_decision(retry_controller, retry_attempt, current_request, RequestRetryError(err::Exception), nothing) :
+                        (false, false)
+                    if retry_wanted
+                        scheduled, next_token, delay_ns, skip_reason = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
                         if scheduled
-                            _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, nothing, err::Exception))
-                            get_request_context(current_request)[:retryattempt] = retry_attempt
+                            try
+                                _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, nothing, err::Exception))
+                                get_request_context(current_request)[:retryattempt] = retry_attempt
+                            catch
+                                next_token === nothing || @try_ignore _settle_request_retry_token!(next_token::RetryToken, 0)
+                                rethrow()
+                            end
                             retry_attempt += 1
                             retry_token = next_token
+                            retry_custom_wanted = custom_wanted
                             continue
                         end
+                        skip_reason === nothing || _emit_trace(trace, RetrySkippedEvent(current_request, request_url, retry_attempt, redirect_count, skip_reason::Symbol, nothing, err::Exception))
                     end
                 end
                 rethrow(err)
             end
-            response = _annotate_incoming_response(
-                response,
-                request_url,
-                previous_response,
-                redirect_count,
-            )
-            _store_set_cookies!(cookiejar, cookies, current_secure, host, path, response.head.headers)
-            status_response = _retry_policy_response(response, current_request)
-            _emit_trace(trace, ResponseHeadEvent(status_response, request_url, retry_attempt, redirect_count))
-            if retry_controller !== nothing && retry_controller.bucket !== nothing && retry_token !== nothing
-                release(retry_controller.bucket::RetryBucket, retry_token::RetryToken, _retry_bucket_failure_cost(status_response.status))
-            end
-            retry_token = nothing
-            if retry_controller !== nothing
-                should_retry = try
-                    _should_retry_request_attempt(retry_controller, retry_attempt, current_request, nothing, status_response)
-                catch
-                    @try_ignore begin
-                        body_close!(response.rawbody)
+            response = try
+                response = _annotate_incoming_response(
+                    response,
+                    request_url,
+                    previous_response,
+                    redirect_count,
+                )
+                _store_set_cookies!(cookiejar, cookies, current_secure, host, path, response.head.headers)
+                status_response = _retry_policy_response(response, current_request)
+                _emit_trace(trace, ResponseHeadEvent(status_response, request_url, retry_attempt, redirect_count))
+
+                can_retry = retry_controller !== nothing && retry_controller.enabled && retry_controller.remaining > 0
+                retry_wanted, custom_wanted = can_retry ?
+                    _retry_policy_decision(retry_controller, retry_attempt, current_request, nothing, status_response) :
+                    (false, false)
+                if retry_controller !== nothing && retry_controller.bucket !== nothing
+                    response_bucket = retry_controller.bucket::RetryBucket
+                    if retry_token !== nothing
+                        terminal_builtin_failure = !can_retry &&
+                            _retry_builtin_wants_retry(retry_controller, current_request, nothing, status_response)
+                        terminal_custom_failure = !can_retry && retry_custom_wanted &&
+                            !_successful_response_status(status_response.status)
+                        failure_cost = _retry_bucket_response_cost(
+                            retry_wanted || terminal_builtin_failure || terminal_custom_failure,
+                        )
+                        _settle_request_retry_token!(retry_token::RetryToken, failure_cost)
+                    elseif !retry_wanted && _successful_response_status(status_response.status)
+                        # Healthy non-retried traffic slowly restores retry
+                        # capacity consumed by an earlier failure burst.
+                        _retry_bucket_replenish!(response_bucket, _retry_partition_for_address(current_address))
                     end
-                    rethrow()
                 end
-                if should_retry
-                    scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
+                retry_token = nothing
+                retry_custom_wanted = false
+
+                if retry_wanted
+                    scheduled, next_token, delay_ns, skip_reason = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
                     if scheduled
-                        _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
-                        get_request_context(current_request)[:retryattempt] = retry_attempt
+                        try
+                            _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
+                            get_request_context(current_request)[:retryattempt] = retry_attempt
+                        catch
+                            next_token === nothing || @try_ignore _settle_request_retry_token!(next_token::RetryToken, 0)
+                            rethrow()
+                        end
                         retry_attempt += 1
                         retry_token = next_token
+                        retry_custom_wanted = custom_wanted
                         @try_ignore begin
                             body_close!(response.rawbody)
                         end
                         continue
                     end
+                    skip_reason === nothing || _emit_trace(trace, RetrySkippedEvent(current_request, request_url, retry_attempt, redirect_count, skip_reason::Symbol, status_response, nothing))
                 end
+
+                response
+            catch
+                if retry_token !== nothing
+                    # A response arrived, but a trace or policy callback failed
+                    # before the custom decision could settle the reservation.
+                    fallback_cost = _retry_bucket_failure_cost(response.head.status)
+                    if retry_custom_wanted && !_successful_response_status(response.head.status)
+                        fallback_cost = max(fallback_cost, _RETRY_BUCKET_RETRYABLE_RESPONSE_COST)
+                    end
+                    @try_ignore _settle_request_retry_token!(retry_token::RetryToken, fallback_cost)
+                    retry_token = nothing
+                    retry_custom_wanted = false
+                end
+                @try_ignore body_close!(response.rawbody)
+                rethrow()
             end
             if !_is_redirect_status(response.head.status)
                 return response
@@ -1119,7 +1219,7 @@ function do!(
             end
         end
         elapsed_ns = Int64(time_ns()) - start_ns
-        wrapped = _wrap_client_transport_error(err, "request", timeout_ns, elapsed_ns)
+        wrapped = err isa Exception ? _wrap_client_transport_error(err::Exception, "request", timeout_ns, elapsed_ns) : err
         wrapped === err ? rethrow() : throw(wrapped)
     end
 end
@@ -2140,7 +2240,7 @@ function request(
             throw(wrapped)
         end
         elapsed_ns = Int64(time_ns()) - request_start_ns
-        wrapped = _wrap_client_transport_error(err, "request", request_timeout_ns, elapsed_ns)
+        wrapped = err isa Exception ? _wrap_client_transport_error(err::Exception, "request", request_timeout_ns, elapsed_ns) : err
         final_error = wrapped::Exception
         wrapped === err ? rethrow() : throw(wrapped)
     finally
@@ -2156,7 +2256,8 @@ High-level one-shot HTTP request API.
 
 When `trace` is provided, it must be callable on any emitted client event.
 Current events are [`RequestEvent`](@ref), [`ResponseHeadEvent`](@ref),
-[`RetryEvent`](@ref), [`RedirectEvent`](@ref), and [`DoneEvent`](@ref).
+[`RetryEvent`](@ref), [`RetrySkippedEvent`](@ref), [`RedirectEvent`](@ref), and
+[`DoneEvent`](@ref).
 
 Keyword arguments:
 - `basicauth`: optional basic-auth credentials supplied as

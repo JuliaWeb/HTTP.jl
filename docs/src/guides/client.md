@@ -511,6 +511,7 @@ logger — pass a `trace` callback. The callback receives subtypes of
 - [`HTTP.RequestEvent`](@ref) — request being sent
 - [`HTTP.ResponseHeadEvent`](@ref) — response headers received
 - [`HTTP.RetryEvent`](@ref) — retry scheduled
+- [`HTTP.RetrySkippedEvent`](@ref) — retry denied by the budget or deadline
 - [`HTTP.RedirectEvent`](@ref) — redirect followed
 - [`HTTP.DoneEvent`](@ref) — request finished (with response or error)
 

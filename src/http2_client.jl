@@ -471,8 +471,14 @@ end
 
 @inline function _throw_stream_error(conn::H2Connection, state::H2StreamState)::Nothing
     err = state.stream_error
-    err === nothing || throw(err::Exception)
-    state.conn_errored && throw(_stream_conn_error(conn))
+    if err !== nothing
+        wrapped = _wrap_tls_transport_error(err::Exception)
+        throw(wrapped)
+    end
+    if state.conn_errored
+        wrapped = _wrap_tls_transport_error(_stream_conn_error(conn))
+        throw(wrapped)
+    end
     return nothing
 end
 
@@ -1213,10 +1219,17 @@ function _connect_h2_from_tcp!(
         stream_reader = nothing
         connect_deadline_ns == 0 || TCP.set_deadline!(tcp, connect_deadline_ns)
         if secure
-            cfg = _make_tls_config_for_h2(tls_config, address)
-            tls_conn = TLS.client(tcp, cfg)
-            connect_deadline_ns == 0 || TLS.set_deadline!(tls_conn, connect_deadline_ns)
-            TLS.handshake!(tls_conn)
+            try
+                cfg = _make_tls_config_for_h2(tls_config, address)
+                tls_conn = TLS.client(tcp, cfg)
+                connect_deadline_ns == 0 || TLS.set_deadline!(tls_conn, connect_deadline_ns)
+                TLS.handshake!(tls_conn)
+            catch err
+                # TLS.client can fail while it initializes client state, before
+                # handshake! starts. Both operations are connection setup.
+                err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+                rethrow()
+            end
             stream_reader = _ConnReader(tls_conn::TLS.Conn)
         else
             stream_reader = _ConnReader(tcp)
@@ -1653,7 +1666,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
             @atomic :release body.closed = true
             _clear_h2_cancel_callback!(body)
             _unregister_stream!(body.conn, body.stream_id)
-            throw(terminal_error::Exception)
+            throw(_wrap_tls_transport_error(terminal_error::Exception))
         end
         if too_many
             @atomic :release body.closed = true
@@ -1664,7 +1677,12 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         end
         if nread > 0
             body.bytes_read += Int64(nread)
-            _send_window_updates!(body.conn, body.stream_id, nread)
+            try
+                _send_window_updates!(body.conn, body.stream_id, nread)
+            catch err
+                wrapped = err isa Exception ? _wrap_tls_transport_error(err::Exception) : err
+                wrapped === err ? rethrow() : throw(wrapped)
+            end
             return nread
         end
         if done
@@ -1884,5 +1902,10 @@ Send `request` over an existing `H2Connection` and return the streaming
 `Response`.
 """
 function h2_roundtrip!(conn::H2Connection, request::Request)::Response
-    return _streaming_response(_h2_roundtrip_incoming!(conn, request))
+    try
+        return _streaming_response(_h2_roundtrip_incoming!(conn, request))
+    catch err
+        wrapped = err isa Exception ? _wrap_tls_transport_error(err::Exception) : err
+        wrapped === err ? rethrow() : throw(wrapped)
+    end
 end

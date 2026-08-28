@@ -24,19 +24,11 @@ end
     return status == 408 || status == 429 || status == 500 || status == 502 || status == 503 || status == 504
 end
 
-@inline function _retryable_request_method(method::String)::Bool
-    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" || method == "PUT" || method == "DELETE" || method == "QUERY"
-end
-
 @inline function _retryable_request_headers(request::Request)::Bool
     key = header(request.headers, "Idempotency-Key", nothing)
     key !== nothing && !isempty(key::String) && return true
     legacy = header(request.headers, "X-Idempotency-Key", nothing)
     return legacy !== nothing && !isempty(legacy::String)
-end
-
-@inline function _retryable_request_body(request::Request)::Bool
-    return request.content_length == 0 || request.body isa EmptyBody || request.body isa BytesBody
 end
 
 @inline function _retryable_policy_request(request::Request, retry_non_idempotent::Bool)::Bool
@@ -60,11 +52,26 @@ function _retryable_request_error(err::Exception)::Bool
         current isa IOPoll.NotPollableError && return true
         current isa IOPoll.DeadlineExceededError && return false
         current isa TLS.TLSHandshakeTimeoutError && return true
+        if current isa ProtocolError
+            cause = (current::ProtocolError).err
+            cause === nothing && return false
+            current = cause::Exception
+            continue
+        end
         if current isa HostResolvers.OpError
             current = (current::HostResolvers.OpError).err
             continue
         end
+        if current isa TLSHandshakeError
+            current = (current::TLSHandshakeError).cause
+            continue
+        end
+        if current isa TLSTransportError
+            current = (current::TLSTransportError).cause
+            continue
+        end
         if current isa TLS.TLSError
+            (current::TLS.TLSError).message == _TLS_TRUNCATED_STREAM_MESSAGE && return true
             cause = (current::TLS.TLSError).cause
             cause === nothing && return false
             current = cause::Exception
@@ -85,7 +92,9 @@ applies to request-path exceptions. Recoverable cases include connection resets
 and EOFs (`EOFError`, `IOPoll.NetClosingError`), socket errors (`SystemError`),
 malformed responses (`ParseError`), and dial/handshake timeouts
 (`HostResolvers.DialTimeoutError`, `TLS.TLSHandshakeTimeoutError`), including the
-underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions.
+underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions,
+HTTP/2 `ProtocolError` connection wrappers, and the public
+[`TLSHandshakeError`](@ref)/[`TLSTransportError`](@ref) wrappers.
 A request *deadline* being exceeded (`IOPoll.DeadlineExceededError`) is treated
 as non-recoverable, as is anything else.
 
@@ -120,20 +129,44 @@ function _retry_hook_decision(controller::_RetryController, attempt::Int, err, r
     return decision
 end
 
+function _retry_builtin_wants_retry(controller::_RetryController, req::Request, err, resp)::Bool
+    _retryable_request_body(req) || return false
+    if err !== nothing
+        policy_ok = _retryable_policy_request(req, controller.retry_non_idempotent) || _h2_guaranteed_unprocessed(err)
+        return policy_ok && _retryable_request_error(err)
+    elseif resp !== nothing
+        return _retryable_policy_request(req, controller.retry_non_idempotent) && _retryable_status((resp::Response).status)
+    end
+    return false
+end
+
+function _retry_policy_decision(controller::_RetryController, attempt::Int, req::Request, err, resp)::Tuple{Bool,Bool}
+    _retryable_request_body(req) || return (false, false)
+    built_in = _retry_builtin_wants_retry(controller, req, err, resp)
+    decision = _retry_hook_decision(controller, attempt, err, req, resp)
+    decision === nothing && return (built_in, false)
+    wants_retry = decision::Bool
+    return (wants_retry, wants_retry)
+end
+
+function _retry_policy_wants_retry(controller::_RetryController, attempt::Int, req::Request, err, resp)::Bool
+    wants_retry, _ = _retry_policy_decision(controller, attempt, req, err, resp)
+    return wants_retry
+end
+
 function _should_retry_request_attempt(controller::_RetryController, attempt::Int, req::Request, err, resp)::Bool
     controller.enabled || return false
     controller.remaining > 0 || return false
-    _retryable_request_body(req) || return false
-    built_in = false
-    if err !== nothing
-        policy_ok = _retryable_policy_request(req, controller.retry_non_idempotent) || _h2_guaranteed_unprocessed(err)
-        built_in = policy_ok && _retryable_request_error(err)
-    elseif resp !== nothing
-        built_in = _retryable_policy_request(req, controller.retry_non_idempotent) && _retryable_status((resp::Response).status)
-    end
-    decision = _retry_hook_decision(controller, attempt, err, req, resp)
-    decision === nothing && return built_in
-    return decision::Bool
+    return _retry_policy_wants_retry(controller, attempt, req, err, resp)
+end
+
+@inline function _settle_request_retry_token!(token::RetryToken, failure_cost::Int)::Nothing
+    release(token.bucket, token, failure_cost)
+    return nothing
+end
+
+@inline function _successful_response_status(status::Int)::Bool
+    return 200 <= status < 400
 end
 
 @inline function _retry_bucket_for_request(client::Client, retry_bucket::Union{Bool,RetryBucket})
@@ -169,20 +202,31 @@ end
     return nothing
 end
 
-function _sleep_retry_delay!(request::Request, delay_ns::Int64)::Bool
+function _sleep_retry_delay!(
+    request::Request,
+    delay_ns::Int64;
+    clock_ns::Function=time_ns,
+    sleep_ns::Function=IOPoll.sleep_ns,
+)::Bool
     delay_ns < 0 && return false
     deadline_ns = _request_deadline_ns(request)
     if deadline_ns != 0
-        now_ns = Int64(time_ns())
+        now_ns = Int64(clock_ns())
         now_ns >= deadline_ns && return false
         now_ns > typemax(Int64) - delay_ns && return false
         now_ns + delay_ns <= deadline_ns || return false
     end
     delay_ns == 0 && return true
-    IOPoll.sleep_ns(delay_ns)
+    sleep_ns(delay_ns)
+    deadline_ns != 0 && Int64(clock_ns()) >= deadline_ns && return false
     return true
 end
 
+# Arm one retry attempt: reserve bucket capacity, sleep the backoff, and
+# consume one of the controller's remaining retries. Returns
+# `(armed, token, delay_ns, skip_reason)` where `skip_reason` is `nothing` when
+# the retry was armed, `:retry_bucket` when the bucket denied capacity, or
+# `:deadline` when the request deadline preempted the backoff.
 function _arm_request_retry!(
     controller::_RetryController,
     address::AbstractString,
@@ -198,18 +242,18 @@ function _arm_request_retry!(
             token = Base.acquire(bucket::RetryBucket, _retry_partition_for_address(address))
         catch err
             err isa RetryDeniedError || rethrow(err)
-            return false, nothing, delay_ns
+            return false, nothing, delay_ns, :retry_bucket
         end
     end
     ok = false
     try
-        _sleep_retry_delay!(request, delay_ns) || return false, nothing, delay_ns
+        _sleep_retry_delay!(request, delay_ns) || return false, nothing, delay_ns, :deadline
         ok = true
     finally
         ok || (bucket !== nothing && token !== nothing && release(bucket::RetryBucket, token, _retry_bucket_failure_cost(nothing)))
     end
     controller.remaining -= 1
-    return true, token, delay_ns
+    return true, token, delay_ns, nothing
 end
 
 function _retry_controller(

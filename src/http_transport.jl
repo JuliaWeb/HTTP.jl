@@ -154,6 +154,7 @@ mutable struct Conn
     request_buf::IOBuffer
     reused::Bool
     @atomic closed::Bool
+    @atomic slot_released::Bool
     last_used_ns::Int64
 end
 
@@ -612,10 +613,12 @@ function _release_conn_slot_locked!(transport::Transport, key::String)::Union{No
 end
 
 function _close_owned_conn!(transport::Transport, conn::Conn)
-    _close_conn!(conn) || return nothing
+    _close_conn!(conn)
     waiter = nothing
     lock(transport.lock)
     try
+        (@atomic :acquire conn.slot_released) && return nothing
+        @atomic :release conn.slot_released = true
         waiter = _release_conn_slot_locked!(transport, conn.key)
     finally
         unlock(transport.lock)
@@ -1002,7 +1005,7 @@ function _new_conn_tcp!(
     connect_deadline_ns::Int64=Int64(0),
 )::Conn
     tcp = _new_tcp_conn!(plan, address, host_resolver, connect_deadline_ns)
-    return Conn(plan.pool_key, plan.first_hop_address, false, tcp, nothing, _ConnReader(tcp), IOBuffer(), false, false, time_ns())
+    return Conn(plan.pool_key, plan.first_hop_address, false, tcp, nothing, _ConnReader(tcp), IOBuffer(), false, false, false, time_ns())
 end
 
 function _new_conn_tls!(
@@ -1020,9 +1023,14 @@ function _new_conn_tls!(
         tls = TLS.client(tcp, cfg)
         connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
         TLS.handshake!(tls)
-        return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
-    catch
+        return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, false, time_ns())
+    catch err
         @try_ignore TCP.close(tcp)
+        # Type TLS failures at the site where the phase is known: a TLSError
+        # here arose during connection setup, so surface it as a handshake
+        # failure. TLS failures on established connections reach the public
+        # boundary as `TLSTransportError` instead.
+        err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
         rethrow()
     end
 end
@@ -1049,6 +1057,40 @@ function _evict_expired_idle_locked!(transport::Transport, key::String, now_ns::
     return stale
 end
 
+function _dial_reserved_conn!(
+    transport::Transport,
+    plan::_ProxyPlan,
+    address::String,
+    secure::Bool,
+    server_name::Union{Nothing,String},
+    host_resolver::_TransportHostResolver,
+    connect_deadline_ns::Int64,
+    tls_handshake_timeout_ns::Int64,
+)::Conn
+    try
+        return _new_conn!(
+            transport,
+            plan,
+            address,
+            secure,
+            server_name,
+            host_resolver,
+            connect_deadline_ns,
+            tls_handshake_timeout_ns,
+        )
+    catch
+        waiter_to_notify = nothing
+        lock(transport.lock)
+        try
+            waiter_to_notify = _release_conn_slot_locked!(transport, plan.pool_key)
+        finally
+            unlock(transport.lock)
+        end
+        waiter_to_notify === nothing || _notify_waiter!(waiter_to_notify)
+        rethrow()
+    end
+end
+
 function _acquire_conn!(
     transport::Transport,
     plan::_ProxyPlan,
@@ -1059,6 +1101,8 @@ function _acquire_conn!(
     host_resolver::_TransportHostResolver=transport.host_resolver,
     connect_deadline_ns::Int64=Int64(0),
     tls_handshake_timeout_ns::Int64=Int64(0),
+    ;
+    force_fresh::Bool=false,
 )::Conn
     _transport_closed(transport) && throw(ProtocolError("transport is closed"))
     waiter = nothing
@@ -1095,61 +1139,70 @@ function _acquire_conn!(
         finally
             unlock(transport.lock)
         end
-        isempty(stale) || (_close_owned_conns!(transport, stale); continue)
+        if !isempty(stale)
+            _close_owned_conns!(transport, stale)
+            conn === nothing && continue
+        end
         if conn !== nothing
+            if force_fresh
+                # Transfer this connection's already-counted pool slot to the
+                # replacement dial. This keeps max_conns_per_host exact.
+                _close_conn!(conn::Conn)
+                return _dial_reserved_conn!(
+                    transport,
+                    plan,
+                    address,
+                    secure,
+                    server_name,
+                    host_resolver,
+                    connect_deadline_ns,
+                    tls_handshake_timeout_ns,
+                )
+            end
             return conn::Conn
         end
         if should_dial
-            try
-                return _new_conn!(
-                    transport,
-                    plan,
-                    address,
-                    secure,
-                    server_name,
-                    host_resolver,
-                    connect_deadline_ns,
-                    tls_handshake_timeout_ns,
-                )
-            catch err
-                waiter_to_notify = nothing
-                lock(transport.lock)
-                try
-                    waiter_to_notify = _release_conn_slot_locked!(transport, plan.pool_key)
-                finally
-                    unlock(transport.lock)
-                end
-                waiter_to_notify === nothing || _notify_waiter!(waiter_to_notify)
-                rethrow(err)
-            end
+            return _dial_reserved_conn!(
+                transport,
+                plan,
+                address,
+                secure,
+                server_name,
+                host_resolver,
+                connect_deadline_ns,
+                tls_handshake_timeout_ns,
+            )
         end
         result = _wait_for_conn!(transport, waiter::_ConnWaiter, acquire_deadline_ns)
         if result === :dial
-            try
-                return _new_conn!(
-                    transport,
-                    plan,
-                    address,
-                    secure,
-                    server_name,
-                    host_resolver,
-                    connect_deadline_ns,
-                    tls_handshake_timeout_ns,
-                )
-            catch err
-                waiter_to_notify = nothing
-                lock(transport.lock)
-                try
-                    waiter_to_notify = _release_conn_slot_locked!(transport, plan.pool_key)
-                finally
-                    unlock(transport.lock)
-                end
-                waiter_to_notify === nothing || _notify_waiter!(waiter_to_notify)
-                rethrow(err)
-            end
+            return _dial_reserved_conn!(
+                transport,
+                plan,
+                address,
+                secure,
+                server_name,
+                host_resolver,
+                connect_deadline_ns,
+                tls_handshake_timeout_ns,
+            )
         end
         conn = result::Conn
         conn.reused = true
+        if force_fresh
+            # A capped acquire can receive a direct handoff. Replace it under
+            # the same reserved slot instead of returning a reused connection.
+            _close_conn!(conn)
+            return _dial_reserved_conn!(
+                transport,
+                plan,
+                address,
+                secure,
+                server_name,
+                host_resolver,
+                connect_deadline_ns,
+                tls_handshake_timeout_ns,
+            )
+        end
         return conn
     end
 end
@@ -1473,26 +1526,38 @@ end
     return true
 end
 
-@inline function _retryable_method(method::String)::Bool
-    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" || method == "QUERY"
+@inline function _retryable_request(request::Request)::Bool
+    return _retryable_request_method(request.method) && _retryable_request_body(request)
 end
 
-@inline function _retryable_request(request::Request)::Bool
-    _retryable_method(request.method) || return false
-    request.content_length == 0 && return true
-    request.body isa EmptyBody && return true
-    request.body isa BytesBody && return true
-    return false
-end
+const _retryable_method = _retryable_request_method
 
 @inline function _retryable_reused_conn_error(err)::Bool
-    err isa EOFError && return true
-    err isa SystemError && return true
-    err isa ParseError && return true
-    err isa IOPoll.NetClosingError && return true
-    err isa IOPoll.NotPollableError && return true
-    err isa IOPoll.DeadlineExceededError && return false
-    return false
+    # Iterative cause-unwrapping (not recursion) keeps this resolvable for
+    # trimmed static compilation.
+    current = err
+    while true
+        current isa EOFError && return true
+        current isa SystemError && return true
+        current isa ParseError && return true
+        current isa IOPoll.NetClosingError && return true
+        current isa IOPoll.NotPollableError && return true
+        current isa IOPoll.DeadlineExceededError && return false
+        if current isa TLS.TLSError
+            # A reused TLS connection whose peer vanished surfaces reads and
+            # writes as TLSError wrapping the underlying transport failure
+            # (e.g. an RST as `SystemError`, or a truncated stream carrying
+            # only the shared truncation message). Classify by the cause so
+            # dead reused connections are retried here instead of consuming
+            # the caller's retry budget (#1353).
+            (current::TLS.TLSError).message == _TLS_TRUNCATED_STREAM_MESSAGE && return true
+            cause = (current::TLS.TLSError).cause
+            cause === nothing && return false
+            current = cause::Exception
+            continue
+        end
+        return false
+    end
 end
 
 @inline function _request_upload_abort_error(err)::Bool
@@ -1630,12 +1695,13 @@ function body_read!(body::H1Body, dst::Vector{UInt8})::Int
             return n
         end
         error("unexpected H1 body kind")
-    catch
+    catch err
         body.reusable = false
         body.done = true
         @atomic :release body.closed = true
         _release_h1_body!(body)
-        rethrow()
+        wrapped = err isa Exception ? _wrap_tls_transport_error(err::Exception) : err
+        wrapped === err ? rethrow() : throw(wrapped)
     end
 end
 
@@ -1730,6 +1796,15 @@ Execute one HTTP/1 request/response exchange through `transport`.
 This is the low-level HTTP/1 path used by the higher-level client APIs. It
 returns an `_IncomingResponse` before the public `Response` conversion step.
 
+When a replayable idempotent request fails on a *reused* pooled connection with
+an error that marks the connection dead, the exchange is retried on another
+connection. Pooled connections can die in correlated batches (a peer or
+middlebox discarding every connection parked during the same idle window), so
+the retry repeats while failures keep landing on reused connections. After at
+most `max_idle_per_host` reused acquisitions, the last attempt replaces any
+idle or handed-off connection with a fresh dial (#1353). A failure on that
+fresh connection propagates.
+
 Throws parser, protocol, transport, TLS, and timeout exceptions depending on
 where the exchange fails.
 """
@@ -1741,161 +1816,163 @@ function _roundtrip_incoming!(
     server_name::Union{Nothing,AbstractString}=nothing,
     proxy_config::ProxyConfig=transport.proxy,
     attempt::Int=1,
+    retry_template::Union{Nothing,Request}=nothing,
 )
-    request_deadline = _request_deadline_ns(request)
-    retry_template = attempt == 1 && _retryable_request(request) ? _copy_request(request) : nothing
-    plan = _proxy_plan(proxy_config, secure, String(address))
-    connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, request)
-    connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, request)
-    tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, request)
-    request_ctx = get_request_context(request)
-    canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
-    conn = _acquire_conn!(
-        transport,
-        plan,
-        String(address),
-        secure,
-        server_name === nothing ? nothing : String(server_name),
-        request_deadline,
-        connect_host_resolver,
-        connect_deadline_ns,
-        tls_handshake_timeout_ns,
-    )
-    was_reused = conn.reused
-    cancel_cb = let conn = conn
-        () -> begin
-            try
-                _set_conn_read_deadline!(conn, Int64(1))
-                _set_conn_write_deadline!(conn, Int64(1))
-            catch
-            end
-            try
-                _close_conn!(conn)
-            catch
+    if retry_template === nothing && attempt == 1 && _retryable_request(request)
+        retry_template = _copy_request(request)
+    end
+    while true
+        attempt_request = request
+        request_deadline = _request_deadline_ns(attempt_request)
+        plan = _proxy_plan(proxy_config, secure, String(address))
+        connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, attempt_request)
+        connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, attempt_request)
+        tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, attempt_request)
+        request_ctx = get_request_context(attempt_request)
+        canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
+        conn = _acquire_conn!(
+            transport,
+            plan,
+            String(address),
+            secure,
+            server_name === nothing ? nothing : String(server_name),
+            request_deadline,
+            connect_host_resolver,
+            connect_deadline_ns,
+            tls_handshake_timeout_ns;
+            force_fresh = attempt > transport.max_idle_per_host,
+        )
+        was_reused = conn.reused
+        cancel_cb = let conn = conn
+            () -> begin
+                try
+                    _set_conn_read_deadline!(conn, Int64(1))
+                    _set_conn_write_deadline!(conn, Int64(1))
+                catch
+                end
+                try
+                    _close_conn!(conn)
+                catch
+                end
             end
         end
-    end
-    _on_cancel!(request_ctx, cancel_cb)
-    try
-        canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
-        _apply_conn_deadline!(conn, request_deadline)
-        request_io = _reset_request_buffer!(conn)
-        stream = _conn_stream(conn)
-        deadline_stream = _RequestDeadlineWriteIO(stream, conn, request)
-        has_request_body = _request_has_body(request)
-        write_state = has_request_body ? _RequestWriteState(_request_expects_continue(request)) : nothing
-        writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
-        writer_task = nothing
-        if has_request_body
-            writer_task = Threads.@spawn begin
-                try
-                    _write_request_streaming!(
-                        request_io,
-                        deadline_stream,
-                        request,
-                        plan,
-                        write_state,
-                        request_deadline,
-                    )
-                catch err
-                    writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
-                    _request_write_allows_close(write_state) || return nothing
-                    @try_ignore begin
-                        _close_conn!(conn)
+        _on_cancel!(request_ctx, cancel_cb)
+        try
+            canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
+            _apply_conn_deadline!(conn, request_deadline)
+            request_io = _reset_request_buffer!(conn)
+            stream = _conn_stream(conn)
+            deadline_stream = _RequestDeadlineWriteIO(stream, conn, attempt_request)
+            has_request_body = _request_has_body(attempt_request)
+            write_state = has_request_body ? _RequestWriteState(_request_expects_continue(attempt_request)) : nothing
+            writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
+            writer_task = nothing
+            if has_request_body
+                writer_task = Threads.@spawn let send_request = attempt_request
+                    try
+                        _write_request_streaming!(
+                            request_io,
+                            deadline_stream,
+                            send_request,
+                            plan,
+                            write_state,
+                            request_deadline,
+                        )
+                    catch err
+                        writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
+                        _request_write_allows_close(write_state) || return nothing
+                        @try_ignore begin
+                            _close_conn!(conn)
+                        end
+                    finally
+                        @try_ignore begin
+                            body_close!(send_request.body)
+                        end
+                        _request_write_mark_done!(write_state)
                     end
+                    return nothing
+                end
+                if request_deadline == 0
+                    while !_request_write_head_written_or_done(write_state)
+                        IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
+                    end
+                else
+                    status = IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                end
+                if _request_write_done(write_state)
+                    wait(writer_task::Task)
+                    err = writer_err[]
+                    err === nothing || throw(err::Exception)
+                end
+            else
+                try
+                    _write_request_streaming!(request_io, deadline_stream, attempt_request, plan)
                 finally
                     @try_ignore begin
-                        body_close!(request.body)
+                        body_close!(attempt_request.body)
                     end
-                    _request_write_mark_done!(write_state)
                 end
-                return nothing
             end
-            if request_deadline == 0
-                while !_request_write_head_written_or_done(write_state)
-                    IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
+            reader = conn.reader
+            _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(attempt_request))
+            raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request)
+            # HTTP/1 informational responses are consumed internally so callers
+            # observe the final non-1xx response.
+            while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
+                if _request_write_should_wait_for_continue(write_state) && raw_response.head.status == 100
+                    _request_write_mark_continue_allowed!(write_state::_RequestWriteState)
                 end
-            else
-                status = IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
-                status == :timed_out && throw(IOPoll.DeadlineExceededError())
-            end
-            if _request_write_done(write_state)
-                wait(writer_task::Task)
-                err = writer_err[]
-                err === nothing || throw(err::Exception)
-            end
-        else
-            try
-                _write_request_streaming!(request_io, deadline_stream, request, plan)
-            finally
                 @try_ignore begin
-                    body_close!(request.body)
+                    body_close!(raw_response.rawbody)
+                end
+                raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request)
+            end
+            _set_conn_read_deadline!(conn, request_deadline)
+            early_final = false
+            if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
+                _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)
+                early_final = true
+            end
+            if has_request_body && !_request_write_done(write_state)
+                early_final = true
+                _request_write_request_stop!(write_state::_RequestWriteState)
+                _request_write_disallow_close!(write_state::_RequestWriteState)
+                _set_conn_write_deadline!(conn, Int64(time_ns()))
+            end
+            if has_request_body && !early_final
+                if request_deadline == 0
+                    wait(writer_task::Task)
+                else
+                    status = IOPoll.timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                    wait(writer_task::Task)
                 end
             end
-        end
-        reader = conn.reader
-        _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
-        raw_response = _read_transport_incoming_response(reader, transport, conn, request)
-        # HTTP/1 informational responses are consumed internally so callers
-        # observe the final non-1xx response.
-        while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
-            if _request_write_should_wait_for_continue(write_state) && raw_response.head.status == 100
-                _request_write_mark_continue_allowed!(write_state::_RequestWriteState)
+            if has_request_body && writer_task !== nothing && istaskdone(writer_task::Task)
+                err = writer_err[]
+                if err !== nothing && !(early_final && _request_upload_abort_error(err::Exception))
+                    throw(err::Exception)
+                end
             end
-            @try_ignore begin
-                body_close!(raw_response.rawbody)
+            reusable = _response_reusable(raw_response, attempt_request)
+            early_final && (reusable = false)
+            body = _arm_h1_body!(raw_response.rawbody::H1Body, reusable, request_ctx, cancel_cb)
+            if _body_immediately_empty(body)
+                body_close!(body)
             end
-            raw_response = _read_transport_incoming_response(reader, transport, conn, request)
-        end
-        _set_conn_read_deadline!(conn, request_deadline)
-        early_final = false
-        if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
-            _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)
-            early_final = true
-        end
-        if has_request_body && !_request_write_done(write_state)
-            early_final = true
-            _request_write_request_stop!(write_state::_RequestWriteState)
-            _request_write_disallow_close!(write_state::_RequestWriteState)
-            _set_conn_write_deadline!(conn, Int64(time_ns()))
-        end
-        if has_request_body && !early_final
-            if request_deadline == 0
-                wait(writer_task::Task)
-            else
-                status = IOPoll.timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
-                status == :timed_out && throw(IOPoll.DeadlineExceededError())
-                wait(writer_task::Task)
+            return _IncomingResponse(raw_response.head, body)
+        catch err
+            _remove_cancel_callback!(request_ctx, cancel_cb)
+            _close_owned_conn!(transport, conn)
+            if attempt <= transport.max_idle_per_host && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
+                request = _copy_request(retry_template::Request)
+                attempt += 1
+                continue
             end
+            wrapped = err isa Exception ? _wrap_tls_transport_error(err::Exception) : err
+            wrapped === err ? rethrow() : throw(wrapped)
         end
-        if has_request_body && writer_task !== nothing && istaskdone(writer_task::Task)
-            err = writer_err[]
-            if err !== nothing && !(early_final && _request_upload_abort_error(err::Exception))
-                throw(err::Exception)
-            end
-        end
-        reusable = _response_reusable(raw_response, request)
-        early_final && (reusable = false)
-        body = _arm_h1_body!(raw_response.rawbody::H1Body, reusable, request_ctx, cancel_cb)
-        if _body_immediately_empty(body)
-            body_close!(body)
-        end
-        return _IncomingResponse(raw_response.head, body)
-    catch err
-        _remove_cancel_callback!(request_ctx, cancel_cb)
-        _close_owned_conn!(transport, conn)
-        if attempt == 1 && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
-            return _roundtrip_incoming!(
-                transport,
-                address,
-                _copy_request(retry_template::Request),
-                secure,
-                server_name,
-                proxy_config,
-                attempt + 1,
-            )
-        end
-        rethrow(err)
     end
 end
 

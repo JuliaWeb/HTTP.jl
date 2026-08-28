@@ -10,12 +10,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added `HTTP2Settings` to configure HTTP/2 receive flow-control windows (per-stream `initial_window_size` and connection-level `connection_window_size`). Pass it via the `http2_settings` keyword on `Client`, `Server`, `listen!`, `serve!`, `serve`, and `connect_h2!`. Defaults preserve the protocol-default 65535-byte windows, and the per-stream receive buffer cap is derived from the window. Raising the windows improves single-stream throughput on links with non-trivial latency.
 - Added `HTTP.peeraddr(::HTTP.Stream)`, returning the remote (client) `SocketAddr` of a server stream for both plain-TCP and TLS connections and both HTTP/1 and HTTP/2. This is the supported way to obtain the client IP (for rate limiting, audit logging, and per-client policy) without reaching into transport internals, and restores the capability `Sockets.getpeername(::HTTP.Stream)` provided in HTTP.jl 1.x.
+- Added `HTTP.RetrySkippedEvent`, a request trace event emitted when the retry
+  policy wanted to retry an attempt but the retry was not armed — because the
+  transport's `RetryBucket` denied capacity (`reason = :retry_bucket`) or the
+  request deadline preempted the backoff (`reason = :deadline`). Previously a
+  denied retry was indistinguishable from a non-retryable failure. ([#1353])
+- Added `HTTP.TLSTransportError`, raised when TLS-level I/O fails on an
+  established connection during a request. Previously such failures were
+  mislabeled `TLSHandshakeError`; that type is now reserved for actual
+  connection-setup failures. `HTTP.isrecoverable` classifies both wrappers by
+  their underlying cause. ([#1353])
 
 ### Fixed
 - Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
   thread pool so default-pool compute work cannot starve server and health-check
   tasks when an interactive thread is configured. ([#1342])
 - Percent-decode `userinfo` before building the `Basic` auth header (RFC 3986); fixes wrong credentials for request URLs and proxies containing percent-encoded characters.
+- Fixed the client retry budget (`RetryBucket`) treating a successful retried
+  attempt as a full-cost failure. The per-host budget drained by 10 of 500
+  units on every retry — even one that recovered with a 2xx — and never
+  refilled, so after ~50 retries against a host every subsequent retry was
+  silently denied for the transport's lifetime and transient errors surfaced
+  raw despite `retry=true`. A retry reservation is now settled by the
+  effective retry decision for the response it produced: refunded in full when
+  the built-in policy (or a custom `retry_if`) no longer wants a retry, and
+  keeping the partial cost when the response is still classified as a failure.
+  On the final attempt the built-in classification applies without invoking
+  `retry_if`, and a retry that `retry_if` explicitly requested conservatively
+  keeps cost on a non-2xx/3xx outcome. Each successful non-retried request
+  restores one unit of previously consumed budget, retry reservations and
+  response connections are released even when a trace or retry-policy callback
+  throws, and the request deadline is rechecked after the backoff sleep.
+  ([#1353])
+- The HTTP/1 transport now retries a replayable idempotent request for as long
+  as failures land on *reused* pooled connections. It tries at most
+  `max_idle_per_host` reused connections, then forces a fresh dial instead of
+  accepting another concurrent pool return. PUT and DELETE receive the same
+  stale-connection recovery as the other idempotent methods.
+  Pooled connections can be discarded by the peer in correlated batches, in
+  which case the single retry would draw the next equally-dead pooled
+  connection and fail. ([#1353])
+- Dead reused TLS connections that fail with `Reseau.TLS.TLSError` (for
+  example an RST surfacing as a wrapped `SystemError` or a truncated TLS record
+  reported as `unexpected EOF`) are now classified by their public error shape
+  in the transport's reused-connection retry. HTTP/2 read-loop wrappers also
+  preserve this classification. ([#1353])
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
@@ -826,3 +865,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
+[#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
