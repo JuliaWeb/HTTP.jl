@@ -1546,10 +1546,11 @@ const _retryable_method = _retryable_request_method
         if current isa TLS.TLSError
             # A reused TLS connection whose peer vanished surfaces reads and
             # writes as TLSError wrapping the underlying transport failure
-            # (e.g. an RST as `SystemError`). Classify by the cause so dead
-            # reused connections are retried here instead of consuming the
-            # caller's retry budget (#1353).
-            (current::TLS.TLSError).message == "unexpected EOF" && return true
+            # (e.g. an RST as `SystemError`, or a truncated stream carrying
+            # only the shared truncation message). Classify by the cause so
+            # dead reused connections are retried here instead of consuming
+            # the caller's retry budget (#1353).
+            (current::TLS.TLSError).message == _TLS_TRUNCATED_STREAM_MESSAGE && return true
             cause = (current::TLS.TLSError).cause
             cause === nothing && return false
             current = cause::Exception

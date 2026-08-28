@@ -31,16 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   units on every retry — even one that recovered with a 2xx — and never
   refilled, so after ~50 retries against a host every subsequent retry was
   silently denied for the transport's lifetime and transient errors surfaced
-  raw despite `retry=true`. Successful retries now refund their reservation.
-  Retry responses use the effective built-in or custom `retry_if` decision
-  while another configured retry remains. A terminal armed response uses the
-  built-in classification without invoking `retry_if` after retry slots are
-  exhausted. Retries explicitly requested by `retry_if` conservatively keep
-  cost on terminal non-success responses.
-  Each successful non-retried request restores one unit of
-  previously consumed budget. Retry reservations and response connections are
-  also released if a trace or retry-policy callback throws, and the request
-  deadline is rechecked after backoff sleep. ([#1353])
+  raw despite `retry=true`. A retry reservation is now settled by the
+  effective retry decision for the response it produced: refunded in full when
+  the built-in policy (or a custom `retry_if`) no longer wants a retry, and
+  keeping the partial cost when the response is still classified as a failure.
+  On the final attempt the built-in classification applies without invoking
+  `retry_if`, and a retry that `retry_if` explicitly requested conservatively
+  keeps cost on a non-2xx/3xx outcome. Each successful non-retried request
+  restores one unit of previously consumed budget, retry reservations and
+  response connections are released even when a trace or retry-policy callback
+  throws, and the request deadline is rechecked after the backoff sleep.
+  ([#1353])
 - The HTTP/1 transport now retries a replayable idempotent request for as long
   as failures land on *reused* pooled connections. It tries at most
   `max_idle_per_host` reused connections, then forces a fresh dial instead of

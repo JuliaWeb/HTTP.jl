@@ -12,6 +12,14 @@ const _RETRY_BUCKET_RETRYABLE_RESPONSE_COST = 5
 const _RETRY_BUCKET_DEFAULT_BACKOFF_SCALE_FACTOR_NS = Int64(_RETRY_BUCKET_DEFAULT_BACKOFF_SCALE_FACTOR_MS) * Int64(1_000_000)
 const _RETRY_BUCKET_DEFAULT_MAX_BACKOFF_NS = Int64(_RETRY_BUCKET_DEFAULT_MAX_BACKOFF_SECS) * Int64(1_000_000_000)
 
+# Reseau's TLS layer reports a stream cut mid-record or before close_notify as
+# a `TLSError` carrying exactly this message. Its cause is a Reseau-private
+# type, so the retry classifiers match the public message instead; the
+# end-to-end truncation tests (transport and HTTP/2) pin this coupling so a
+# Reseau wording change fails loudly rather than silently dropping the
+# classification.
+const _TLS_TRUNCATED_STREAM_MESSAGE = "unexpected EOF"
+
 @inline function _retryable_request_method(method::String)::Bool
     return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" ||
         method == "PUT" || method == "DELETE" || method == "QUERY"

@@ -71,7 +71,7 @@ function _retryable_request_error(err::Exception)::Bool
             continue
         end
         if current isa TLS.TLSError
-            (current::TLS.TLSError).message == "unexpected EOF" && return true
+            (current::TLS.TLSError).message == _TLS_TRUNCATED_STREAM_MESSAGE && return true
             cause = (current::TLS.TLSError).cause
             cause === nothing && return false
             current = cause::Exception
