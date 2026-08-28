@@ -179,20 +179,25 @@ function _client_start_stream_read!(stream::Stream{true})::Response
         meta.close,
         get_request_context(meta),
     )
-    incoming = _do_incoming!(
-        nothing,
-        stream.client::Client,
-        (stream.parsed::_URLParts).address,
-        req,
-        (stream.parsed::_URLParts).secure,
-        nothing,
-        stream.protocol,
-        stream.redirect ? (stream.redirect_policy::_RedirectPolicy) : _redirect_policy(stream.client::Client, 0),
-        stream.retry_controller,
-        stream.proxy_config,
-        stream.cookies,
-        stream.cookiejar,
-    )
+    incoming = try
+        _do_incoming!(
+            nothing,
+            stream.client::Client,
+            (stream.parsed::_URLParts).address,
+            req,
+            (stream.parsed::_URLParts).secure,
+            nothing,
+            stream.protocol,
+            stream.redirect ? (stream.redirect_policy::_RedirectPolicy) : _redirect_policy(stream.client::Client, 0),
+            stream.retry_controller,
+            stream.proxy_config,
+            stream.cookies,
+            stream.cookiejar,
+        )
+    catch err
+        wrapped = err isa Exception ? _wrap_tls_transport_error(err::Exception) : err
+        wrapped === err ? rethrow() : throw(wrapped)
+    end
     resolved_request = incoming.head.request === nothing ? req : incoming.head.request::Request
     stream.response = _finalize_request_response(
         incoming,
@@ -562,7 +567,7 @@ function open(
             msg = (ctx_kw::RequestContext).cancel_message === nothing ? "request canceled" : (ctx_kw::RequestContext).cancel_message::String
             throw(CanceledError(msg))
         end
-        wrapped = _wrap_client_transport_error(err, "request", Int64(0), elapsed_ns)
+        wrapped = err isa Exception ? _wrap_client_transport_error(err::Exception, "request", Int64(0), elapsed_ns) : err
         wrapped === err ? rethrow() : throw(wrapped)
     end
     try
@@ -575,7 +580,7 @@ function open(
             msg = (ctx_kw::RequestContext).cancel_message === nothing ? "request canceled" : (ctx_kw::RequestContext).cancel_message::String
             throw(CanceledError(msg))
         end
-        wrapped = _wrap_client_transport_error(err, "request", Int64(0), elapsed_ns)
+        wrapped = err isa Exception ? _wrap_client_transport_error(err::Exception, "request", Int64(0), elapsed_ns) : err
         wrapped === err ? rethrow() : throw(wrapped)
     finally
         @try_ignore closewrite(stream)
@@ -588,7 +593,7 @@ function open(
             msg = (ctx_kw::RequestContext).cancel_message === nothing ? "request canceled" : (ctx_kw::RequestContext).cancel_message::String
             throw(CanceledError(msg))
         end
-        wrapped = _wrap_client_transport_error(err, "request", Int64(0), elapsed_ns)
+        wrapped = err isa Exception ? _wrap_client_transport_error(err::Exception, "request", Int64(0), elapsed_ns) : err
         wrapped === err ? rethrow() : throw(wrapped)
     end
     if status_exception && _status_throws(response)

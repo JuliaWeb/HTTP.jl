@@ -31,19 +31,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   units on every retry — even one that recovered with a 2xx — and never
   refilled, so after ~50 retries against a host every subsequent retry was
   silently denied for the transport's lifetime and transient errors surfaced
-  raw despite `retry=true`. Successful retries now refund their reservation,
-  and each successful non-retried request restores one unit of previously
-  consumed budget. ([#1353])
+  raw despite `retry=true`. Successful retries now refund their reservation.
+  Retry responses use the effective built-in or custom `retry_if` decision
+  while another configured retry remains. A terminal armed response uses the
+  built-in classification without invoking `retry_if` after retry slots are
+  exhausted. Retries explicitly requested by `retry_if` conservatively keep
+  cost on terminal non-success responses.
+  Each successful non-retried request restores one unit of
+  previously consumed budget. Retry reservations and response connections are
+  also released if a trace or retry-policy callback throws, and the request
+  deadline is rechecked after backoff sleep. ([#1353])
 - The HTTP/1 transport now retries a replayable idempotent request for as long
-  as failures land on *reused* pooled connections (bounded by
-  `max_idle_per_host + 1` connection acquisitions) instead of exactly once.
+  as failures land on *reused* pooled connections. It tries at most
+  `max_idle_per_host` reused connections, then forces a fresh dial instead of
+  accepting another concurrent pool return. PUT and DELETE receive the same
+  stale-connection recovery as the other idempotent methods.
   Pooled connections can be discarded by the peer in correlated batches, in
   which case the single retry would draw the next equally-dead pooled
   connection and fail. ([#1353])
 - Dead reused TLS connections that fail with `Reseau.TLS.TLSError` (for
-  example an RST surfacing as a wrapped `SystemError`) are now classified by
-  their underlying cause in the transport's reused-connection retry, instead
-  of skipping that retry and consuming high-level retry budget. ([#1353])
+  example an RST surfacing as a wrapped `SystemError` or a truncated TLS record
+  reported as `unexpected EOF`) are now classified by their public error shape
+  in the transport's reused-connection retry. HTTP/2 read-loop wrappers also
+  preserve this classification. ([#1353])
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The

@@ -2041,6 +2041,25 @@ end
     end
 end
 
+@testset "HTTP.open preserves non-Exception callback throws" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do _
+        HT.Response(200, "ok")
+    end
+    try
+        err = try
+            HT.open(:GET, "http://127.0.0.1:$(HT.port(server))/nonexception") do _
+                throw(:sentinel)
+            end
+            nothing
+        catch caught
+            caught
+        end
+        @test err === :sentinel
+    finally
+        HT.forceclose(server)
+    end
+end
+
 @testset "HTTP.open per-byte stream reads" begin
     if _http_windows_ci()
         @test_skip true

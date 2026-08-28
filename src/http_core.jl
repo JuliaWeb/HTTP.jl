@@ -305,7 +305,9 @@ A bare `TLS.TLSError` reaching this boundary arose on an established
 connection (handshake failures are typed `TLSHandshakeError` at the dial
 sites), so it wraps as [`TLSTransportError`](@ref).
 """
-function _wrap_client_transport_error(err, operation::AbstractString="request", timeout_ns::Integer=Int64(0), elapsed_ns::Integer=Int64(0))
+_wrap_client_transport_error(err, operation::AbstractString="request", timeout_ns::Integer=Int64(0), elapsed_ns::Integer=Int64(0)) = err
+
+@inline function _wrap_client_transport_error(err::Exception, operation::AbstractString="request", timeout_ns::Integer=Int64(0), elapsed_ns::Integer=Int64(0))
     if err isa TLS.TLSHandshakeTimeoutError
         return TimeoutError(String("tls_handshake"), Int64(err.timeout_ns), Int64(elapsed_ns))
     end
@@ -321,10 +323,30 @@ function _wrap_client_transport_error(err, operation::AbstractString="request", 
     if err isa HostResolvers.LookupError
         return DNSError(err.name, err)
     end
-    if err isa TLS.TLSError
-        return TLSTransportError(err)
-    end
+    return _wrap_tls_transport_error(err)
+end
+
+_wrap_tls_transport_error(err) = err
+
+@inline function _wrap_tls_transport_error(err::Exception)
+    err isa TLSTransportError && return err
+    err isa TLS.TLSError && return TLSTransportError(err)
+    nested_tls = _find_nested_tls_transport_error(err)
+    nested_tls === nothing || return TLSTransportError(nested_tls::TLS.TLSError)
     return err
+end
+
+function _find_nested_tls_transport_error(err)::Union{Nothing,TLS.TLSError}
+    current = err
+    while current isa ProtocolError
+        cause = (current::ProtocolError).err
+        cause === nothing && return nothing
+        current = cause::Exception
+    end
+    current isa TLS.TLSError && return current::TLS.TLSError
+    current isa TLSTransportError || return nothing
+    cause = (current::TLSTransportError).cause
+    return cause isa TLS.TLSError ? cause::TLS.TLSError : nothing
 end
 
 """

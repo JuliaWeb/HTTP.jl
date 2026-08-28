@@ -325,6 +325,7 @@ end
     wrapped_tls_error = HT._wrap_client_transport_error(tls_error)
     @test wrapped_tls_error isa HT.TLSTransportError
     @test (wrapped_tls_error::HT.TLSTransportError).cause === tls_error
+    @test HT._wrap_client_transport_error(wrapped_tls_error) === wrapped_tls_error
     @test occursin("http tls transport error", sprint(showerror, wrapped_tls_error))
     @test occursin("http tls handshake error", sprint(showerror, HT.TLSHandshakeError(tls_error)))
 

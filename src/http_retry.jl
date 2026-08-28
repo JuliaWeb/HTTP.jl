@@ -12,6 +12,15 @@ const _RETRY_BUCKET_RETRYABLE_RESPONSE_COST = 5
 const _RETRY_BUCKET_DEFAULT_BACKOFF_SCALE_FACTOR_NS = Int64(_RETRY_BUCKET_DEFAULT_BACKOFF_SCALE_FACTOR_MS) * Int64(1_000_000)
 const _RETRY_BUCKET_DEFAULT_MAX_BACKOFF_NS = Int64(_RETRY_BUCKET_DEFAULT_MAX_BACKOFF_SECS) * Int64(1_000_000_000)
 
+@inline function _retryable_request_method(method::String)::Bool
+    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" ||
+        method == "PUT" || method == "DELETE" || method == "QUERY"
+end
+
+@inline function _retryable_request_body(request::Request)::Bool
+    return request.content_length == 0 || request.body isa EmptyBody || request.body isa BytesBody
+end
+
 """Retry capacity tracked independently for one retry partition key."""
 mutable struct _RetryPartition
     capacity::Int
@@ -30,10 +39,13 @@ some or all of the reserved retry capacity consumed.
 
 The built-in client retry flow refunds a reservation in full when the retried
 attempt reaches a non-retryable response (the retry did its job), keeps part of
-the cost for retryable responses (429/5xx), keeps the full cost when the
-retried attempt fails with an exception, and slowly restores consumed capacity
-by crediting one unit per successful non-retried request — so a burst of real
-failures can drain a partition, but healthy traffic always heals it.
+the cost when the built-in or custom policy still classifies the response as a
+failure, keeps a conservative partial cost for a non-success terminal response
+after a retry explicitly requested by `retry_if`, keeps the full cost when the
+retried attempt fails with an exception,
+and slowly restores consumed capacity by crediting one unit per successful
+non-retried response — so a burst of real failures can drain a partition, but
+healthy traffic always heals it.
 """
 mutable struct RetryBucket
     backoff_scale_factor_ms::Int
@@ -41,10 +53,10 @@ mutable struct RetryBucket
     capacity::Int
     partitions::Dict{String,_RetryPartition}
     lock::ReentrantLock
-    # Number of partitions currently below full capacity. Maintained under
-    # `lock`; read without it as a fast path so per-request replenish checks
-    # stay lock-free while every partition is full.
-    @atomic depleted::Int
+    # Copy-on-write snapshot of partition keys below full capacity. Published
+    # snapshots are treated as immutable. Writers publish under `lock`; readers
+    # use the snapshot to avoid locking for healthy traffic to unrelated keys.
+    @atomic depleted_partitions::Set{String}
 end
 
 """Handle returned by `acquire` and consumed by `release` to refund retry budget."""
@@ -85,20 +97,67 @@ function RetryBucket(;
         Int(capacity),
         Dict{String,_RetryPartition}(),
         ReentrantLock(),
-        0,
+        Set{String}(),
     )
 end
 
-# Set a partition's capacity while keeping the bucket's depleted-partition
-# count in sync. Must be called with `bucket.lock` held.
-@inline function _retry_partition_set_capacity!(bucket::RetryBucket, state::_RetryPartition, new_capacity::Int)::Nothing
+# Preserve the positional constructor that the five-field RetryBucket exposed
+# before the depleted-partition fast path was added.
+function RetryBucket(
+    backoff_scale_factor_ms::Int,
+    max_backoff_secs::Int,
+    capacity::Int,
+    partitions::Dict{String,_RetryPartition},
+    lock::ReentrantLock,
+)
+    depleted_partitions = Set(
+        key for (key, state) in partitions if state.capacity < capacity
+    )
+    return RetryBucket(
+        backoff_scale_factor_ms,
+        max_backoff_secs,
+        capacity,
+        partitions,
+        lock,
+        depleted_partitions,
+    )
+end
+
+function RetryBucket(
+    backoff_scale_factor_ms,
+    max_backoff_secs,
+    capacity,
+    partitions,
+    lock,
+)
+    return RetryBucket(
+        convert(Int, backoff_scale_factor_ms),
+        convert(Int, max_backoff_secs),
+        convert(Int, capacity),
+        convert(Dict{String,_RetryPartition}, partitions),
+        convert(ReentrantLock, lock),
+    )
+end
+
+# Set a partition's capacity while keeping the published depleted-key snapshot
+# in sync. Must be called with `bucket.lock` held.
+@inline function _retry_partition_set_capacity!(
+    bucket::RetryBucket,
+    partition_key::String,
+    state::_RetryPartition,
+    new_capacity::Int,
+)::Nothing
     was_full = state.capacity >= bucket.capacity
     now_full = new_capacity >= bucket.capacity
     state.capacity = new_capacity
     if was_full && !now_full
-        @atomic bucket.depleted += 1
+        depleted = copy(@atomic :acquire bucket.depleted_partitions)
+        push!(depleted, partition_key)
+        @atomic :release bucket.depleted_partitions = depleted
     elseif !was_full && now_full
-        @atomic bucket.depleted -= 1
+        depleted = copy(@atomic :acquire bucket.depleted_partitions)
+        delete!(depleted, partition_key)
+        @atomic :release bucket.depleted_partitions = depleted
     end
     return nothing
 end
@@ -123,7 +182,7 @@ function acquire(bucket::RetryBucket, partition)
         if state.capacity < _RETRY_BUCKET_ACQUIRE_COST
             throw(RetryDeniedError(partition_key))
         end
-        _retry_partition_set_capacity!(bucket, state, state.capacity - _RETRY_BUCKET_ACQUIRE_COST)
+        _retry_partition_set_capacity!(bucket, partition_key, state, state.capacity - _RETRY_BUCKET_ACQUIRE_COST)
         return RetryToken(bucket, partition_key, _RETRY_BUCKET_ACQUIRE_COST, false)
     end
 end
@@ -142,6 +201,10 @@ end
     return _retryable_status(status) ? _RETRY_BUCKET_RETRYABLE_RESPONSE_COST : 0
 end
 
+@inline function _retry_bucket_response_cost(retry_wanted::Bool)::Int
+    return retry_wanted ? _RETRY_BUCKET_RETRYABLE_RESPONSE_COST : 0
+end
+
 @inline function release(bucket::RetryBucket, token::RetryToken, failure_cost::Int)::Nothing
     token.bucket === bucket || throw(ArgumentError("retry token does not belong to the provided retry bucket"))
     lock(bucket.lock)
@@ -151,7 +214,7 @@ end
         reserved = _retry_bucket_reserved_cost(token)
         consumed = min(reserved, max(0, failure_cost))
         refund = reserved - consumed
-        _retry_partition_set_capacity!(bucket, state, min(bucket.capacity, state.capacity + refund))
+        _retry_partition_set_capacity!(bucket, token.partition, state, min(bucket.capacity, state.capacity + refund))
         token.released = true
         return nothing
     finally
@@ -167,19 +230,21 @@ non-retried request, capped at the bucket's full capacity. This is the slow
 recovery path that lets a partition legitimately drained by a burst of real
 failures regain retry budget from healthy traffic instead of staying empty for
 the transport's lifetime. Partitions that have never spent capacity are left
-untouched, and the depleted-partition fast path keeps this lock-free while
-every partition is full.
+untouched. The published depleted-key snapshot also keeps this lock-free for
+healthy traffic to other partitions.
 """
 function _retry_bucket_replenish!(bucket::RetryBucket, partition)::Nothing
-    (@atomic :monotonic bucket.depleted) == 0 && return nothing
+    depleted = @atomic :acquire bucket.depleted_partitions
+    isempty(depleted) && return nothing
     partition_key = _retry_bucket_partition_key(partition)
+    partition_key in depleted || return nothing
     lock(bucket.lock)
     try
         state = get(() -> nothing, bucket.partitions, partition_key)
         state === nothing && return nothing
         partition_state = state::_RetryPartition
         partition_state.capacity >= bucket.capacity && return nothing
-        _retry_partition_set_capacity!(bucket, partition_state, partition_state.capacity + 1)
+        _retry_partition_set_capacity!(bucket, partition_key, partition_state, partition_state.capacity + 1)
         return nothing
     finally
         unlock(bucket.lock)

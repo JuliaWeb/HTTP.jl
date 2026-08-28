@@ -11,7 +11,7 @@ const TL = Reseau.TLS
 const _TLS_CERT_PATH = joinpath(@__DIR__, "resources", "unittests.crt")
 const _TLS_KEY_PATH = joinpath(@__DIR__, "resources", "unittests.key")
 
-function _write_all_h2_tcp!(conn::NC.Conn, bytes::Vector{UInt8})::Nothing
+function _write_all_h2_tcp!(conn, bytes::Vector{UInt8})::Nothing
     total = 0
     while total < length(bytes)
         n = write(conn, bytes[(total + 1):end])
@@ -21,7 +21,7 @@ function _write_all_h2_tcp!(conn::NC.Conn, bytes::Vector{UInt8})::Nothing
     return nothing
 end
 
-function _read_exact_h2_tcp!(conn::NC.Conn, n::Int)::Vector{UInt8}
+function _read_exact_h2_tcp!(conn, n::Int)::Vector{UInt8}
     out = Vector{UInt8}(undef, n)
     offset = 0
     while offset < n
@@ -34,7 +34,7 @@ function _read_exact_h2_tcp!(conn::NC.Conn, n::Int)::Vector{UInt8}
     return out
 end
 
-function _write_frame_to_conn!(conn::NC.Conn, frame::HT.AbstractFrame)
+function _write_frame_to_conn!(conn, frame::HT.AbstractFrame)
     io = IOBuffer()
     framer = io
     HT.write_frame!(framer, frame)
@@ -459,6 +459,124 @@ end
         _wait_task_h2!(server_task)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 high-level client retries a read-loop connection failure" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accept_count = Ref(0)
+    server_task = Threads.@spawn begin
+        for attempt in 1:2
+            conn = NC.accept(listener)
+            accept_count[] += 1
+            reader = HT._ConnReader(conn)
+            try
+                _ = _read_exact_h2_tcp!(conn, length(HT._H2_PREFACE))
+                _ = HT.read_frame!(reader)
+                _write_frame_to_conn!(conn, HT.SettingsFrame(false, Pair{UInt16,UInt32}[]))
+                request_headers = _read_next_headers_frame!(reader)
+                if attempt == 1
+                    # The read loop wraps this established-connection EOF in a
+                    # ProtocolError. The high-level retry policy must inspect
+                    # that cause and create a second H2 connection.
+                    continue
+                end
+                encoder = HT.Encoder()
+                encoded = HT.encode_header_block(
+                    encoder,
+                    HT.HeaderField[
+                        HT.HeaderField(":status", "200", false),
+                        HT.HeaderField("content-length", "2", false),
+                    ],
+                )
+                _write_frame_to_conn!(conn, HT.HeadersFrame(request_headers.stream_id, false, true, encoded))
+                _write_frame_to_conn!(conn, HT.DataFrame(request_headers.stream_id, true, collect(codeunits("ok"))))
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end
+    client = HT.Client(cookiejar = nothing)
+    try
+        response = HT.get(
+            client,
+            "http://$(address)/retry-read-loop";
+            protocol = :h2,
+            retries = 1,
+            retry_bucket = false,
+        )
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_h2!(server_task)
+        @test accept_count[] == 2
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
+@testset "HTTP/2 public roundtrip wraps established TLS record truncation" begin
+    listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = _TLS_CERT_PATH,
+            key_file = _TLS_KEY_PATH,
+            alpn_protocols = ["h2"],
+        );
+        backlog = 8,
+    )
+    port = Int((TL.addr(listener)::NC.SocketAddrV4).port)
+    address = ND.join_host_port("localhost", port)
+    server_task = Threads.@spawn begin
+        tls_conn = nothing
+        try
+            tls_conn = TL.accept(listener)
+            TL.handshake!(tls_conn::TL.Conn)
+            reader = HT._ConnReader(tls_conn::TL.Conn)
+            _ = _read_exact_h2_tcp!(tls_conn::TL.Conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(tls_conn::TL.Conn, HT.SettingsFrame(false, Pair{UInt16,UInt32}[]))
+            flush(tls_conn::TL.Conn)
+            _ = _read_next_headers_frame!(reader)
+            tcp = TL.net_conn(tls_conn::TL.Conn)::NC.Conn
+            _write_all_h2_tcp!(tcp, UInt8[0x17, 0x03, 0x03, 0x00, 0x10, 0x00])
+            HTTP.@try_ignore NC.close(tcp)
+        finally
+            tls_conn === nothing || HTTP.@try_ignore TL.close(tls_conn::TL.Conn)
+        end
+        return nothing
+    end
+    h2_conn = nothing
+    try
+        h2_conn = HT.connect_h2!(
+            address;
+            secure = true,
+            tls_config = TL.Config(
+                verify_peer = false,
+                verify_hostname = false,
+                server_name = "localhost",
+                alpn_protocols = ["h2"],
+            ),
+        )
+        request = HT.Request("GET", "/truncated"; host = address, body = HT.EmptyBody(), content_length = 0)
+        err = try
+            HT.h2_roundtrip!(h2_conn::HT.H2Connection, request)
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa HT.TLSTransportError
+        @test (err::HT.TLSTransportError).cause isa TL.TLSError
+        _wait_task_h2!(server_task)
+    finally
+        h2_conn === nothing || close(h2_conn::HT.H2Connection)
+        HTTP.@try_ignore TL.close(listener)
+        HTTP.@try_ignore wait(server_task)
     end
 end
 

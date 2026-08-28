@@ -6,6 +6,7 @@ const HT = HTTP
 const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
 const IP = Reseau.IOPoll
+const TL = Reseau.TLS
 
 if !isdefined(@__MODULE__, :_http_windows_ci)
     @inline function _http_windows_ci()::Bool
@@ -80,6 +81,18 @@ function _wait_for_transport_waiter!(transport::HT.Transport, key::String)::Noth
         unlock(transport.lock)
     end
     return nothing
+end
+
+function _wait_for_transport_waiter_or_task!(transport::HT.Transport, key::String, task::Task)::Bool
+    lock(transport.lock)
+    try
+        while isempty(get(() -> HT._ConnWaiter[], transport.waiters, key)) && !istaskdone(task)
+            wait(transport.waiter_condition)
+        end
+        return !isempty(get(() -> HT._ConnWaiter[], transport.waiters, key))
+    finally
+        unlock(transport.lock)
+    end
 end
 
 function _transport_debug(msg::AbstractString)
@@ -249,6 +262,14 @@ if _http_windows_ci()
     end
 
     @testset "HTTP client transport retries idempotent request on stale reused conn" begin
+        @test_skip true
+    end
+
+    @testset "HTTP client transport force-fresh acquire replaces reused conns" begin
+        @test_skip true
+    end
+
+    @testset "HTTP client transport retries stale PUT and DELETE requests" begin
         @test_skip true
     end
 else
@@ -1026,10 +1047,237 @@ end
     end
 end
 
+@testset "HTTP client transport force-fresh acquire replaces reused conns" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accepted = Channel{NC.Conn}(3)
+    server_task = Threads.@spawn begin
+        for _ in 1:3
+            put!(accepted, NC.accept(listener))
+        end
+        return nothing
+    end
+    transport = HT.Transport(max_idle_per_host = 1, max_idle_total = 1, max_conns_per_host = 1)
+    plan = HT._proxy_plan(transport.proxy, false, address)
+    server_conns = NC.Conn[]
+    first_conn = nothing
+    fresh_conn = nothing
+    replacement_conn = nothing
+    try
+        first_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        push!(server_conns, take!(accepted))
+
+        acquire_task = Threads.@spawn try
+            HT._acquire_conn!(
+                transport,
+                plan,
+                address,
+                false,
+                nothing;
+                force_fresh = true,
+            )
+        finally
+            lock(transport.lock)
+            try
+                notify(transport.waiter_condition)
+            finally
+                unlock(transport.lock)
+            end
+        end
+        queued = _wait_for_transport_waiter_or_task!(transport, plan.pool_key, acquire_task)
+        if !queued
+            unexpected_conn = fetch(acquire_task)
+            HT._close_owned_conn!(transport, unexpected_conn::HT.Conn)
+        end
+        @test queued
+
+        # The normal handoff path offers `first_conn` to the waiter. A
+        # force-fresh acquire must transfer that counted slot to a fresh dial.
+        HT._put_idle_conn!(transport, first_conn::HT.Conn)
+        first_conn = nothing
+        fresh_conn = fetch(acquire_task)
+        @test !(fresh_conn::HT.Conn).reused
+        @test lock(transport.lock) do
+            HT._conn_slots_locked(transport, plan.pool_key) == 1 && isempty(transport.waiters)
+        end
+        push!(server_conns, take!(accepted))
+        @test length(server_conns) == 2
+
+        # Exercise the other acquisition branch. This time the force-fresh
+        # caller finds a reused connection already parked in the idle pool.
+        HT._put_idle_conn!(transport, fresh_conn::HT.Conn)
+        fresh_conn = nothing
+        replacement_conn = HT._acquire_conn!(
+            transport,
+            plan,
+            address,
+            false,
+            nothing,
+            Int64(1);
+            force_fresh = true,
+        )
+        @test !(replacement_conn::HT.Conn).reused
+        @test lock(transport.lock) do
+            HT._conn_slots_locked(transport, plan.pool_key) == 1 && isempty(transport.waiters)
+        end
+        push!(server_conns, take!(accepted))
+        @test length(server_conns) == 3
+        _wait_task!(server_task)
+    finally
+        first_conn === nothing || HT._close_owned_conn!(transport, first_conn::HT.Conn)
+        fresh_conn === nothing || HT._close_owned_conn!(transport, fresh_conn::HT.Conn)
+        replacement_conn === nothing || HT._close_owned_conn!(transport, replacement_conn::HT.Conn)
+        for conn in server_conns
+            HTTP.@try_ignore NC.close(conn)
+        end
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
+@testset "HTTP client transport keeps a fresh idle conn while evicting an expired peer" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accepted = Channel{NC.Conn}(2)
+    server_task = Threads.@spawn begin
+        for _ in 1:2
+            put!(accepted, NC.accept(listener))
+        end
+        return nothing
+    end
+    transport = HT.Transport(
+        max_idle_per_host = 2,
+        max_idle_total = 2,
+        max_conns_per_host = 2,
+        idle_timeout_ns = 1,
+    )
+    plan = HT._proxy_plan(transport.proxy, false, address)
+    stale_conn = nothing
+    fresh_conn = nothing
+    acquired_conn = nothing
+    server_conns = NC.Conn[]
+    try
+        stale_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        push!(server_conns, take!(accepted))
+        fresh_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        push!(server_conns, take!(accepted))
+        _wait_task!(server_task)
+
+        HT._put_idle_conn!(transport, stale_conn::HT.Conn)
+        HT._put_idle_conn!(transport, fresh_conn::HT.Conn)
+        (stale_conn::HT.Conn).last_used_ns = 0
+        (fresh_conn::HT.Conn).last_used_ns = typemax(Int64)
+
+        acquired_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        @test acquired_conn === fresh_conn
+        @test HT._conn_closed(stale_conn::HT.Conn)
+        @test (@atomic transport.idle_total) == 0
+        @test lock(transport.lock) do
+            HT._conn_slots_locked(transport, plan.pool_key) == 1
+        end
+
+        HT._close_owned_conn!(transport, acquired_conn::HT.Conn)
+        acquired_conn = nothing
+        fresh_conn = nothing
+        @test lock(transport.lock) do
+            HT._conn_slots_locked(transport, plan.pool_key) == 0
+        end
+    finally
+        acquired_conn === nothing || HT._close_owned_conn!(transport, acquired_conn::HT.Conn)
+        fresh_conn === nothing || HT._close_owned_conn!(transport, fresh_conn::HT.Conn)
+        stale_conn === nothing || HT._close_owned_conn!(transport, stale_conn::HT.Conn)
+        close(transport)
+        for conn in server_conns
+            HTTP.@try_ignore NC.close(conn)
+        end
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
+@testset "HTTP client transport releases a slot after an earlier raw close" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accepted = Channel{NC.Conn}(1)
+    server_task = Threads.@spawn put!(accepted, NC.accept(listener))
+    transport = HT.Transport(max_idle_per_host = 1, max_idle_total = 1, max_conns_per_host = 1)
+    plan = HT._proxy_plan(transport.proxy, false, address)
+    conn = nothing
+    server_conn = nothing
+    try
+        conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        server_conn = take!(accepted)
+        _wait_task!(server_task)
+        @test HT._close_conn!(conn::HT.Conn)
+        HT._close_owned_conn!(transport, conn::HT.Conn)
+        conn = nothing
+        @test lock(transport.lock) do
+            HT._conn_slots_locked(transport, plan.pool_key) == 0
+        end
+    finally
+        conn === nothing || HT._close_owned_conn!(transport, conn::HT.Conn)
+        close(transport)
+        server_conn === nothing || HTTP.@try_ignore NC.close(server_conn::NC.Conn)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
+@testset "HTTP client transport retries stale PUT and DELETE requests" begin
+    for (method, payload) in (("PUT", "payload"), ("DELETE", ""))
+        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+        first_conn_closed = Channel{Nothing}(1)
+        seen = Tuple{String,String}[]
+        server_task = Threads.@spawn begin
+            conn1 = NC.accept(listener)
+            try
+                warmup = HT.read_request(HT._ConnReader(conn1))
+                push!(seen, (warmup.method, String(_read_all_transport_body_bytes(warmup.body))))
+                _write_response_to_conn!(conn1, warmup; body_text = "warmup")
+            finally
+                HTTP.@try_ignore NC.close(conn1)
+                put!(first_conn_closed, nothing)
+            end
+
+            conn2 = NC.accept(listener)
+            try
+                retried = HT.read_request(HT._ConnReader(conn2))
+                push!(seen, (retried.method, String(_read_all_transport_body_bytes(retried.body))))
+                _write_response_to_conn!(conn2, retried; body_text = "recovered", close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn2)
+            end
+            return nothing
+        end
+        transport = HT.Transport(max_idle_per_host = 1, max_idle_total = 1)
+        try
+            warmup = HT.Request("GET", "/warmup"; host = address, body = HT.EmptyBody(), content_length = 0)
+            warmup_response = HT.roundtrip!(transport, address, warmup)
+            @test String(_read_all_transport_body_bytes(warmup_response.body)) == "warmup"
+            take!(first_conn_closed)
+
+            body = isempty(payload) ? HT.EmptyBody() : HT.BytesBody(collect(codeunits(payload)))
+            request = HT.Request(method, "/retry"; host = address, body = body, content_length = ncodeunits(payload))
+            response = HT.roundtrip!(transport, address, request)
+            @test String(_read_all_transport_body_bytes(response.body)) == "recovered"
+            _wait_task!(server_task)
+            @test seen == [("GET", ""), (method, payload)]
+        finally
+            close(transport)
+            HTTP.@try_ignore NC.close(listener)
+            HTTP.@try_ignore wait(server_task)
+        end
+    end
+end
+
 end
 
 @testset "HTTP client transport treats not-pollable reused errors as retryable" begin
     @test HT._retryable_method("QUERY")
+    @test HT._retryable_request(HT.Request("PUT", "/"; body = HT.BytesBody(UInt8[0x78]), content_length = 1))
+    @test HT._retryable_request(HT.Request("DELETE", "/"; body = HT.EmptyBody(), content_length = 0))
     @test HT._retryable_reused_conn_error(Reseau.IOPoll.NotPollableError())
 end
 
@@ -1075,6 +1323,12 @@ end
     @test HT._retryable_reused_conn_error(
         Reseau.TLS.TLSError("read", Int32(0), "unexpected EOF", EOFError()),
     )
+    # Reproduce Reseau's private mid-record EOF sentinel. Production code must
+    # classify the public TLSError message instead of naming this private type.
+    unexpected_eof_cause = ErrorException("opaque TLS record EOF cause")
+    @test HT._retryable_reused_conn_error(
+        Reseau.TLS.TLSError("read", Int32(0), "unexpected EOF", unexpected_eof_cause),
+    )
     # Causeless TLS protocol failures and deadline expiries are not dead-conn
     # signatures.
     @test !HT._retryable_reused_conn_error(
@@ -1083,6 +1337,92 @@ end
     @test !HT._retryable_reused_conn_error(
         Reseau.TLS.TLSError("read", Int32(0), "i/o timeout", Reseau.IOPoll.DeadlineExceededError()),
     )
+end
+
+@testset "HTTP public client APIs wrap established TLS record truncation" begin
+    cert_file = joinpath(@__DIR__, "resources", "unittests.crt")
+    key_file = joinpath(@__DIR__, "resources", "unittests.key")
+    listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = cert_file,
+            key_file = key_file,
+        );
+        backlog = 8,
+    )
+    port = Int((TL.addr(listener)::NC.SocketAddrV4).port)
+    address = ND.join_host_port("localhost", port)
+    partial_record = UInt8[0x17, 0x03, 0x03, 0x00, 0x10, 0x00]
+    server_task = Threads.@spawn begin
+        for _ in 1:4
+            tls_conn = nothing
+            try
+                tls_conn = TL.accept(listener)
+                TL.handshake!(tls_conn::TL.Conn)
+                request = HT.read_request(HT._ConnReader(tls_conn::TL.Conn))
+                if startswith(request.target, "/body")
+                    write(tls_conn::TL.Conn, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n")
+                    flush(tls_conn::TL.Conn)
+                end
+                tcp = TL.net_conn(tls_conn::TL.Conn)::NC.Conn
+                _write_all_tcp!(tcp, partial_record)
+                HTTP.@try_ignore NC.close(tcp)
+            finally
+                tls_conn === nothing || HTTP.@try_ignore TL.close(tls_conn::TL.Conn)
+            end
+        end
+        return nothing
+    end
+    transport = HT.Transport(
+        tls_config = TL.Config(verify_peer = false, verify_hostname = false),
+        max_idle_per_host = 1,
+        max_idle_total = 1,
+    )
+    client = HT.Client(transport = transport, cookiejar = nothing, prefer_http2 = false)
+    try
+        for api in (:roundtrip, :open), phase in (:head, :body)
+            target = "/$(phase)-$(api)"
+            err = if api === :roundtrip
+                response = nothing
+                try
+                    request = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0)
+                    response = HT.roundtrip!(transport, address, request; secure = true, server_name = "localhost")
+                    phase === :body && HT.body_read!(response.body, Vector{UInt8}(undef, 5))
+                    nothing
+                catch caught
+                    caught
+                finally
+                    response === nothing || HTTP.@try_ignore HT.body_close!(response.body)
+                end
+            else
+                stream = HT.open(
+                    :GET,
+                    "https://$(address)$(target)";
+                    client = client,
+                    protocol = :h1,
+                    retry = false,
+                )
+                try
+                    HT.startread(stream)
+                    phase === :body && read(stream)
+                    nothing
+                catch caught
+                    caught
+                finally
+                    close(stream)
+                end
+            end
+            @test err isa HT.TLSTransportError
+            @test (err::HT.TLSTransportError).cause isa TL.TLSError
+        end
+        _wait_task!(server_task)
+    finally
+        close(client)
+        HTTP.@try_ignore TL.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
 end
 
 @testset "HTTP client transport survives a fully poisoned idle pool (#1353)" begin
@@ -1159,6 +1499,102 @@ end
         close(transport)
         HTTP.@try_ignore NC.close(listener)
     end
+end
+
+if _http_windows_ci()
+    @testset "HTTP client transport forces a fresh final retry during concurrent handoff" begin
+        @test_skip true
+    end
+else
+@testset "HTTP client transport forces a fresh final retry during concurrent handoff" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    first_request_read = Channel{Nothing}(1)
+    blocker_parked = Channel{Nothing}(1)
+    accept_count = Ref(0)
+    paths = String[]
+    server_task = Threads.@spawn begin
+        conn_a = NC.accept(listener)
+        accept_count[] += 1
+        conn_b = nothing
+        try
+            warmup = HT.read_request(HT._ConnReader(conn_a))
+            push!(paths, warmup.target)
+            _read_all_transport_body_bytes(warmup.body)
+            put!(first_request_read, nothing)
+
+            conn_b = NC.accept(listener)
+            accept_count[] += 1
+            blocker = HT.read_request(HT._ConnReader(conn_b::NC.Conn))
+            push!(paths, blocker.target)
+            _read_all_transport_body_bytes(blocker.body)
+
+            # Return A first so it becomes the victim's reused connection.
+            _write_response_to_conn!(conn_a, warmup; body_text = "warmup")
+            victim = HT.read_request(HT._ConnReader(conn_a))
+            push!(paths, victim.target)
+            _read_all_transport_body_bytes(victim.body)
+
+            # Return B while the victim is blocked on A. After B is parked,
+            # close both connections before allowing the victim to retry.
+            _write_response_to_conn!(conn_b::NC.Conn, blocker; body_text = "blocker")
+            take!(blocker_parked)
+            HTTP.@try_ignore NC.close(conn_b::NC.Conn)
+            conn_b = nothing
+            HTTP.@try_ignore NC.close(conn_a)
+
+            conn_c = NC.accept(listener)
+            accept_count[] += 1
+            try
+                recovered = HT.read_request(HT._ConnReader(conn_c))
+                push!(paths, recovered.target)
+                _read_all_transport_body_bytes(recovered.body)
+                _write_response_to_conn!(conn_c, recovered; body_text = "recovered", close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn_c)
+            end
+        finally
+            conn_b === nothing || HTTP.@try_ignore NC.close(conn_b::NC.Conn)
+            HTTP.@try_ignore NC.close(conn_a)
+        end
+        return nothing
+    end
+    transport = HT.Transport(
+        max_idle_per_host = 1,
+        max_idle_total = 2,
+        max_conns_per_host = 2,
+    )
+    blocker_task = nothing
+    try
+        warmup_task = errormonitor(Threads.@spawn begin
+            request = HT.Request("GET", "/warmup"; host = address, body = HT.EmptyBody(), content_length = 0)
+            response = HT.roundtrip!(transport, address, request)
+            return String(_read_all_transport_body_bytes(response.body))
+        end)
+        take!(first_request_read)
+        blocker_task = errormonitor(Threads.@spawn begin
+            request = HT.Request("GET", "/blocker"; host = address, body = HT.EmptyBody(), content_length = 0)
+            response = HT.roundtrip!(transport, address, request)
+            body = String(_read_all_transport_body_bytes(response.body))
+            put!(blocker_parked, nothing)
+            return body
+        end)
+        @test fetch(warmup_task) == "warmup"
+
+        victim = HT.Request("GET", "/victim"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.roundtrip!(transport, address, victim)
+        @test String(_read_all_transport_body_bytes(response.body)) == "recovered"
+        @test fetch(blocker_task::Task) == "blocker"
+        _wait_task!(server_task)
+        @test accept_count[] == 3
+        @test paths == ["/warmup", "/blocker", "/victim", "/victim"]
+    finally
+        isready(blocker_parked) || put!(blocker_parked, nothing)
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
 end
 
 @testset "close_idle_connections! clears the default and per-client pools" begin
