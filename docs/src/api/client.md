@@ -43,6 +43,7 @@ HTTP.isaborted
 HTTP.RequestEvent
 HTTP.ResponseHeadEvent
 HTTP.RetryEvent
+HTTP.RetrySkippedEvent
 HTTP.RedirectEvent
 HTTP.DoneEvent
 ```

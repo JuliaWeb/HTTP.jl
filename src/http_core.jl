@@ -119,9 +119,24 @@ DNSError(hostname::AbstractString, cause::Exception) = DNSError(String(hostname)
     TLSHandshakeError(cause)
 
 Raised when a TLS handshake fails (other than a handshake timeout, which
-surfaces as [`TimeoutError`](@ref) with `operation = "tls_handshake"`).
+surfaces as [`TimeoutError`](@ref) with `operation = "tls_handshake"`). TLS
+failures after connection setup surface as [`TLSTransportError`](@ref) instead.
 """
 struct TLSHandshakeError <: HTTPError
+    cause::Exception
+end
+
+"""
+    TLSTransportError(cause)
+
+Raised when TLS-level I/O fails on an established connection during a request
+— for example a connection reset or a truncated TLS stream while writing the
+request or reading the response. `cause` is the underlying
+`Reseau.TLS.TLSError`. TLS failures during connection setup surface as
+[`TLSHandshakeError`](@ref) (or [`TimeoutError`](@ref) for handshake timeouts)
+instead.
+"""
+struct TLSTransportError <: HTTPError
     cause::Exception
 end
 
@@ -186,6 +201,12 @@ end
 
 function Base.showerror(io::IO, err::TLSHandshakeError)
     print(io, "http tls handshake error: ")
+    showerror(io, err.cause)
+    return nothing
+end
+
+function Base.showerror(io::IO, err::TLSTransportError)
+    print(io, "http tls transport error: ")
     showerror(io, err.cause)
     return nothing
 end
@@ -277,7 +298,12 @@ end
 Wrap Reseau-internal transport errors that escape the client request path so
 callers see HTTP-typed exceptions only. Returns either a wrapped
 [`TimeoutError`](@ref), [`ConnectError`](@ref), [`DNSError`](@ref),
-[`TLSHandshakeError`](@ref), or `err` unchanged when no wrapping rule applies.
+[`TLSHandshakeError`](@ref), [`TLSTransportError`](@ref), or `err` unchanged
+when no wrapping rule applies.
+
+A bare `TLS.TLSError` reaching this boundary arose on an established
+connection (handshake failures are typed `TLSHandshakeError` at the dial
+sites), so it wraps as [`TLSTransportError`](@ref).
 """
 function _wrap_client_transport_error(err, operation::AbstractString="request", timeout_ns::Integer=Int64(0), elapsed_ns::Integer=Int64(0))
     if err isa TLS.TLSHandshakeTimeoutError
@@ -296,7 +322,7 @@ function _wrap_client_transport_error(err, operation::AbstractString="request", 
         return DNSError(err.name, err)
     end
     if err isa TLS.TLSError
-        return TLSHandshakeError(err)
+        return TLSTransportError(err)
     end
     return err
 end

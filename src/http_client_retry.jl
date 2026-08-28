@@ -64,6 +64,14 @@ function _retryable_request_error(err::Exception)::Bool
             current = (current::HostResolvers.OpError).err
             continue
         end
+        if current isa TLSHandshakeError
+            current = (current::TLSHandshakeError).cause
+            continue
+        end
+        if current isa TLSTransportError
+            current = (current::TLSTransportError).cause
+            continue
+        end
         if current isa TLS.TLSError
             cause = (current::TLS.TLSError).cause
             cause === nothing && return false
@@ -85,7 +93,9 @@ applies to request-path exceptions. Recoverable cases include connection resets
 and EOFs (`EOFError`, `IOPoll.NetClosingError`), socket errors (`SystemError`),
 malformed responses (`ParseError`), and dial/handshake timeouts
 (`HostResolvers.DialTimeoutError`, `TLS.TLSHandshakeTimeoutError`), including the
-underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions.
+underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions
+and of the public [`TLSHandshakeError`](@ref)/[`TLSTransportError`](@ref)
+wrappers.
 A request *deadline* being exceeded (`IOPoll.DeadlineExceededError`) is treated
 as non-recoverable, as is anything else.
 
@@ -183,6 +193,11 @@ function _sleep_retry_delay!(request::Request, delay_ns::Int64)::Bool
     return true
 end
 
+# Arm one retry attempt: reserve bucket capacity, sleep the backoff, and
+# consume one of the controller's remaining retries. Returns
+# `(armed, token, delay_ns, skip_reason)` where `skip_reason` is `nothing` when
+# the retry was armed, `:retry_bucket` when the bucket denied capacity, or
+# `:deadline` when the request deadline preempted the backoff.
 function _arm_request_retry!(
     controller::_RetryController,
     address::AbstractString,
@@ -198,18 +213,18 @@ function _arm_request_retry!(
             token = Base.acquire(bucket::RetryBucket, _retry_partition_for_address(address))
         catch err
             err isa RetryDeniedError || rethrow(err)
-            return false, nothing, delay_ns
+            return false, nothing, delay_ns, :retry_bucket
         end
     end
     ok = false
     try
-        _sleep_retry_delay!(request, delay_ns) || return false, nothing, delay_ns
+        _sleep_retry_delay!(request, delay_ns) || return false, nothing, delay_ns, :deadline
         ok = true
     finally
         ok || (bucket !== nothing && token !== nothing && release(bucket::RetryBucket, token, _retry_bucket_failure_cost(nothing)))
     end
     controller.remaining -= 1
-    return true, token, delay_ns
+    return true, token, delay_ns, nothing
 end
 
 function _retry_controller(

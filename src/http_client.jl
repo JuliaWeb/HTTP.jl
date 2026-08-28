@@ -145,6 +145,35 @@ struct RetryEvent <: ClientEvent
 end
 
 """
+    RetrySkippedEvent
+
+Trace event emitted when the retry policy wanted to retry an attempt but the
+retry was not armed, so the attempt's failure becomes the request's outcome.
+Without this event a denied retry is indistinguishable from a non-retryable
+failure.
+
+Fields:
+- `request`: request metadata for the attempt that will not be retried
+- `url`: absolute request URL for the attempt
+- `attempt`: current 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `reason`: `:retry_bucket` when the transport's [`RetryBucket`](@ref) denied
+  retry capacity; `:deadline` when the request deadline preempted the retry
+  backoff
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+"""
+struct RetrySkippedEvent <: ClientEvent
+    request::Request
+    url::String
+    attempt::Int
+    redirect_count::Int
+    reason::Symbol
+    response::Union{Nothing,Response}
+    err::Union{Nothing,Exception}
+end
+
+"""
     RedirectEvent
 
 Trace event emitted when a redirect response is accepted and a follow-up request
@@ -305,6 +334,18 @@ function (trace::_VerboseTrace)(event::RetryEvent)::Nothing
         "retry"
     end
     _verbose_line!(string("retry ", event.attempt, " -> ", event.next_attempt, " after ", detail, " (", event.delay_ns, " ns)"))
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::RetrySkippedEvent)::Nothing
+    detail = if event.err !== nothing
+        sprint(showerror, event.err::Exception)
+    elseif event.response !== nothing
+        string("status ", (event.response::Response).status)
+    else
+        "failure"
+    end
+    _verbose_line!(string("retry of attempt ", event.attempt, " skipped (", event.reason, ") after ", detail))
     return nothing
 end
 
@@ -904,7 +945,7 @@ function _do_incoming!(
                 retry_token = nothing
                 if retry_controller !== nothing
                     if _should_retry_request_attempt(retry_controller, retry_attempt, current_request, RequestRetryError(err::Exception), nothing)
-                        scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
+                        scheduled, next_token, delay_ns, skip_reason = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
                         if scheduled
                             _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, nothing, err::Exception))
                             get_request_context(current_request)[:retryattempt] = retry_attempt
@@ -912,6 +953,7 @@ function _do_incoming!(
                             retry_token = next_token
                             continue
                         end
+                        skip_reason === nothing || _emit_trace(trace, RetrySkippedEvent(current_request, request_url, retry_attempt, redirect_count, skip_reason::Symbol, nothing, err::Exception))
                     end
                 end
                 rethrow(err)
@@ -925,8 +967,15 @@ function _do_incoming!(
             _store_set_cookies!(cookiejar, cookies, current_secure, host, path, response.head.headers)
             status_response = _retry_policy_response(response, current_request)
             _emit_trace(trace, ResponseHeadEvent(status_response, request_url, retry_attempt, redirect_count))
-            if retry_controller !== nothing && retry_controller.bucket !== nothing && retry_token !== nothing
-                release(retry_controller.bucket::RetryBucket, retry_token::RetryToken, _retry_bucket_failure_cost(status_response.status))
+            if retry_controller !== nothing && retry_controller.bucket !== nothing
+                response_bucket = retry_controller.bucket::RetryBucket
+                if retry_token !== nothing
+                    release(response_bucket, retry_token::RetryToken, _retry_bucket_failure_cost(status_response.status))
+                elseif !_retryable_status(status_response.status)
+                    # A successful non-retried request slowly heals retry budget
+                    # consumed by an earlier failure burst (#1353).
+                    _retry_bucket_replenish!(response_bucket, _retry_partition_for_address(current_address))
+                end
             end
             retry_token = nothing
             if retry_controller !== nothing
@@ -939,7 +988,7 @@ function _do_incoming!(
                     rethrow()
                 end
                 if should_retry
-                    scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
+                    scheduled, next_token, delay_ns, skip_reason = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
                     if scheduled
                         _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
                         get_request_context(current_request)[:retryattempt] = retry_attempt
@@ -950,6 +999,7 @@ function _do_incoming!(
                         end
                         continue
                     end
+                    skip_reason === nothing || _emit_trace(trace, RetrySkippedEvent(current_request, request_url, retry_attempt, redirect_count, skip_reason::Symbol, status_response, nothing))
                 end
             end
             if !_is_redirect_status(response.head.status)

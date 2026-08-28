@@ -1216,7 +1216,14 @@ function _connect_h2_from_tcp!(
             cfg = _make_tls_config_for_h2(tls_config, address)
             tls_conn = TLS.client(tcp, cfg)
             connect_deadline_ns == 0 || TLS.set_deadline!(tls_conn, connect_deadline_ns)
-            TLS.handshake!(tls_conn)
+            try
+                TLS.handshake!(tls_conn)
+            catch err
+                # Type TLS failures at the site where the phase is known (see
+                # the matching wrap in the HTTP/1 transport's _new_conn_tls!).
+                err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+                rethrow()
+            end
             stream_reader = _ConnReader(tls_conn::TLS.Conn)
         else
             stream_reader = _ConnReader(tcp)

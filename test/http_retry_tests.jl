@@ -173,6 +173,63 @@ end
     Base.release(bucket, token1, 0)
 end
 
+@testset "HTTP retry bucket refunds retried attempts that reach a final response (#1353)" begin
+    # A retried attempt that reached a non-retryable response refunds its
+    # reservation in full; retryable responses keep the partial cost; `nothing`
+    # (the retry never launched) refunds in full.
+    @test HT._retry_bucket_failure_cost(nothing) == 0
+    @test HT._retry_bucket_failure_cost(200) == 0
+    @test HT._retry_bucket_failure_cost(404) == 0
+    @test HT._retry_bucket_failure_cost(501) == 0
+    for retryable_status in (408, 429, 500, 502, 503, 504)
+        @test HT._retry_bucket_failure_cost(retryable_status) == HT._RETRY_BUCKET_RETRYABLE_RESPONSE_COST
+        @test HT._retryable_status(retryable_status)
+    end
+
+    # Full refund on success: with capacity for exactly one reservation, a
+    # second acquire only succeeds because the first returned its cost.
+    bucket = HT.RetryBucket(capacity = 10)
+    token = Base.acquire(bucket, "svc.example")
+    Base.release(bucket, token, HT._retry_bucket_failure_cost(200))
+    token2 = Base.acquire(bucket, "svc.example")
+    Base.release(bucket, token2, 0)
+end
+
+@testset "HTTP retry bucket replenishes consumed capacity (#1353)" begin
+    bucket = HT.RetryBucket(capacity = 20)
+    @test (@atomic bucket.depleted) == 0
+
+    # Replenish before any capacity was ever spent is a lock-free no-op and
+    # creates no partitions.
+    HT._retry_bucket_replenish!(bucket, "svc.example")
+    @test isempty(bucket.partitions)
+
+    token = Base.acquire(bucket, "svc.example")
+    @test (@atomic bucket.depleted) == 1
+    Base.release(bucket, token, HT._RETRY_BUCKET_ACQUIRE_COST)
+    @test bucket.partitions["svc.example"].capacity == 10
+
+    for _ in 1:5
+        HT._retry_bucket_replenish!(bucket, "svc.example")
+    end
+    @test bucket.partitions["svc.example"].capacity == 15
+    @test (@atomic bucket.depleted) == 1
+
+    # Case-insensitive, and capped at full capacity.
+    for _ in 1:10
+        HT._retry_bucket_replenish!(bucket, "SVC.example")
+    end
+    @test bucket.partitions["svc.example"].capacity == 20
+    @test (@atomic bucket.depleted) == 0
+
+    # Untouched partitions are not affected by another partition's depletion.
+    other = Base.acquire(bucket, "other.example")
+    HT._retry_bucket_replenish!(bucket, "svc.example")
+    @test bucket.partitions["svc.example"].capacity == 20
+    Base.release(bucket, other, 0)
+    @test (@atomic bucket.depleted) == 0
+end
+
 @testset "HTTP transport owns an optional default retry bucket" begin
     default_transport = HT.Transport()
     @test default_transport.retry_bucket isa HT.RetryBucket
@@ -515,15 +572,70 @@ end
     request = HT.Request("GET", "/deadline"; host="example.com", context=HT.RequestContext(deadline_ns=1))
     response = HT.Response(503; headers=["Retry-After" => "60"])
 
-    armed, token, delay_ns = HT._arm_request_retry!(controller, "example.com:80", request, 1, response)
+    armed, token, delay_ns, skip_reason = HT._arm_request_retry!(controller, "example.com:80", request, 1, response)
     @test !armed
     @test token === nothing
     @test delay_ns == 60_000_000_000
+    @test skip_reason === :deadline
 
     # Full refund: with capacity 15 a second reservation (cost 10) only
     # succeeds if the abandoned one returned its 10.
     refunded = Base.acquire(bucket, only(keys(bucket.partitions)))
     Base.release(bucket, refunded, 0)
+end
+
+@testset "HTTP request retry that recovers refunds the retry bucket (#1353)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    seen = Tuple{String, String, String}[]
+    scenarios = [
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+        (status = 200, reason = "OK", body_text = "ok"),
+    ]
+    server_task = _serve_retry_sequence(listener, scenarios, seen)
+    try
+        bucket = HT.RetryBucket(capacity = 20, backoff_scale_factor_ms = 0, max_backoff_secs = 0)
+        response = HT.get("http://$(address)/refund"; retries = 2, retry_bucket = bucket, status_exception = false)
+        @test response.status == 200
+        _wait_task_retry!(server_task)
+        # The armed retry reserved 10 and recovered with a 200, so the
+        # reservation was refunded in full instead of consumed (#1353).
+        @test bucket.partitions["127.0.0.1"].capacity == 20
+        @test (@atomic bucket.depleted) == 0
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP request trace emits RetrySkippedEvent when the bucket denies (#1353)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    seen = Tuple{String, String, String}[]
+    scenarios = [
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+    ]
+    server_task = _serve_retry_sequence(listener, scenarios, seen)
+    events = Any[]
+    try
+        # Capacity for exactly one reservation: the first retry consumes 10 and
+        # releases 5 back after the retried attempt's 503, so arming the second
+        # retry (cost 10 > 5) is denied by the bucket.
+        bucket = HT.RetryBucket(capacity = 10, backoff_scale_factor_ms = 0, max_backoff_secs = 0)
+        response = HT.request(event -> push!(events, event), "GET", "http://$(address)/denied"; retries = 2, retry_bucket = bucket, status_exception = false)
+        @test response.status == 503
+        _wait_task_retry!(server_task)
+        skipped = [event for event in events if event isa HT.RetrySkippedEvent]
+        @test length(skipped) == 1
+        skip_event = skipped[1]::HT.RetrySkippedEvent
+        @test skip_event.reason === :retry_bucket
+        @test skip_event.attempt == 2
+        @test skip_event.err === nothing
+        @test (skip_event.response::HT.Response).status == 503
+        @test skip_event.redirect_count == 0
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
 end
 
 @testset "HTTP.open retries idempotent buffered requests" begin
@@ -604,6 +716,16 @@ end
     # accepts the RequestRetryError wrapper handed to retry_if, unwrapping it
     @test HT.isrecoverable(HT.RequestRetryError(EOFError()))
     @test !HT.isrecoverable(HT.RequestRetryError(ArgumentError("nope")))
+
+    # unwraps the public TLS wrappers (and TLSError causes inside them) so
+    # downstream retry loops can classify wrapped errors caught from
+    # HTTP.request (#1353)
+    reset_tls = Reseau.TLS.TLSError("read", Int32(0), "unexpected TLS failure", SystemError("read", 0))
+    @test HT.isrecoverable(reset_tls)
+    @test HT.isrecoverable(HT.TLSTransportError(reset_tls))
+    @test HT.isrecoverable(HT.TLSHandshakeError(reset_tls))
+    @test !HT.isrecoverable(HT.TLSTransportError(Reseau.TLS.TLSError("read", Int32(0), "bad record mac", nothing)))
+    @test !HT.isrecoverable(HT.TLSHandshakeError(ErrorException("cert rejected")))
 
     # matches the internal classifier the built-in policy uses
     for err in (EOFError(), HT.ParseError("x"), ArgumentError("y"), Reseau.IOPoll.DeadlineExceededError())

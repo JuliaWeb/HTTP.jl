@@ -1033,6 +1033,102 @@ end
     @test HT._retryable_reused_conn_error(Reseau.IOPoll.NotPollableError())
 end
 
+@testset "HTTP client transport classifies TLS-wrapped reused errors by cause (#1353)" begin
+    # A dead reused TLS connection surfaces reads/writes as TLSError wrapping
+    # the underlying transport failure (e.g. an RST as SystemError); classify
+    # by the cause so the reused-connection retry engages.
+    @test HT._retryable_reused_conn_error(
+        Reseau.TLS.TLSError("read", Int32(0), "unexpected TLS failure", SystemError("read", 0)),
+    )
+    @test HT._retryable_reused_conn_error(
+        Reseau.TLS.TLSError("read", Int32(0), "unexpected EOF", EOFError()),
+    )
+    # Causeless TLS protocol failures and deadline expiries are not dead-conn
+    # signatures.
+    @test !HT._retryable_reused_conn_error(
+        Reseau.TLS.TLSError("read", Int32(0), "bad record mac", nothing),
+    )
+    @test !HT._retryable_reused_conn_error(
+        Reseau.TLS.TLSError("read", Int32(0), "i/o timeout", Reseau.IOPoll.DeadlineExceededError()),
+    )
+end
+
+@testset "HTTP client transport survives a fully poisoned idle pool (#1353)" begin
+    # Pooled connections can die in correlated batches (dialed together, then
+    # discarded together by the peer while parked). The reused-connection retry
+    # must keep retrying while failures land on reused connections — through
+    # every dead pooled connection — until it reaches a fresh dial, instead of
+    # giving up after a single retry.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    accept_count = Ref(0)
+    paths = String[]
+    both_warmups_read = Channel{Nothing}(2)
+    warmup_conns_closed = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        # Hold both warmup responses until both requests have arrived so the
+        # client provably opens two separate connections.
+        conn1 = NC.accept(listener)
+        accept_count[] += 1
+        req1 = HT.read_request(HT._ConnReader(conn1))
+        push!(paths, req1.target)
+        put!(both_warmups_read, nothing)
+        conn2 = NC.accept(listener)
+        accept_count[] += 1
+        req2 = HT.read_request(HT._ConnReader(conn2))
+        push!(paths, req2.target)
+        put!(both_warmups_read, nothing)
+        # Keep-alive responses so the client parks both connections.
+        _write_response_to_conn!(conn1, req1; body_text = "warmup1")
+        _write_response_to_conn!(conn2, req2; body_text = "warmup2")
+        # Correlated death: discard both parked connections at once.
+        take!(warmup_conns_closed)
+        HTTP.@try_ignore NC.close(conn1)
+        HTTP.@try_ignore NC.close(conn2)
+        conn3 = NC.accept(listener)
+        accept_count[] += 1
+        try
+            req3 = HT.read_request(HT._ConnReader(conn3))
+            push!(paths, req3.target)
+            _write_response_to_conn!(conn3, req3; body_text = "recovered", close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn3)
+        end
+        return nothing
+    end)
+    transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
+    try
+        warmup1 = errormonitor(Threads.@spawn begin
+            req = HT.Request("GET", "/warmup1"; host = address, body = HT.EmptyBody(), content_length = 0)
+            res = HT.roundtrip!(transport, address, req)
+            String(_read_all_transport_body_bytes(res.body))
+        end)
+        warmup2 = errormonitor(Threads.@spawn begin
+            take!(both_warmups_read)  # conn1's request is in: this dials conn2
+            req = HT.Request("GET", "/warmup2"; host = address, body = HT.EmptyBody(), content_length = 0)
+            res = HT.roundtrip!(transport, address, req)
+            String(_read_all_transport_body_bytes(res.body))
+        end)
+        @test fetch(warmup1) == "warmup1"
+        @test fetch(warmup2) == "warmup2"
+        take!(both_warmups_read)
+        put!(warmup_conns_closed, nothing)
+        # Both parked connections are now dead; the FINs may take a moment to
+        # be delivered, but reads observe them either way once we try to reuse.
+        req = HT.Request("GET", "/poisoned"; host = address, body = HT.EmptyBody(), content_length = 0)
+        res = HT.roundtrip!(transport, address, req)
+        @test res.status == 200
+        @test String(_read_all_transport_body_bytes(res.body)) == "recovered"
+        _wait_task!(server_task)
+        @test accept_count[] == 3
+        @test paths == ["/warmup1", "/warmup2", "/poisoned"]
+    finally
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "close_idle_connections! clears the default and per-client pools" begin
     server = HTTP.serve!("127.0.0.1", 0) do req
         return HTTP.Response(200, "ok")

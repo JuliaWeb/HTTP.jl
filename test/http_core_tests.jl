@@ -306,6 +306,7 @@ end
     @test HT.ConnectError <: HT.HTTPError
     @test HT.DNSError <: HT.HTTPError
     @test HT.TLSHandshakeError <: HT.HTTPError
+    @test HT.TLSTransportError <: HT.HTTPError
     @test HT.AddressInUseError <: HT.HTTPError
 
     addr = "127.0.0.1:1"
@@ -314,12 +315,23 @@ end
     @test HT.ConnectError(addr, cause).cause === cause
     @test HT.DNSError("host.invalid", cause).hostname == "host.invalid"
     @test HT.TLSHandshakeError(cause).cause === cause
+    @test HT.TLSTransportError(cause).cause === cause
     @test HT.AddressInUseError(addr).address == addr
 
-    tls_error = Reseau.TLS.TLSError("handshake", Int32(-1), "boom", nothing)
+    # A bare TLSError at the boundary arose on an established connection
+    # (handshake failures are typed TLSHandshakeError at the dial sites), so
+    # it wraps as TLSTransportError, not TLSHandshakeError (#1353).
+    tls_error = Reseau.TLS.TLSError("read", Int32(-1), "boom", nothing)
     wrapped_tls_error = HT._wrap_client_transport_error(tls_error)
-    @test wrapped_tls_error isa HT.TLSHandshakeError
-    @test (wrapped_tls_error::HT.TLSHandshakeError).cause === tls_error
+    @test wrapped_tls_error isa HT.TLSTransportError
+    @test (wrapped_tls_error::HT.TLSTransportError).cause === tls_error
+    @test occursin("http tls transport error", sprint(showerror, wrapped_tls_error))
+    @test occursin("http tls handshake error", sprint(showerror, HT.TLSHandshakeError(tls_error)))
+
+    # An OpError-wrapped TLSError comes from the dial path and stays a
+    # handshake error.
+    op_error = Reseau.HostResolvers.OpError("dial", "tcp", nothing, nothing, tls_error)
+    @test HT._wrap_client_transport_error(op_error) isa HT.TLSHandshakeError
 
     bytes = UInt8[0x41]
     @test HT._response_body_arg(bytes) === bytes

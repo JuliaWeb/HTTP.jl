@@ -1021,8 +1021,13 @@ function _new_conn_tls!(
         connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
         TLS.handshake!(tls)
         return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
-    catch
+    catch err
         @try_ignore TCP.close(tcp)
+        # Type TLS failures at the site where the phase is known: a TLSError
+        # here arose during connection setup, so surface it as a handshake
+        # failure. TLS failures on established connections reach the public
+        # boundary as `TLSTransportError` instead.
+        err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
         rethrow()
     end
 end
@@ -1486,13 +1491,29 @@ end
 end
 
 @inline function _retryable_reused_conn_error(err)::Bool
-    err isa EOFError && return true
-    err isa SystemError && return true
-    err isa ParseError && return true
-    err isa IOPoll.NetClosingError && return true
-    err isa IOPoll.NotPollableError && return true
-    err isa IOPoll.DeadlineExceededError && return false
-    return false
+    # Iterative cause-unwrapping (not recursion) keeps this resolvable for
+    # trimmed static compilation.
+    current = err
+    while true
+        current isa EOFError && return true
+        current isa SystemError && return true
+        current isa ParseError && return true
+        current isa IOPoll.NetClosingError && return true
+        current isa IOPoll.NotPollableError && return true
+        current isa IOPoll.DeadlineExceededError && return false
+        if current isa TLS.TLSError
+            # A reused TLS connection whose peer vanished surfaces reads and
+            # writes as TLSError wrapping the underlying transport failure
+            # (e.g. an RST as `SystemError`). Classify by the cause so dead
+            # reused connections are retried here instead of consuming the
+            # caller's retry budget (#1353).
+            cause = (current::TLS.TLSError).cause
+            cause === nothing && return false
+            current = cause::Exception
+            continue
+        end
+        return false
+    end
 end
 
 @inline function _request_upload_abort_error(err)::Bool
@@ -1730,6 +1751,15 @@ Execute one HTTP/1 request/response exchange through `transport`.
 This is the low-level HTTP/1 path used by the higher-level client APIs. It
 returns an `_IncomingResponse` before the public `Response` conversion step.
 
+When a replayable idempotent request fails on a *reused* pooled connection with
+an error that marks the connection dead, the exchange is retried on another
+connection. Pooled connections can die in correlated batches (a peer or
+middlebox discarding every connection parked during the same idle window), so
+the retry repeats while failures keep landing on reused connections — up to
+`max_idle_per_host + 1` acquisitions, enough to burn through a fully poisoned
+pool and reach a fresh dial (#1353). A failure on a freshly dialed connection
+propagates.
+
 Throws parser, protocol, transport, TLS, and timeout exceptions depending on
 where the exchange fails.
 """
@@ -1741,9 +1771,12 @@ function _roundtrip_incoming!(
     server_name::Union{Nothing,AbstractString}=nothing,
     proxy_config::ProxyConfig=transport.proxy,
     attempt::Int=1,
+    retry_template::Union{Nothing,Request}=nothing,
 )
     request_deadline = _request_deadline_ns(request)
-    retry_template = attempt == 1 && _retryable_request(request) ? _copy_request(request) : nothing
+    if retry_template === nothing && attempt == 1 && _retryable_request(request)
+        retry_template = _copy_request(request)
+    end
     plan = _proxy_plan(proxy_config, secure, String(address))
     connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, request)
     connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, request)
@@ -1884,7 +1917,7 @@ function _roundtrip_incoming!(
     catch err
         _remove_cancel_callback!(request_ctx, cancel_cb)
         _close_owned_conn!(transport, conn)
-        if attempt == 1 && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
+        if attempt <= transport.max_idle_per_host && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
             return _roundtrip_incoming!(
                 transport,
                 address,
@@ -1893,6 +1926,7 @@ function _roundtrip_incoming!(
                 server_name,
                 proxy_config,
                 attempt + 1,
+                retry_template,
             )
         end
         rethrow(err)
