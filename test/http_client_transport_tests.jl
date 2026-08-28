@@ -1033,6 +1033,38 @@ end
     @test HT._retryable_reused_conn_error(Reseau.IOPoll.NotPollableError())
 end
 
+@testset "HTTP client transport types TLS dial failures as handshake errors (#1353)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            # Not a TLS server: answer the ClientHello with plaintext so the
+            # client's record parsing fails during the handshake.
+            _write_all_tcp!(conn, collect(codeunits("HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n")))
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    transport = HT.Transport(tls_config = Reseau.TLS.Config(verify_peer = false, verify_hostname = true))
+    try
+        req = HT.Request("GET", "/handshake"; host = address, body = HT.EmptyBody(), content_length = 0)
+        err = try
+            HT.roundtrip!(transport, address, req; secure = true, server_name = "localhost")
+            nothing
+        catch e
+            e
+        end
+        @test err isa HT.TLSHandshakeError
+        @test (err::HT.TLSHandshakeError).cause isa Reseau.TLS.TLSError
+        _wait_task!(server_task)
+    finally
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP client transport classifies TLS-wrapped reused errors by cause (#1353)" begin
     # A dead reused TLS connection surfaces reads/writes as TLSError wrapping
     # the underlying transport failure (e.g. an RST as SystemError); classify

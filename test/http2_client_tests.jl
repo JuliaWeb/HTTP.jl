@@ -113,6 +113,32 @@ function _read_all_h2_body(body::HT.AbstractBody)::Vector{UInt8}
     return out
 end
 
+@testset "HTTP/2 client types TLS dial failures as handshake errors (#1353)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            # Not a TLS server: answer the ClientHello with plaintext so the
+            # client's record parsing fails during the handshake.
+            _write_all_h2_tcp!(conn, collect(codeunits("HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n")))
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    err = try
+        HT.connect_h2!(address; secure = true, tls_config = TL.Config(verify_peer = false, verify_hostname = true))
+        nothing
+    catch e
+        e
+    end
+    @test err isa HT.TLSHandshakeError
+    @test (err::HT.TLSHandshakeError).cause isa TL.TLSError
+    _wait_task_h2!(server_task)
+    HTTP.@try_ignore NC.close(listener)
+end
+
 @testset "HTTP/2 client request header filtering and authority selection" begin
     headers = HT.Headers()
     HT.setheader(headers, "Connection", "close")

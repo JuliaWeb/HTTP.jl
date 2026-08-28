@@ -348,6 +348,19 @@ end
     end
 end
 
+@testset "HTTP verbose prints RetrySkippedEvent lines (#1353)" begin
+    trace = HT._VerboseTrace(1)
+    req = HT.Request("GET", "/skip"; host = "example.com")
+    output = _capture_stdout_client() do
+        trace(HT.RetrySkippedEvent(req, "http://example.com/skip", 2, 0, :retry_bucket, HT.Response(503), nothing))
+        trace(HT.RetrySkippedEvent(req, "http://example.com/skip", 1, 0, :deadline, nothing, EOFError()))
+        trace(HT.RetrySkippedEvent(req, "http://example.com/skip", 1, 0, :retry_bucket, nothing, nothing))
+    end
+    @test occursin("[http] retry of attempt 2 skipped (retry_bucket) after status 503", output)
+    @test occursin("[http] retry of attempt 1 skipped (deadline) after", output)
+    @test occursin("skipped (retry_bucket) after failure", output)
+end
+
 @testset "HTTP client redirect rewrites method" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

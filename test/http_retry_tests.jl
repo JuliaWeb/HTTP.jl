@@ -638,6 +638,46 @@ end
     end
 end
 
+@testset "HTTP request trace emits RetrySkippedEvent for request-path failures (#1353)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            # Read the request, then close without responding: the request
+            # fails with a retryable request-path error on a fresh connection.
+            _ = HT.read_request(HT._ConnReader(conn))
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    events = Any[]
+    bucket = HT.RetryBucket(capacity = 10, backoff_scale_factor_ms = 0, max_backoff_secs = 0)
+    drained = Base.acquire(bucket, "127.0.0.1")  # empty the partition up front
+    try
+        err = try
+            HT.request(event -> push!(events, event), "GET", "http://$(address)/skip"; retries = 2, retry_bucket = bucket)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Exception
+        @test HT.isrecoverable(err::Exception)
+        _wait_task_retry!(server_task)
+        skipped = [event for event in events if event isa HT.RetrySkippedEvent]
+        @test length(skipped) == 1
+        skip_event = skipped[1]::HT.RetrySkippedEvent
+        @test skip_event.reason === :retry_bucket
+        @test skip_event.attempt == 1
+        @test skip_event.response === nothing
+        @test skip_event.err isa Exception
+    finally
+        Base.release(bucket, drained, 0)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP.open retries idempotent buffered requests" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
