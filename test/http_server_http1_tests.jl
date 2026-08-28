@@ -902,6 +902,45 @@ end
     end
 end
 
+@testset "HTTP server stream handlers keep an explicit Content-Length for HEAD and 304" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            HT.setheader(stream, "Content-Length" => "12345")
+            if request.target == "/nocontent"
+                HT.setstatus(stream, 204)
+            elseif request.target == "/notmodified"
+                HT.setstatus(stream, 304)
+            else
+                HT.setstatus(stream, 200)
+            end
+            HT.startwrite(stream)
+            return nothing
+        end
+    address = HT.server_addr(server)
+    try
+        head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+        @test occursin("HTTP/1.1 200 OK", head_raw)
+        @test occursin("Content-Length: 12345\r\n", head_raw)
+        head_parts = split(head_raw, "\r\n\r\n"; limit = 2)
+        @test length(head_parts) == 2
+        @test head_parts[2] == ""
+
+        not_modified_raw = _raw_http_request(HT.port(server), "GET /notmodified HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+        @test occursin("HTTP/1.1 304 Not Modified", not_modified_raw)
+        @test occursin("Content-Length: 12345\r\n", not_modified_raw)
+        not_modified_parts = split(not_modified_raw, "\r\n\r\n"; limit = 2)
+        @test length(not_modified_parts) == 2
+        @test not_modified_parts[2] == ""
+
+        no_content_raw = _raw_http_request(HT.port(server), "GET /nocontent HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+        @test occursin("HTTP/1.1 204 No Content", no_content_raw)
+        @test !occursin("content-length", lowercase(no_content_raw))
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server timeout and handler error responses" begin
     timeout_server = HT.Server(
         address = "127.0.0.1:0",
@@ -1084,6 +1123,25 @@ end
             @test length(parts) == 2
             @test parts[2] == ""
         end
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP server ordinary handlers keep an explicit Content-Length for 304" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            return HT.Response(304; headers = ["Content-Length" => "12345"], request = request)
+        end
+    address = HT.server_addr(server)
+    try
+        raw = _raw_http_request(HT.port(server), "GET /notmodified HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+        @test occursin("HTTP/1.1 304 Not Modified", raw)
+        @test occursin("Content-Length: 12345\r\n", raw)
+        @test !occursin("transfer-encoding", lowercase(raw))
+        parts = split(raw, "\r\n\r\n"; limit = 2)
+        @test length(parts) == 2
+        @test parts[2] == ""
     finally
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))

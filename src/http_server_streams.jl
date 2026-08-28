@@ -66,7 +66,9 @@ function _write_server_stream_head!(stream::Stream)::Nothing
     stream.write_mode = mode
     if _server_stream_live_h2(stream)
         if mode == _ServerStreamWriteMode.NONE
-            removeheader(headers, "Content-Length")
+            # Only the body is suppressed: HEAD and 304 responses keep an
+            # explicitly provided Content-Length describing the representation.
+            _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
         elseif response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
         end
@@ -92,7 +94,9 @@ function _write_server_stream_head!(stream::Stream)::Nothing
         return nothing
     end
     if mode == _ServerStreamWriteMode.NONE
-        removeheader(headers, "Content-Length")
+        # Only the body is suppressed: HEAD and 304 responses keep an
+        # explicitly provided Content-Length describing the representation.
+        _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
     elseif mode == _ServerStreamWriteMode.FIXED
         if response.content_length >= 0
