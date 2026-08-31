@@ -48,8 +48,11 @@ using HTTP
         @test true   # `public` unsupported before 1.11; nothing to assert
     end
 
-    # Internals must stay private regardless of Julia version.
-    @test !Base.ispublic(HTTP, :_retryable_request_error)
-    @test !Base.ispublic(HTTP, :_normalize_local_addr)
-    @test !Base.ispublic(HTTP.WebSockets, :_ws_mask_into!)
+    if isdefined(Base, :ispublic)
+        @test !Base.ispublic(HTTP, :_retryable_request_error)
+        @test !Base.ispublic(HTTP, :_normalize_local_addr)
+        @test !Base.ispublic(HTTP.WebSockets, :_ws_mask_into!)
+    else
+        @test true
+    end
 end
