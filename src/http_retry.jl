@@ -130,15 +130,17 @@ function RetryBucket(
     )
 end
 
-# Preserve the six-field constructor exposed in HTTP 2.6.6 while replacing its
-# GC-managed atomic snapshot with a pointer-free count.
+# Preserve the six-field constructor exposed in HTTP 2.6.6. The set argument
+# is accepted only for compatibility; the pointer-free depleted-partition
+# count is derived from `partitions` so the count invariant holds even when
+# the caller's set disagrees with the partition states.
 function RetryBucket(
     backoff_scale_factor_ms::Int,
     max_backoff_secs::Int,
     capacity::Int,
     partitions::Dict{String,_RetryPartition},
     lock::ReentrantLock,
-    depleted_partitions::Set{String},
+    ::Set{String},
 )
     return RetryBucket(
         backoff_scale_factor_ms,
@@ -146,7 +148,6 @@ function RetryBucket(
         capacity,
         partitions,
         lock,
-        length(depleted_partitions),
     )
 end
 

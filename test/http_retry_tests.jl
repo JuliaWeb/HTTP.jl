@@ -121,6 +121,11 @@ end
     six_field = HT.RetryBucket(25, 20, 10, partitions, ReentrantLock(), Set(["depleted.example"]))
     @test (@atomic :acquire six_field.depleted_partitions) == 1
 
+    # The six-field constructor derives the count from the partition states;
+    # a stale legacy set must not break the count invariant.
+    stale_set = HT.RetryBucket(25, 20, 10, partitions, ReentrantLock(), Set{String}())
+    @test (@atomic :acquire stale_set.depleted_partitions) == 1
+
     converted = HT.RetryBucket(Int32(25), Int16(20), Int8(10), copy(partitions), ReentrantLock())
     @test converted.backoff_scale_factor_ms === 25
     @test converted.max_backoff_secs === 20
