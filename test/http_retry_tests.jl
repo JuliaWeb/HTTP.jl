@@ -116,7 +116,15 @@ end
     partitions = Dict{String,HT._RetryPartition}("depleted.example" => HT._RetryPartition(5))
     positional = HT.RetryBucket(25, 20, 10, partitions, ReentrantLock())
     @test positional.partitions === partitions
-    @test (@atomic :acquire positional.depleted_partitions) == Set(["depleted.example"])
+    @test (@atomic :acquire positional.depleted_partitions) == 1
+
+    six_field = HT.RetryBucket(25, 20, 10, partitions, ReentrantLock(), Set(["depleted.example"]))
+    @test (@atomic :acquire six_field.depleted_partitions) == 1
+
+    # The six-field constructor derives the count from the partition states;
+    # a stale legacy set must not break the count invariant.
+    stale_set = HT.RetryBucket(25, 20, 10, partitions, ReentrantLock(), Set{String}())
+    @test (@atomic :acquire stale_set.depleted_partitions) == 1
 
     converted = HT.RetryBucket(Int32(25), Int16(20), Int8(10), copy(partitions), ReentrantLock())
     @test converted.backoff_scale_factor_ms === 25
@@ -210,7 +218,7 @@ end
 
 @testset "HTTP retry bucket replenishes consumed capacity (#1353)" begin
     bucket = HT.RetryBucket(capacity = 20)
-    @test isempty(@atomic :acquire bucket.depleted_partitions)
+    @test (@atomic :acquire bucket.depleted_partitions) == 0
 
     # Replenish before any capacity was ever spent is a lock-free no-op and
     # creates no partitions.
@@ -218,7 +226,7 @@ end
     @test isempty(bucket.partitions)
 
     token = Base.acquire(bucket, "svc.example")
-    @test (@atomic :acquire bucket.depleted_partitions) == Set(["svc.example"])
+    @test (@atomic :acquire bucket.depleted_partitions) == 1
     Base.release(bucket, token, HT._RETRY_BUCKET_ACQUIRE_COST)
     @test bucket.partitions["svc.example"].capacity == 10
 
@@ -226,22 +234,48 @@ end
         HT._retry_bucket_replenish!(bucket, "svc.example")
     end
     @test bucket.partitions["svc.example"].capacity == 15
-    @test (@atomic :acquire bucket.depleted_partitions) == Set(["svc.example"])
+    @test (@atomic :acquire bucket.depleted_partitions) == 1
 
     # Case-insensitive, and capped at full capacity.
     for _ in 1:10
         HT._retry_bucket_replenish!(bucket, "SVC.example")
     end
     @test bucket.partitions["svc.example"].capacity == 20
-    @test isempty(@atomic :acquire bucket.depleted_partitions)
+    @test (@atomic :acquire bucket.depleted_partitions) == 0
 
     # Untouched partitions are not affected by another partition's depletion.
     other = Base.acquire(bucket, "other.example")
     HT._retry_bucket_replenish!(bucket, "svc.example")
     @test bucket.partitions["svc.example"].capacity == 20
-    @test (@atomic :acquire bucket.depleted_partitions) == Set(["other.example"])
+    @test (@atomic :acquire bucket.depleted_partitions) == 1
     Base.release(bucket, other, 0)
-    @test isempty(@atomic :acquire bucket.depleted_partitions)
+    @test (@atomic :acquire bucket.depleted_partitions) == 0
+end
+
+@testset "HTTP retry bucket uses a pointer-free concurrent fast path (#1355)" begin
+    bucket = HT.RetryBucket(capacity = 20)
+    @test isbitstype(fieldtype(HT.RetryBucket, :depleted_partitions))
+    workers = max(4, 2 * Threads.nthreads())
+    @sync begin
+        for worker in 1:workers
+            Threads.@spawn begin
+                key = "svc-$worker.example"
+                for _ in 1:2_000
+                    token = Base.acquire(bucket, key)
+                    Base.release(bucket, token, HT._RETRY_BUCKET_ACQUIRE_COST)
+                    for _ in 1:HT._RETRY_BUCKET_ACQUIRE_COST
+                        HT._retry_bucket_replenish!(bucket, key)
+                    end
+                end
+            end
+        end
+        Threads.@spawn for _ in 1:100
+            GC.gc(false)
+            yield()
+        end
+    end
+    @test all(state.capacity == bucket.capacity for state in values(bucket.partitions))
+    @test (@atomic :acquire bucket.depleted_partitions) == 0
 end
 
 @testset "HTTP retry bucket heals only after successful responses" begin
@@ -734,7 +768,7 @@ end
             end
             @test err === trace_err
             @test bucket.partitions["127.0.0.1"].capacity == 10
-            @test isempty(@atomic :acquire bucket.depleted_partitions)
+            @test (@atomic :acquire bucket.depleted_partitions) == 0
             @test lock(transport.lock) do
                 isempty(transport.conns_per_host)
             end
@@ -779,7 +813,7 @@ end
         end
         @test err === policy_err
         @test bucket.partitions["127.0.0.1"].capacity == 10
-        @test isempty(@atomic :acquire bucket.depleted_partitions)
+        @test (@atomic :acquire bucket.depleted_partitions) == 0
         @test lock(transport.lock) do
             isempty(transport.conns_per_host)
         end
@@ -925,7 +959,7 @@ end
         # The armed retry reserved 10 and recovered with a 200, so the
         # reservation was refunded in full instead of consumed (#1353).
         @test bucket.partitions["127.0.0.1"].capacity == 20
-        @test isempty(@atomic :acquire bucket.depleted_partitions)
+        @test (@atomic :acquire bucket.depleted_partitions) == 0
     finally
         HTTP.@try_ignore NC.close(listener)
     end
