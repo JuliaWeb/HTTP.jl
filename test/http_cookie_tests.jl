@@ -154,6 +154,33 @@ end
     @test !("expired" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/docs/page")])
 end
 
+@testset "HTTP cookie Max-Age=0 expires the cookie" begin
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "https", "example.com", "/", _set_cookie_headers("sid=abc; Path=/"))
+    @test [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")] == ["sid"]
+    HT.setcookies!(jar, "https", "example.com", "/", _set_cookie_headers("sid=; Path=/; Max-Age=0"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+
+    maxage(value) = HT.cookies(HT.Response(200; headers = _set_cookie_headers("k=v; Max-Age=$value")))[1].maxage
+    # RFC 6265 5.2.2: any delta-seconds <= 0 expires the cookie immediately.
+    @test maxage("0") == -1
+    @test maxage("-0") == -1
+    @test maxage("-30") == -1
+    # A leading zero on a non-zero value is still rejected, an unparseable or
+    # missing value still leaves the attribute unset, and a positive
+    # delta-seconds is unchanged.
+    @test maxage("01") == 0
+    @test maxage("xyz") == 0
+    @test maxage("") == 0
+    @test maxage("60") == 60
+
+    # stringify serializes a deletion as "Max-Age=0", so the parser has to read
+    # that form back as a deletion.
+    deletion = HT.stringify(HT.Cookie("sid", ""; maxage = -1, path = "/"), false)
+    @test occursin("; Max-Age=0", deletion)
+    @test HT.cookies(HT.Response(200; headers = _set_cookie_headers(deletion)))[1].maxage == -1
+end
+
 @testset "HTTP CookieJar restores from saved entries (#931)" begin
     # "save": populate a jar, then keep its entries storage
     jar = HT.CookieJar()
