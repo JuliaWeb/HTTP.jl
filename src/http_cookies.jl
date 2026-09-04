@@ -343,13 +343,15 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
             elseif lowerattr == "domain"
                 c.domain = val
             elseif lowerattr == "max-age"
-                try
-                    secs = parse(Int, val)
-                    val[1] == '0' && continue
-                    c.maxage = max(secs, -1)
-                catch
-                    continue
-                end
+                secs = tryparse(Int, val)
+                # A leading zero is only rejected on a non-zero value: "0" is a
+                # meaningful delta-seconds, and rejecting it would drop the
+                # attribute entirely.
+                (secs === nothing || (secs != 0 && val[1] == '0')) && continue
+                # RFC 6265 5.2.2: delta-seconds <= 0 expires the cookie
+                # immediately. `maxage < 0` is this Cookie's sentinel for that
+                # and is what `stringify` re-serializes as "Max-Age=0".
+                c.maxage = secs <= 0 ? -1 : secs
             elseif lowerattr == "expires"
                 c.rawexpires = val
                 parsed = _parse_http_gmt_datetime(val)
