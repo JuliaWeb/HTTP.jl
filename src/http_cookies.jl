@@ -343,6 +343,10 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
             elseif lowerattr == "domain"
                 c.domain = val
             elseif lowerattr == "max-age"
+                # RFC 6265 5.2.2 permits only decimal digits and an optional
+                # leading minus, unlike Julia's integer parser.
+                digits = startswith(val, "-") ? SubString(val, 2) : val
+                (isempty(digits) || !all(c -> '0' <= c <= '9', digits)) && continue
                 secs = tryparse(Int, val)
                 # A leading zero is only rejected on a non-zero value: "0" is a
                 # meaningful delta-seconds, and rejecting it would drop the

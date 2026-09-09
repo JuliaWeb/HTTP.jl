@@ -166,6 +166,8 @@ end
     @test maxage("0") == -1
     @test maxage("-0") == -1
     @test maxage("-30") == -1
+    @test maxage("00") == -1
+    @test maxage("-00") == -1
     # A leading zero on a non-zero value is still rejected, an unparseable or
     # missing value still leaves the attribute unset, and a positive
     # delta-seconds is unchanged.
@@ -173,6 +175,15 @@ end
     @test maxage("xyz") == 0
     @test maxage("") == 0
     @test maxage("60") == 60
+
+    # Invalid integer syntax must not turn a cookie update into a deletion.
+    for value in ("0x0", "0o0", "0b0", "+0", "-0x0", "-0o0", "-0b0", "+60", "-", "0_0", "0.0")
+        @test maxage(value) == 0
+        jar = HT.CookieJar()
+        HT.setcookies!(jar, "https", "example.com", "/", _set_cookie_headers("sid=old; Path=/"))
+        HT.setcookies!(jar, "https", "example.com", "/", _set_cookie_headers("sid=new; Path=/; Max-Age=$value"))
+        @test [(c.name, c.value) for c in HT.getcookies!(jar, "https", "example.com", "/")] == [("sid", "new")]
+    end
 
     # stringify serializes a deletion as "Max-Age=0", so the parser has to read
     # that form back as a deletion.
