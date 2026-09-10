@@ -514,3 +514,28 @@ end
     @test !endswith(empty_response_plain, "\r\n")
     @test !endswith(empty_response_plain, "\n")
 end
+
+@testset "Mutating-name header aliases (#1277)" begin
+    @test HT.setheader! === HT.setheader
+    @test HT.appendheader! === HT.appendheader
+    @test HT.removeheader! === HT.removeheader
+    headers = HT.Headers()
+    @test HT.setheader!(headers, "X-Test" => "1") === headers
+    @test HT.appendheader!(headers, "X-Test", "2") === headers
+    @test HT.headers(headers, "X-Test") == ["1,2"]
+    @test HT.setheader!(headers, "X-Other", "a") === headers
+    @test HT.removeheader!(headers, "x-test") === headers
+    @test !HT.hasheader(headers, "X-Test")
+    @test HT.header(headers, "X-Other") == "a"
+    request = HT.Request("GET", "/"; host = "example.test", body = HT.EmptyBody(), content_length = 0)
+    @test HT.setheader!(request, "X-Req" => "1") === request
+    @test HT.appendheader!(request, "X-Req", "2") === request
+    @test HT.header(request, "X-Req") == "1,2"
+    @test HT.removeheader!(request, "X-Req") === request
+    @test !HT.hasheader(request.headers, "X-Req")
+    if isdefined(Base, :ispublic)
+        @test Base.ispublic(HTTP, :setheader!)
+        @test Base.ispublic(HTTP, :appendheader!)
+        @test Base.ispublic(HTTP, :removeheader!)
+    end
+end

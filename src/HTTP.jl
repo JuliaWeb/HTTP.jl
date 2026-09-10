@@ -80,14 +80,14 @@ include("http_websockets.jl")
         :RequestEvent, :RequestRetryError, :Response, :ResponseHeadEvent, :RetryBucket,
         :RetryEvent, :RetrySkippedEvent, :SSEEvent, :SSEStream, :Server, :StatusError, :Stream,
         :TLSHandshakeError, :TLSTransportError,
-        :TimeoutError, :TooManyRedirectsError, :Transport, :addtrailer, :appendheader,
+        :TimeoutError, :TooManyRedirectsError, :Transport, :addtrailer, :appendheader, :appendheader!,
         :body_close!, :body_closed, :body_read!, :cancel!, :canceled, :canonical_header_key,
         :close_idle_connections!, :defaultheader!, :delete, :do!, :expired, :fileserver,
         :forceclose, :get, :get!, :get_request_context, :hasheader, :head, :header,
         :headercontains, :headers, :idle_connection_count, :isaborted, :isrecoverable,
         :listen, :listen!, :mkheaders, :nobody, :open, :options, :patch, :peeraddr, :port, :post,
-        :put, :query, :read_request, :removeheader, :request, :retry_attempts, :roundtrip!,
-        :serve, :serve!, :servecontent, :servefile, :set_deadline!, :setheader, :setstatus,
+        :put, :query, :read_request, :removeheader, :removeheader!, :request, :retry_attempts, :roundtrip!,
+        :serve, :serve!, :servecontent, :servefile, :set_deadline!, :setheader, :setheader!, :setstatus,
         :sse_stream, :startwrite, :streamhandler, :trailers, :write_request!, :write_response!,
     ))
 end
