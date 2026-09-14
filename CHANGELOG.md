@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
   Each pair is the same function (extending one name extends the other), the
   historical names are not deprecated, and all six are `public`. ([#1277])
+- Added `max_line_bytes` and `max_header_bytes` keywords to `Transport` so the
+  HTTP/1 client's per-line and header-block limits can be tuned per transport
+  (`HTTP.Transport(max_line_bytes = 128 * 1024)`). Both must be positive and
+  `max_line_bytes` may not exceed `max_header_bytes`. ([#1362])
+
+### Changed
+- Raised the default HTTP/1 per-line limit (request/status lines and single
+  header lines) from 8 KiB to 64 KiB, matching Python's `http.client`. Real
+  origins send single header lines longer than 8 KiB — a 9,695-byte
+  `Content-Security-Policy` was reported — and HTTP.jl failed such responses
+  with `ProtocolError: HTTP/1 line exceeds configured max_line_bytes` while
+  curl and Python accepted them. The 1 MiB header-block limit is unchanged and
+  still bounds memory; the server-side request parser shares the new per-line
+  default. ([#1362])
 
 ### Fixed
 - Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
@@ -879,3 +893,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
+[#1362]: https://github.com/JuliaWeb/HTTP.jl/issues/1362

@@ -216,6 +216,17 @@ A server that advertises its own idle window on a response
 reuse to the advertised time less a one-second safety margin; the tighter of
 the two limits applies. A hint that leaves no headroom (`timeout=1` or less)
 makes the connection non-reusable.
+
+`max_line_bytes` (default 64 KiB) bounds one HTTP/1 response status line or
+header line, counted with its CRLF terminator; `max_header_bytes` (default
+1 MiB) bounds a response's whole header block (and any chunked trailers). A
+longer line fails the request with `ProtocolError("HTTP/1 line exceeds
+configured max_line_bytes")` and a larger header block with
+`ProtocolError("HTTP/1 headers exceed configured max_header_bytes")`. Both
+must be positive, and `max_line_bytes` may not exceed `max_header_bytes`; when
+only `max_header_bytes` is given and it is below 64 KiB, `max_line_bytes`
+defaults to it. Raise `max_line_bytes` for origins that send very long header
+lines (large `Content-Security-Policy` values are a common case).
 """
 mutable struct Transport
     host_resolver::_TransportHostResolver
@@ -226,6 +237,8 @@ mutable struct Transport
     max_idle_total::Int
     max_conns_per_host::Int
     idle_timeout_ns::Int64
+    max_line_bytes::Int
+    max_header_bytes::Int
     lock::ReentrantLock
     waiter_condition::Threads.Condition
     idle::Dict{String,Vector{Conn}}
@@ -284,12 +297,19 @@ function Transport(;
     max_idle_total::Integer=64,
     max_conns_per_host::Integer=0,
     idle_timeout_ns::Integer=Int64(90_000_000_000),
+    max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
+    max_line_bytes::Integer=min(_HTTP1_DEFAULT_MAX_LINE_BYTES, max_header_bytes),
     local_addr=nothing,
 )
     max_idle_per_host > 0 || throw(ArgumentError("max_idle_per_host must be > 0"))
     max_idle_total > 0 || throw(ArgumentError("max_idle_total must be > 0"))
     max_conns_per_host >= 0 || throw(ArgumentError("max_conns_per_host must be >= 0"))
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
+    max_header_bytes > 0 || throw(ArgumentError("max_header_bytes must be > 0"))
+    max_line_bytes > 0 || throw(ArgumentError("max_line_bytes must be > 0"))
+    # A line can never be accepted past the header-block limit, so a larger
+    # per-line limit would only be dead configuration; reject it up front.
+    max_line_bytes <= max_header_bytes || throw(ArgumentError("max_line_bytes ($(Int(max_line_bytes))) must be <= max_header_bytes ($(Int(max_header_bytes)))"))
     host_resolver = HostResolvers.HostResolver(local_addr=_normalize_local_addr(local_addr))
     lock = ReentrantLock()
     return Transport(
@@ -301,6 +321,8 @@ function Transport(;
         Int(max_idle_total),
         Int(max_conns_per_host),
         Int64(idle_timeout_ns),
+        Int(max_line_bytes),
+        Int(max_header_bytes),
         lock,
         Threads.Condition(lock),
         Dict{String,Vector{Conn}}(),
@@ -1777,8 +1799,8 @@ function _read_transport_incoming_response(
     transport::Transport,
     conn::Conn,
     request::Request,
-    max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES,
-    max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
+    max_line_bytes::Integer,
+    max_header_bytes::Integer,
 )
     line = _readline_crlf(reader, max_line_bytes)
     proto_major, proto_minor, status, reason = _parse_status_line(line)
@@ -1983,7 +2005,7 @@ function _roundtrip_incoming!(
             end
             reader = conn.reader
             _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(attempt_request))
-            raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request)
+            raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request, transport.max_line_bytes, transport.max_header_bytes)
             # HTTP/1 informational responses are consumed internally so callers
             # observe the final non-1xx response.
             while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
@@ -1993,7 +2015,7 @@ function _roundtrip_incoming!(
                 @try_ignore begin
                     body_close!(raw_response.rawbody)
                 end
-                raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request)
+                raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request, transport.max_line_bytes, transport.max_header_bytes)
             end
             _set_conn_read_deadline!(conn, request_deadline)
             early_final = false
