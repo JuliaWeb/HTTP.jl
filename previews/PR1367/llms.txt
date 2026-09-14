@@ -1,0 +1,28 @@
+# HTTP.jl
+
+> HTTP client and server library for Julia: HTTP/1.1 and HTTP/2 requests and servers, streaming request and response bodies, cookies, forms, proxies, retries, timeouts, WebSockets, and server-sent events, built on Reseau's transport, resolver, and TLS stack.
+
+This index covers HTTP.jl v2.6.7. The documentation site is https://juliaweb.github.io/HTTP.jl/stable/ and the source code is at https://github.com/JuliaWeb/HTTP.jl. The guide pages explain how the pieces fit together; the API reference pages hold the docstrings.
+
+## Docs
+
+- [HTTP.jl](https://juliaweb.github.io/HTTP.jl/stable/): package overview, quick start, and the documentation map.
+
+## Guides
+
+- [Client Guide](https://juliaweb.github.io/HTTP.jl/stable/guides/client/): request construction, verb helpers, streaming with `HTTP.open`, reusable `HTTP.Client` bundles, request bodies, timeouts, retries, proxies, cookies, and HTTP/2 on the client side.
+- [Server Guide](https://juliaweb.github.io/HTTP.jl/stable/guides/server/): request handlers, stream handlers, server lifecycle, the interactive thread pool, routing and middleware, static files, and server-sent events.
+- [Protocols Guide](https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/): WebSocket client and server usage and where HTTP/2 fits into the normal client/server APIs.
+- [Migration From HTTP.jl 1.x](https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/): what changed from HTTP.jl 1.x to 2.0 and how to update client, server, header, body, WebSocket, SSE, and streaming code.
+
+## API Reference
+
+- [API Reference](https://juliaweb.github.io/HTTP.jl/stable/api/reference/): the top-level `HTTP` module docstring and the map of the API reference pages.
+- [Core API](https://juliaweb.github.io/HTTP.jl/stable/api/core/): docstrings for `Request`, `Response`, `Headers`, `RequestContext`, error types, header helpers, body types, cookies, forms, multipart parsing, proxy configuration, and `HTTP2Settings`.
+- [Client API](https://juliaweb.github.io/HTTP.jl/stable/api/client/): docstrings for `Client`, `Transport`, `RetryBucket`, `request` and the verb helpers, `open`, connection reuse helpers, and the request trace events.
+- [Server API](https://juliaweb.github.io/HTTP.jl/stable/api/server/): docstrings for `Server`, `Stream`, `listen!`/`serve!`, static file serving, `HTTP.Handlers` routing and middleware, and server-sent events.
+- [WebSockets API](https://juliaweb.github.io/HTTP.jl/stable/api/websockets/): docstrings for the `HTTP.WebSockets` client and server types, `open`/`send`/`receive`, and the WebSocket server lifecycle.
+
+## Optional
+
+- [llms-full.txt](https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt): the complete documentation (every page above, with all docstrings expanded) as a single markdown file.
