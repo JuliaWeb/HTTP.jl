@@ -494,8 +494,9 @@ function (middleware::_LoggingMiddleware)(stream::Stream)
         middleware.handler(stream)
     catch err
         # A head that already reached the wire keeps its status; otherwise the
-        # server answers with the error status.
-        status = (@atomic :acquire stream.response_started) ? _access_stream_status(stream) : _access_error_status(err)
+        # server answers with the error status (`response_started` alone is not
+        # enough: a fixed-length h1 head is deferred until `closewrite`).
+        status = (@atomic :acquire stream.head_committed) ? _access_stream_status(stream) : _access_error_status(err)
         _log_access(
             middleware, Logging.Error, request.method, request.target, status, stream.written_bytes, start_ns,
             (; peer=peer, exception=(err, catch_backtrace())),

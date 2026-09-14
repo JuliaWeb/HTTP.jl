@@ -253,6 +253,31 @@ end
     @test_throws HT.ParseError rejecting(HT.Request("GET", "/bad"))
     @test only(logger.logs).kwargs[:status] == 400
     @test only(logger.logs).kwargs[:exception][1] isa HT.ParseError
+
+    # A thrown non-Exception value is logged as a 500 and rethrown.
+    logger = Test.TestLogger()
+    odd = HT.Handlers.logging_middleware(_ -> throw("not an exception"); logger = logger)
+    thrown = try
+        odd(HT.Request("GET", "/odd"))
+        nothing
+    catch err
+        err
+    end
+    @test thrown == "not an exception"
+    @test only(logger.logs).level == Logging.Error
+    @test only(logger.logs).kwargs[:status] == 500
+    @test only(logger.logs).kwargs[:exception][1] == "not an exception"
+
+    # The server answers 500 when a handler returns something other than a
+    # Response; the record says so and the value is passed through.
+    logger = Test.TestLogger()
+    wrong = HT.Handlers.logging_middleware(_ -> "not a response"; logger = logger)
+    @test wrong(HT.Request("GET", "/wrong")) == "not a response"
+    record = only(logger.logs)
+    @test record.level == Logging.Info
+    @test startswith(record.message, "GET /wrong 500 ")
+    @test record.kwargs[:status] == 500
+    @test record.kwargs[:length] === nothing
 end
 
 @testset "HTTP handlers logging middleware live servers" begin
@@ -340,6 +365,62 @@ end
     @test record.kwargs[:status] == 500
     @test record.kwargs[:length] == 0
     @test record.kwargs[:peer] isa Reseau.TCP.SocketAddr
+    @test record.kwargs[:exception][1] isa ErrorException
+
+    # A fixed-length h1 response head is deferred until closewrite, so a
+    # handler that throws after writing part of the body never gets its status
+    # on the wire: the server answers 500 and the record reports that.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(stream -> begin
+        HT.startread(stream)
+        HT.setstatus(stream, 202)
+        HT.setheader(stream, "Content-Length", "100")
+        write(stream, "partial")
+        error("late failure")
+    end; logger = logger), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/deferred"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.level == Logging.Error
+    @test startswith(record.message, "GET /deferred 500 ")
+    @test record.kwargs[:status] == 500
+    @test record.kwargs[:length] == ncodeunits("partial")
+    @test record.kwargs[:exception][1] isa ErrorException
+
+    # A chunked response head reaches the wire on the first write, so the
+    # record keeps the status the client saw.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(stream -> begin
+        HT.startread(stream)
+        HT.setstatus(stream, 202)
+        write(stream, "partial")
+        error("late failure")
+    end; logger = logger), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        # The body is cut off mid-stream; the client sees either a truncated
+        # 202 or a transport error, and the record is what matters here.
+        outcome = try
+            HT.get("http://$(address)/committed"; status_exception = false, retry = false)
+        catch err
+            err
+        end
+        @test outcome isa Exception || outcome.status == 202
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.level == Logging.Error
+    @test startswith(record.message, "GET /committed 202 ")
+    @test record.kwargs[:status] == 202
+    @test record.kwargs[:length] == ncodeunits("partial")
     @test record.kwargs[:exception][1] isa ErrorException
 end
 
