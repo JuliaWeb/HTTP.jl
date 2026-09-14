@@ -903,7 +903,8 @@ end
 
 Replace all stored values for `key` with `value`, preserving the first matching
 position if the key already exists and appending it otherwise. Returns the
-mutated `headers`.
+mutated `headers`. [`setheader!`](@ref) is the same function under the
+conventional mutating-name spelling.
 """
 function setheader(headers::Headers, header::Pair)
     item = _header_pair(header.first, header.second)
@@ -948,7 +949,8 @@ If the previous stored header has the same name and the key is not
 `Set-Cookie`, the value is merged into the previous entry with a comma
 (no whitespace), as permitted by RFC 9110 §5.3 and required by common
 request-signing canonicalizations.
-Otherwise a new pair is appended.
+Otherwise a new pair is appended. [`appendheader!`](@ref) is the same
+function under the conventional mutating-name spelling.
 """
 function appendheader(headers::Headers, header::Pair)
     item = _header_pair(header.first, header.second)
@@ -971,6 +973,8 @@ end
     removeheader(headers, key) -> Headers
 
 Remove every stored header for `key` and return the mutated `headers`.
+[`removeheader!`](@ref) is the same function under the conventional
+mutating-name spelling.
 """
 function removeheader(headers::Headers, key::AbstractString)
     canon = canonical_header_key(key)
@@ -989,6 +993,47 @@ function removeheader(headers::Headers, key::AbstractString)
     resize!(entries, write_idx - 1)
     return headers
 end
+
+# Conventional mutating-name spellings (#1277). Each is the *same* function as
+# the historical name (extending one extends the other), so the old names stay
+# available without deprecation; new code should prefer the `!` form since
+# every method mutates its first argument.
+"""
+    setheader!(headers, key => value) -> Headers
+    setheader!(headers, key, value) -> Headers
+    setheader!(message, key => value) -> Headers
+    setheader!(message, key, value) -> Headers
+
+Replace all stored values for `key` with `value` and return the mutated
+`headers`, or the mutated `message` for the `Request`/`Response` forms. This
+is the same function as [`setheader`](@ref) under the conventional
+mutating-name spelling.
+"""
+const setheader! = setheader
+
+"""
+    appendheader!(headers, key => value) -> Headers
+    appendheader!(headers, key, value) -> Headers
+    appendheader!(message, key => value) -> Headers
+    appendheader!(message, key, value) -> Headers
+
+Append a value for `key` without removing existing values and return the
+mutated `headers`, or the mutated `message` for the `Request`/`Response`
+forms. This is the same function as [`appendheader`](@ref) under the
+conventional mutating-name spelling.
+"""
+const appendheader! = appendheader
+
+"""
+    removeheader!(headers, key) -> Headers
+    removeheader!(message, key) -> Headers
+
+Remove every stored header for `key` and return the mutated `headers`, or the
+mutated `message` for the `Request`/`Response` forms. This is the same
+function as [`removeheader`](@ref) under the conventional mutating-name
+spelling.
+"""
+const removeheader! = removeheader
 
 @inline function _ascii_lowercase_string(s::AbstractString)::String
     chars = Vector{Char}(undef, ncodeunits(s))
