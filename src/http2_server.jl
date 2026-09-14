@@ -1242,6 +1242,7 @@ function _write_h2_response!(
     body = response.body
     # Fallback path for streaming/empty bodies: original two-step path.
     if body_empty || !(body isa AbstractString || body isa AbstractVector{UInt8})
+        body_empty || _check_response_body_unsent(response)
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
         body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers, write_deadline_ns)
         has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)

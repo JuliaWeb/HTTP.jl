@@ -1228,6 +1228,16 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 response_obj = response::Response
                 response_obj.request = handler_request
+                # A response whose streaming body was already sent cannot be
+                # serialized again. Answer 500 before any bytes go out instead
+                # of failing mid-response and dropping the connection (#1333).
+                try
+                    _check_response_body_unsent(response_obj)
+                catch err
+                    @error "server handler returned a response whose body was already sent or closed" exception = err
+                    _try_write_server_error!(tracked.conn, request, 500)
+                    return nothing
+                end
                 if !_request_body_fully_consumed(handler_request)
                     response_obj.close = true
                     @try_ignore begin
