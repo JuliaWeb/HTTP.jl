@@ -83,6 +83,11 @@ mutable struct H2StreamState
     lock::ReentrantLock
     condition::Threads.Condition
     header_block::Vector{UInt8}
+    # END_STREAM of the HEADERS frame that opened the header block currently
+    # accumulating in `header_block`. The flag travels on the first frame of a
+    # block, but the block only becomes meaningful once END_HEADERS completes
+    # it (RFC 9113 §4.3), so it is applied together with the decoded block.
+    header_block_end_stream::Bool
     decoded_headers::Union{Nothing,Vector{HeaderField}}
     pending_trailers::Headers
     response_trailers::Union{Nothing,Headers}
@@ -103,6 +108,7 @@ function H2StreamState(stream_id::UInt32, max_buffered_bytes::Int=_H2_DEFAULT_MA
         lock,
         Threads.Condition(lock),
         UInt8[],
+        false,
         nothing,
         Headers(),
         nothing,
@@ -820,29 +826,47 @@ function _handle_stream_header_fragment!(
         remaining = conn.max_header_block_bytes - length(state.header_block)
         remaining >= 0 && length(fragment) <= remaining || throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
         append!(state.header_block, fragment)
-        if end_headers
-            decoded = decode_header_block(conn.decoder, state.header_block)
-            empty!(state.header_block)
-            if !state.headers_complete
+        # END_STREAM is carried by the HEADERS frame that opens a block, while
+        # the block may complete on a later CONTINUATION frame (whose caller
+        # passes `end_stream=false`). Remember it until END_HEADERS so the
+        # stream is only marked done together with the decoded block; marking
+        # it earlier let a waiter observe `stream_done` without a decoded head
+        # or reject trailers spanning CONTINUATION frames.
+        end_stream && (state.header_block_end_stream = true)
+        end_headers || return nothing
+        block_end_stream = state.header_block_end_stream
+        state.header_block_end_stream = false
+        decoded = decode_header_block(conn.decoder, state.header_block)
+        empty!(state.header_block)
+        if !state.headers_complete
+            status = _h2_header_block_status(decoded)
+            if status !== nothing && 100 <= status < 200
+                # An informational (1xx) header block precedes the final
+                # response head and is not the response (RFC 9113 §8.1):
+                # validate it, discard it, and keep waiting for the final
+                # (>= 200) block. Storing it as the head made the real head
+                # look like trailers (#1360).
+                _check_h2_informational_response(decoded, block_end_stream)
+            else
                 state.decoded_headers = decoded
                 state.headers_complete = true
-            else
-                end_stream || throw(ProtocolError("HTTP/2 response trailers must end the stream"))
-                trailers = _decode_h2_trailer_headers(decoded)
-                for key in header_keys(trailers)
-                    values = headers(trailers, key)
-                    for value in values
-                        appendheader(state.pending_trailers, key, value)
-                    end
-                end
-                # If the response head was already constructed, the caller is
-                # holding a reference to `state.response_trailers`. Publish the
-                # decoded trailers into it immediately so callers that don't
-                # drain the body still observe trailers on `response.trailers`.
-                _publish_h2_response_trailers!(state)
             end
+        else
+            block_end_stream || throw(ProtocolError("HTTP/2 response trailers must end the stream"))
+            trailers = _decode_h2_trailer_headers(decoded)
+            for key in header_keys(trailers)
+                values = headers(trailers, key)
+                for value in values
+                    appendheader(state.pending_trailers, key, value)
+                end
+            end
+            # If the response head was already constructed, the caller is
+            # holding a reference to `state.response_trailers`. Publish the
+            # decoded trailers into it immediately so callers that don't
+            # drain the body still observe trailers on `response.trailers`.
+            _publish_h2_response_trailers!(state)
         end
-        if end_stream
+        if block_end_stream
             state.stream_done = true
         end
         notify(state.condition)
@@ -859,6 +883,10 @@ function _handle_stream_data!(state::H2StreamState, frame::DataFrame)
             wait(state.condition)
         end
         _stream_failed(state) && return nothing
+        # DATA may only follow the final response head (RFC 9113 §8.1). A DATA
+        # frame arriving before it, including between an informational (1xx)
+        # header block and the final head, is malformed rather than body bytes.
+        state.headers_complete || throw(ProtocolError("HTTP/2 DATA frame received before the response headers"))
         append!(state.body, frame.data)
         if frame.end_stream
             state.stream_done = true
@@ -1463,6 +1491,37 @@ function _request_headers_for_h2(address::String, request::Request, secure::Bool
         push!(fields, HeaderField("content-length", string(request.content_length), false))
     end
     return fields
+end
+
+# Peeks at the `:status` pseudo-header of a decoded response header block so
+# the read loop can tell an informational (1xx) block from the final response
+# head. Returns `nothing` when the block has no parseable `:status`; such a
+# block is then treated as the head so `_decode_response_headers` reports the
+# malformed pseudo-header on the request's own thread, exactly as before.
+function _h2_header_block_status(headers::Vector{HeaderField})::Union{Nothing,Int}
+    for header in headers
+        header.name == ":status" || continue
+        return tryparse(Int, header.value)
+    end
+    return nothing
+end
+
+# Validates an informational (1xx) response header block that arrived before
+# the final response head. The block is discarded by the caller: like the
+# HTTP/1 client, which consumes 1xx heads internally, callers only observe the
+# final response and no trace event is emitted for the informational one. Two
+# shapes are malformed and, like every other protocol error raised by the read
+# loop, fail the connection:
+#   * a 1xx block carrying END_STREAM: informational responses are never final,
+#     so a stream that ends on one has no response head (RFC 9113 §8.1);
+#   * 101 Switching Protocols, which HTTP/2 does not support (RFC 9113 §8.6);
+#     the HTTP/1 client passes 101 through as the final response because the
+#     Upgrade mechanism exists there, but no such mechanism exists here.
+function _check_h2_informational_response(headers::Vector{HeaderField}, end_stream::Bool)::Nothing
+    status, _ = _decode_response_headers(headers)
+    end_stream && throw(ProtocolError("HTTP/2 informational response $(status) must not end the stream"))
+    status == 101 && throw(ProtocolError("HTTP/2 does not support 101 Switching Protocols"))
+    return nothing
 end
 
 function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Headers}
