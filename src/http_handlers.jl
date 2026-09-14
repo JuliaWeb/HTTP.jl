@@ -33,8 +33,12 @@ import ..canceled
 import ..body_close!
 import ..get_request_context
 import .._request_with_context
+import ..peeraddr
+import .._server_error_status
 import ..@_spawn_interactive
 import ..@try_ignore
+
+using Logging: Logging, AbstractLogger, LogLevel, with_logger, @logmsg
 
 """
     Handler
@@ -383,6 +387,128 @@ function cookie_middleware(handler)
     end
 end
 
+struct _LoggingMiddleware{H,L}
+    handler::H
+    logger::L
+    level::LogLevel
+end
+
+"""
+    logging_middleware(handler; logger=nothing, level=Logging.Info) -> handler
+
+Middleware that emits one log record per request through Julia's logging
+system: an opt-in access log.
+
+The record is emitted after the wrapped `handler` returns and carries the
+request `method` and `target`, the response `status`, the handler's wall-clock
+`elapsed_ms`, and the response body `length` in bytes when it is known without
+reading the body (`nothing` otherwise). The message reads like
+`GET /users/1 200 0.412ms`, and every record uses the `:access` log group so
+it can be filtered. When the handler throws, the record is logged at
+`Logging.Error` with the `exception` and its backtrace and with the `status`
+the server sends for that failure, and the exception is rethrown.
+
+Records are logged at `level` to the current logger, or with
+`Logging.with_logger(logger)` when `logger` is given.
+
+The middleware wraps both `Request -> Response` handlers (`serve!`,
+`streamhandler`) and `Stream -> Nothing` handlers (`listen!`). Stream records
+also carry the client `peer` address from [`peeraddr`](@ref); request
+handlers do not have access to the connection, so request records omit it.
+
+```julia
+server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
+```
+"""
+function logging_middleware(
+    handler;
+    logger::Union{Nothing,AbstractLogger}=nothing,
+    level::LogLevel=Logging.Info,
+)
+    return _LoggingMiddleware(handler, logger, level)
+end
+
+@inline _with_access_logger(f::F, ::Nothing) where {F} = f()
+@inline _with_access_logger(f::F, logger::AbstractLogger) where {F} = with_logger(f, logger)
+
+# The server answers 500 when a request handler returns anything but a
+# `Response`, so the record reports the status that reaches the client.
+@inline _access_status(response::Response)::Int = response.status
+@inline _access_status(@nospecialize(::Any))::Int = 500
+@inline _access_length(response::Response)::Union{Nothing,Int64} = response.content_length >= 0 ? response.content_length : nothing
+@inline _access_length(@nospecialize(::Any))::Union{Nothing,Int64} = nothing
+
+@inline function _access_stream_status(stream::Stream)::Int
+    response = stream.response
+    return response === nothing ? 0 : response.status
+end
+
+# The status the server writes when a handler throws before its response head
+# is on the wire (mirrors the `_serve_h1_conn!` and h2 catch blocks).
+@inline function _access_error_status(err)::Int
+    status = err isa Exception ? _server_error_status(err) : nothing
+    return status === nothing ? 500 : status::Int
+end
+
+function _log_access(
+    middleware::_LoggingMiddleware,
+    level::LogLevel,
+    method::String,
+    target::String,
+    status::Int,
+    body_length::Union{Nothing,Int64},
+    start_ns::UInt64,
+    extra::NamedTuple,
+)::Nothing
+    elapsed_ms = round((time_ns() - start_ns) / 1.0e6; digits=3)
+    _with_access_logger(middleware.logger) do
+        @logmsg level "$method $target $status $(elapsed_ms)ms" method target status elapsed_ms length = body_length extra... _group = :access
+        return nothing
+    end
+    return nothing
+end
+
+function (middleware::_LoggingMiddleware)(req::Request)
+    start_ns = time_ns()
+    response = try
+        middleware.handler(req)
+    catch err
+        _log_access(
+            middleware, Logging.Error, req.method, req.target, _access_error_status(err), nothing, start_ns,
+            (; exception=(err, catch_backtrace())),
+        )
+        rethrow()
+    end
+    _log_access(
+        middleware, middleware.level, req.method, req.target, _access_status(response), _access_length(response), start_ns,
+        (;),
+    )
+    return response
+end
+
+function (middleware::_LoggingMiddleware)(stream::Stream)
+    start_ns = time_ns()
+    request = startread(stream)
+    peer = peeraddr(stream)
+    try
+        middleware.handler(stream)
+    catch err
+        # A head that already reached the wire keeps its status; otherwise the
+        # server answers with the error status.
+        status = (@atomic :acquire stream.response_started) ? _access_stream_status(stream) : _access_error_status(err)
+        _log_access(
+            middleware, Logging.Error, request.method, request.target, status, stream.written_bytes, start_ns,
+            (; peer=peer, exception=(err, catch_backtrace())),
+        )
+        rethrow()
+    end
+    _log_access(
+        middleware, middleware.level, request.method, request.target, _access_stream_status(stream), stream.written_bytes, start_ns,
+        (; peer=peer),
+    )
+    return nothing
+end
+
 mutable struct _HandlerTimeoutMiddleware{H}
     handler::H
     timeout_ns::Int64
@@ -489,10 +615,11 @@ Retrieve any parsed cookies from a request context.
 """
 getcookies(req) = get(() -> Cookie[], req.context, :cookies)
 
-# `handlertimeout` is documented public API but not exported; mark it public on
-# Julia versions that support the mechanism (the source stays parseable on 1.10).
+# `handlertimeout` and `logging_middleware` are documented public API but not
+# exported; mark them public on Julia versions that support the mechanism (the
+# source stays parseable on 1.10).
 @static if Base.VERSION >= v"1.11.0-DEV.469"
-    Core.eval(@__MODULE__, Expr(:public, :handlertimeout))
+    Core.eval(@__MODULE__, Expr(:public, :handlertimeout, :logging_middleware))
 end
 
 end

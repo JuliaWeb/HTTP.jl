@@ -1,5 +1,6 @@
 using Test
 using HTTP
+using Logging
 using Reseau
 
 const HT = HTTP
@@ -171,6 +172,175 @@ end
     slow_context = take!(slow_started)
     @test HT.canceled(slow_context)
     put!(release_slow, nothing)
+end
+
+function _logging_stream_request(stream)
+    HT.startread(stream)
+    HT.setstatus(stream, 201)
+    HT.setheader(stream, "Content-Type", "text/plain")
+    write(stream, "stream-body")
+    return nothing
+end
+
+@testset "HTTP handlers logging middleware" begin
+    # Successful request through the current logger at the default level.
+    ok = HT.Handlers.logging_middleware(_ -> _response_with_text("ok"))
+    resp = @test_logs (:info, r"^GET /hello\?q=1 200 [0-9.]+ms$") ok(HT.Request("GET", "/hello?q=1"))
+    @test resp.status == 200
+    @test String(_read_all_handler_bytes(resp.body)) == "ok"
+
+    # Explicit logger: the record carries the structured fields and the
+    # handler's response is returned unchanged.
+    logger = Test.TestLogger()
+    baked = _response_with_text("ok")
+    logged = HT.Handlers.logging_middleware(_ -> baked; logger = logger)
+    @test logged(HT.Request("GET", "/hello")) === baked
+    record = only(logger.logs)
+    @test record.level == Logging.Info
+    @test record.group == :access
+    @test record._module === HT.Handlers
+    @test record.kwargs[:method] == "GET"
+    @test record.kwargs[:target] == "/hello"
+    @test record.kwargs[:status] == 200
+    @test record.kwargs[:elapsed_ms] isa Float64
+    @test record.kwargs[:elapsed_ms] >= 0
+    @test record.kwargs[:length] == 2
+    @test record.message == "GET /hello 200 $(record.kwargs[:elapsed_ms])ms"
+    @test !haskey(record.kwargs, :peer)
+    @test !haskey(record.kwargs, :exception)
+
+    # Non-200 response at a custom level; an empty body has length 0.
+    logger = Test.TestLogger(; min_level = Logging.Debug)
+    not_found = HT.Handlers.logging_middleware(_ -> HT.Response(404); logger = logger, level = Logging.Debug)
+    @test not_found(HT.Request("DELETE", "/missing")).status == 404
+    record = only(logger.logs)
+    @test record.level == Logging.Debug
+    @test record.group == :access
+    @test startswith(record.message, "DELETE /missing 404 ")
+    @test record.kwargs[:status] == 404
+    @test record.kwargs[:length] == 0
+    not_found_current = HT.Handlers.logging_middleware(_ -> HT.Response(404); level = Logging.Debug)
+    @test_logs (:debug, r"^DELETE /missing 404 [0-9.]+ms$") min_level = Logging.Debug not_found_current(HT.Request("DELETE", "/missing"))
+    @test_logs min_level = Logging.Info not_found_current(HT.Request("DELETE", "/missing"))
+
+    # A streaming body has no cheaply known length.
+    logger = Test.TestLogger()
+    streaming = HT.Response(200, HT.CallbackBody(_ -> 0, () -> nothing))
+    @test HT.Handlers.logging_middleware(_ -> streaming; logger = logger)(HT.Request("GET", "/stream")) === streaming
+    @test only(logger.logs).kwargs[:length] === nothing
+
+    # A throwing handler is logged at Error with the exception and rethrown.
+    logger = Test.TestLogger()
+    failing = HT.Handlers.logging_middleware(_ -> error("boom"); logger = logger)
+    @test_throws ErrorException failing(HT.Request("POST", "/boom"))
+    record = only(logger.logs)
+    @test record.level == Logging.Error
+    @test record.group == :access
+    @test startswith(record.message, "POST /boom 500 ")
+    @test record.kwargs[:method] == "POST"
+    @test record.kwargs[:target] == "/boom"
+    @test record.kwargs[:status] == 500
+    @test record.kwargs[:length] === nothing
+    err, backtrace = record.kwargs[:exception]
+    @test err isa ErrorException
+    @test err.msg == "boom"
+    @test backtrace isa Vector
+    @test_logs (:error, r"^POST /boom 500 [0-9.]+ms$") @test_throws ErrorException HT.Handlers.logging_middleware(_ -> error("boom"))(HT.Request("POST", "/boom"))
+
+    # The logged status follows the server's mapping of the exception.
+    logger = Test.TestLogger()
+    rejecting = HT.Handlers.logging_middleware(_ -> throw(HT.ParseError("bad request")); logger = logger)
+    @test_throws HT.ParseError rejecting(HT.Request("GET", "/bad"))
+    @test only(logger.logs).kwargs[:status] == 400
+    @test only(logger.logs).kwargs[:exception][1] isa HT.ParseError
+end
+
+@testset "HTTP handlers logging middleware live servers" begin
+    # serve! request handlers: records have no peer address.
+    logger = Test.TestLogger()
+    router = HT.Router()
+    HT.register!(router, "GET", "/hello/{name}", _router_hello_request)
+    server = HT.serve!(HT.Handlers.logging_middleware(router; logger = logger), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        hello = HT.get("http://$(address)/hello/jane")
+        @test hello.status == 200
+        @test String(_read_all_handler_bytes(hello.body)) == "hello:jane"
+        missing_route = HT.get("http://$(address)/missing"; status_exception = false)
+        @test missing_route.status == 404
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    @test length(logger.logs) == 2
+    @test logger.logs[1].level == Logging.Info
+    @test logger.logs[1].kwargs[:method] == "GET"
+    @test logger.logs[1].kwargs[:target] == "/hello/jane"
+    @test logger.logs[1].kwargs[:status] == 200
+    @test logger.logs[1].kwargs[:length] == ncodeunits("hello:jane")
+    @test !haskey(logger.logs[1].kwargs, :peer)
+    @test logger.logs[2].kwargs[:target] == "/missing"
+    @test logger.logs[2].kwargs[:status] == 404
+
+    # streamhandler adapts a logged request handler.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.streamhandler(HT.Handlers.logging_middleware(_streamhandler_echo_request; logger = logger)), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        resp = HT.post("http://$(address)/echo"; body = "payload")
+        @test resp.status == 200
+        @test String(_read_all_handler_bytes(resp.body)) == "payload"
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.kwargs[:method] == "POST"
+    @test record.kwargs[:target] == "/echo"
+    @test record.kwargs[:status] == 200
+    @test record.kwargs[:length] == ncodeunits("payload")
+    @test !haskey(record.kwargs, :peer)
+
+    # listen! stream handlers: records carry the written length and the peer.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(_logging_stream_request; logger = logger), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/stream")
+        @test resp.status == 201
+        @test String(_read_all_handler_bytes(resp.body)) == "stream-body"
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.level == Logging.Info
+    @test startswith(record.message, "GET /stream 201 ")
+    @test record.kwargs[:method] == "GET"
+    @test record.kwargs[:target] == "/stream"
+    @test record.kwargs[:status] == 201
+    @test record.kwargs[:length] == ncodeunits("stream-body")
+    @test record.kwargs[:peer] isa Reseau.TCP.SocketAddr
+    @test startswith(string(record.kwargs[:peer]), "127.0.0.1:")
+
+    # A throwing stream handler is logged at Error and the server answers 500.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(_ -> error("stream boom"); logger = logger), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/stream"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.level == Logging.Error
+    @test startswith(record.message, "GET /stream 500 ")
+    @test record.kwargs[:status] == 500
+    @test record.kwargs[:length] == 0
+    @test record.kwargs[:peer] isa Reseau.TCP.SocketAddr
+    @test record.kwargs[:exception][1] isa ErrorException
 end
 
 @testset "HTTP streamhandler helper" begin
