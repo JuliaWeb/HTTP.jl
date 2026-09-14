@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
   Each pair is the same function (extending one name extends the other), the
   historical names are not deprecated, and all six are `public`. ([#1277])
+- Added `llms.txt` and `llms-full.txt` to the documentation site, following the
+  [llms.txt](https://llmstxt.org/) convention: a short index of the documentation
+  pages, and the full documentation with every docstring expanded, as plain
+  markdown for LLM tooling. They are published next to the HTML docs, for
+  example at `https://juliaweb.github.io/HTTP.jl/stable/llms.txt` and
+  `https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt`. ([#1351])
 
 ### Fixed
 - Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
@@ -878,4 +884,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1277]: https://github.com/JuliaWeb/HTTP.jl/issues/1277
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
+[#1351]: https://github.com/JuliaWeb/HTTP.jl/issues/1351
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
