@@ -40,9 +40,12 @@ HTTP.headers
 HTTP.hasheader
 HTTP.headercontains
 HTTP.setheader
+HTTP.setheader!
 HTTP.defaultheader!
 HTTP.appendheader
+HTTP.appendheader!
 HTTP.removeheader
+HTTP.removeheader!
 HTTP.mkheaders
 HTTP.get_request_context
 HTTP.set_deadline!

@@ -722,28 +722,15 @@ function _copy_tls_config_for_request(
     curve_preferences::Vector{UInt16},
     handshake_timeout_ns::Int64,
 )::TLS.Config
+    # Copy by name through Reseau's own constructor. It shares the session caches,
+    # ticket keys, and loaded identity with `cfg`, so per-request copies keep resuming
+    # sessions, and it never depends on the order or number of `TLS.Config` fields.
     return TLS.Config(
-        server_name,
-        cfg.verify_peer,
-        cfg.verify_hostname,
-        cfg.client_auth,
-        cfg.cert_file,
-        cfg.key_file,
-        cfg.ca_file,
-        cfg.client_ca_file,
-        alpn_protocols,
-        curve_preferences,
-        handshake_timeout_ns,
-        cfg.min_version,
-        cfg.max_version,
-        cfg.session_tickets_disabled,
-        cfg._session_ticket_keys,
-        cfg._client_session_cache,
-        cfg._server_session_cache,
-        cfg._client_session_cache12,
-        cfg._server_session_cache12,
-        cfg._client_identity,
-        cfg._server_identity,
+        cfg;
+        server_name = server_name,
+        alpn_protocols = alpn_protocols,
+        curve_preferences = curve_preferences,
+        handshake_timeout_ns = handshake_timeout_ns,
     )
 end
 
@@ -781,8 +768,8 @@ function _effective_tls_config(
     return _copy_tls_config_for_request(
         cfg,
         cfg.server_name === nothing ? sni : cfg.server_name::String,
-        copy(cfg.alpn_protocols),
-        copy(cfg.curve_preferences),
+        cfg.alpn_protocols,
+        cfg.curve_preferences,
         effective_handshake_timeout_ns,
     )
 end

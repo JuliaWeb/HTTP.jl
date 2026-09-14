@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mislabeled `TLSHandshakeError`; that type is now reserved for actual
   connection-setup failures. `HTTP.isrecoverable` classifies both wrappers by
   their underlying cause. ([#1353])
+- Added `setheader!`, `appendheader!` and `removeheader!` as the conventional
+  mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
+  Each pair is the same function (extending one name extends the other), the
+  historical names are not deprecated, and all six are `public`. ([#1277])
 
 ### Fixed
 - Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
@@ -871,6 +875,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1119]: https://github.com/JuliaWeb/HTTP.jl/issues/1119
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
+[#1277]: https://github.com/JuliaWeb/HTTP.jl/issues/1277
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
