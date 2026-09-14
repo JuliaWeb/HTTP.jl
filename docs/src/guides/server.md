@@ -70,6 +70,22 @@ HTTP.forceclose(server)
 
 This is the simplest server path and the best default for ordinary APIs.
 
+### Reusing Responses
+
+A `Response` built from a `String` or a `Vector{UInt8}` body keeps that value
+as-is, so one response object can be returned for many requests ("baked"
+responses), on both the request-handler and stream-handler paths:
+
+```julia
+const HEALTH = HTTP.Response(200; headers = ["Content-Type" => "text/plain"], body = "ok")
+handler(req) = HEALTH
+```
+
+Streaming bodies (`HTTP.BytesBody`, `HTTP.CallbackBody`, and the bodies of
+incoming messages) are single-use: they are consumed and closed as they are
+sent. Returning such a response a second time fails before any bytes reach the
+wire, and the server answers that request with a `500`.
+
 ## Stream Handlers
 
 Use `HTTP.listen!` when you need lower-level ownership of the connection

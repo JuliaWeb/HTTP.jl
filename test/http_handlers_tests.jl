@@ -191,6 +191,8 @@ end
 end
 
 @testset "HTTP streamhandler reused String response body" begin
+    # A String body is stored as-is, so the same Response can answer every
+    # request (#1333); before, the first send consumed it and the second got 500.
     baked = HT.Response(200, ["Content-Type" => "text/plain"]; body = "baked string body")
     server = HT.listen!(HT.streamhandler(_ -> baked), "127.0.0.1", 0; listenany = true)
     address = HT.server_addr(server)
@@ -200,7 +202,8 @@ end
         @test String(_read_all_handler_bytes(resp.body)) == "baked string body"
 
         reused = HT.get("http://$(address)/"; status_exception = false, retry = false)
-        @test reused.status == 500
+        @test reused.status == 200
+        @test String(_read_all_handler_bytes(reused.body)) == "baked string body"
     finally
         HT.forceclose(server)
         wait(server)

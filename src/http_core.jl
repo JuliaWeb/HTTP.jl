@@ -1563,7 +1563,13 @@ end
 @inline _response_body_arg(::Nothing) = EmptyBody()
 @inline _response_body_arg(body::AbstractBody) = body
 @inline _response_body_arg(body::AbstractVector{UInt8}) = body
-@inline _response_body_arg(body::AbstractString) = _compat_body_arg(body)
+# Server-built responses keep `String` and `AbstractVector{UInt8}` bodies as given.
+# Both are stateless, so one `Response` can be sent any number of times (baked
+# responses), and every write path emits them zero-copy. Wrapping a string in a
+# cursor-based `BytesBody` made the first send consume it and left the second
+# send with a truncated or empty body (#1333). Requests keep `BytesBody`, since
+# `Request` requires an `AbstractBody`.
+@inline _response_body_arg(body::AbstractString) = String(body)
 _response_body_arg(body) = _compat_body_arg(body)
 
 """
@@ -1876,6 +1882,38 @@ mutable struct Response{B}
     redirect_count::Int
 end
 
+"""
+    _check_response_body_unsent(response)
+
+Fail before any bytes reach the wire when `response.body` is one of HTTP's own
+in-memory streaming bodies that can no longer satisfy the framing the head is
+about to promise: a `BytesBody` or `CallbackBody` that was already sent or
+closed, or a `BytesBody` with fewer remaining bytes than the declared
+`Content-Length`. Without this the head goes out first and the peer sees a
+truncated response instead of a clean server error. `String` and
+`AbstractVector{UInt8}` bodies are stateless and always sendable, and other
+`AbstractBody` implementations are left to their own semantics.
+"""
+function _check_response_body_unsent(response::Response)::Nothing
+    body = response.body
+    declared = response.content_length
+    if body isa BytesBody
+        bytes = body::BytesBody
+        if body_closed(bytes)
+            declared == 0 && return nothing
+            throw(ArgumentError("response body is closed: a Response whose body was already sent cannot be sent again; use a String or Vector{UInt8} body for a reusable response"))
+        end
+        if declared > 0 && Int64(length(bytes)) < declared
+            throw(ProtocolError("response body has fewer bytes than the declared Content-Length"))
+        end
+    elseif body isa CallbackBody
+        if body_closed(body::CallbackBody) && declared != 0
+            throw(ArgumentError("response body is closed: a Response whose body was already sent cannot be sent again; use a String or Vector{UInt8} body for a reusable response"))
+        end
+    end
+    return nothing
+end
+
 struct _IncomingResponseHead
     status::Int
     reason::String
@@ -1942,8 +1980,7 @@ end
 
 Response() = Response(0)
 
-Response(status::Int, body::AbstractString) = Response(status, BytesBody(Vector{UInt8}(codeunits(String(body)))))
-Response(body::AbstractString) = Response(200, BytesBody(Vector{UInt8}(codeunits(String(body)))))
+Response(body::AbstractString) = Response(200, body)
 Response(body::AbstractVector{UInt8}) = Response(200, body)
 
 function Response(
