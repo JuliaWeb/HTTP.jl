@@ -156,6 +156,9 @@ mutable struct Conn
     @atomic closed::Bool
     @atomic slot_released::Bool
     last_used_ns::Int64
+    # Server-advertised keep-alive idle bound (`Keep-Alive: timeout=<s>`, less
+    # `_KEEPALIVE_TIMEOUT_MARGIN_NS`) in ns; `0` when the peer gave no hint.
+    keepalive_timeout_ns::Int64
 end
 
 const _CONN_WAITER_WAITING = UInt8(0)
@@ -207,6 +210,12 @@ connection may be handed out again; it also governs the owning `Client`'s
 pooled HTTP/2 connections. Keep it under the network's silent idle-drop window
 (NAT/load-balancer idle timeouts are commonly a few minutes) so a request is
 never written onto a connection whose peer has silently vanished.
+
+A server that advertises its own idle window on a response
+(`Keep-Alive: timeout=<seconds>`) additionally bounds that HTTP/1 connection's
+reuse to the advertised time less a one-second safety margin; the tighter of
+the two limits applies. A hint that leaves no headroom (`timeout=1` or less)
+makes the connection non-reusable.
 """
 mutable struct Transport
     host_resolver::_TransportHostResolver
@@ -992,7 +1001,7 @@ function _new_conn_tcp!(
     connect_deadline_ns::Int64=Int64(0),
 )::Conn
     tcp = _new_tcp_conn!(plan, address, host_resolver, connect_deadline_ns)
-    return Conn(plan.pool_key, plan.first_hop_address, false, tcp, nothing, _ConnReader(tcp), IOBuffer(), false, false, false, time_ns())
+    return Conn(plan.pool_key, plan.first_hop_address, false, tcp, nothing, _ConnReader(tcp), IOBuffer(), false, false, false, time_ns(), Int64(0))
 end
 
 function _new_conn_tls!(
@@ -1010,7 +1019,7 @@ function _new_conn_tls!(
         tls = TLS.client(tcp, cfg)
         connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
         TLS.handshake!(tls)
-        return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, false, time_ns())
+        return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, false, time_ns(), Int64(0))
     catch err
         @try_ignore TCP.close(tcp)
         # Type TLS failures at the site where the phase is known: a TLSError
@@ -1028,7 +1037,9 @@ function _evict_expired_idle_locked!(transport::Transport, key::String, now_ns::
     kept = Conn[]
     stale = Conn[]
     for conn in idle_list::Vector{Conn}
-        expired = transport.idle_timeout_ns > 0 && (now_ns - conn.last_used_ns) > transport.idle_timeout_ns
+        age_ns = now_ns - conn.last_used_ns
+        expired = (transport.idle_timeout_ns > 0 && age_ns > transport.idle_timeout_ns) ||
+                  (conn.keepalive_timeout_ns > 0 && age_ns > conn.keepalive_timeout_ns)
         if _conn_closed(conn) || expired
             @atomic :acquire_release transport.idle_total -= 1
             push!(stale, conn)
@@ -1505,6 +1516,75 @@ end
     )
 end
 
+# Servers that bound keep-alive idleness advertise it as
+# `Keep-Alive: timeout=<seconds>[, max=<n>]` (RFC 2068 §19.7.1; still emitted by
+# Apache, nginx, HAProxy and others). Reusing a pooled connection after that
+# window has elapsed races the server's close: an idempotent request burns a
+# retry, anything else fails outright. The hint is therefore honored as a
+# per-connection idle bound alongside `idle_timeout_ns`. The server's clock
+# started when it finished *sending* the response, before the client finished
+# reading it, so a safety margin is subtracted (as Node's undici does with its
+# `keepAliveTimeoutThreshold`); a hint that leaves no headroom marks the
+# connection as not reusable at all. The `max=<n>` parameter is ignored: a
+# server that exhausts it answers with `Connection: close`, which is already
+# honored.
+const _KEEPALIVE_TIMEOUT_MARGIN_NS = Int64(1_000_000_000)
+const _KEEPALIVE_TIMEOUT_MAX_S = typemax(Int64) ÷ Int64(1_000_000_000)
+
+"""
+    _keepalive_timeout_hint_ns(hdrs::Headers) -> Int64
+
+Return the `timeout` parameter of the response's `Keep-Alive` header in
+nanoseconds, or `-1` when the header is absent or carries no well-formed
+(unsigned decimal) `timeout`. Parameter names are case-insensitive, a
+quoted value is accepted, and an absurdly large value saturates.
+"""
+function _keepalive_timeout_hint_ns(hdrs::Headers)::Int64
+    for value in headers(hdrs, "Keep-Alive")
+        for param in eachsplit(value, ',')
+            eq = findfirst(==('='), param)
+            eq === nothing && continue
+            name = strip(SubString(param, firstindex(param), prevind(param, eq)))
+            _ascii_lowercase_equal(name, "timeout") || continue
+            raw = strip(SubString(param, nextind(param, eq)))
+            if ncodeunits(raw) >= 2 && startswith(raw, '"') && endswith(raw, '"')
+                raw = strip(SubString(raw, nextind(raw, firstindex(raw)), prevind(raw, lastindex(raw))))
+            end
+            (!isempty(raw) && all(isdigit, raw)) || continue
+            secs = tryparse(Int64, raw)
+            secs === nothing && (secs = _KEEPALIVE_TIMEOUT_MAX_S)
+            return min(secs, _KEEPALIVE_TIMEOUT_MAX_S) * Int64(1_000_000_000)
+        end
+    end
+    return Int64(-1)
+end
+
+@inline function _ascii_lowercase_equal(a::AbstractString, lower::String)::Bool
+    ncodeunits(a) == ncodeunits(lower) || return false
+    for (ca, cb) in zip(codeunits(a), codeunits(lower))
+        (ca == cb || (UInt8('A') <= ca <= UInt8('Z') && ca + 0x20 == cb)) || return false
+    end
+    return true
+end
+
+"""
+    _note_keepalive_hint!(conn::Conn, hdrs::Headers) -> Bool
+
+Record the server-advertised keep-alive idle bound from a response on `conn`
+and return whether the connection may be pooled at all. Without a hint the
+pool's `idle_timeout_ns` alone applies.
+"""
+function _note_keepalive_hint!(conn::Conn, hdrs::Headers)::Bool
+    hint_ns = _keepalive_timeout_hint_ns(hdrs)
+    bound_ns = hint_ns < 0 ? Int64(0) : hint_ns - _KEEPALIVE_TIMEOUT_MARGIN_NS
+    if hint_ns >= 0 && bound_ns <= 0
+        conn.keepalive_timeout_ns = Int64(0)
+        return false
+    end
+    conn.keepalive_timeout_ns = bound_ns
+    return true
+end
+
 @inline function _response_reusable(response::_IncomingResponse, request::Request)::Bool
     response.head.close && return false
     _transport_request_wants_close(request) && return false
@@ -1944,6 +2024,7 @@ function _roundtrip_incoming!(
             end
             reusable = _response_reusable(raw_response, attempt_request)
             early_final && (reusable = false)
+            reusable && (reusable = _note_keepalive_hint!((raw_response.rawbody::H1Body).conn, raw_response.head.headers))
             body = _arm_h1_body!(raw_response.rawbody::H1Body, reusable, request_ctx, cancel_cb)
             if _body_immediately_empty(body)
                 body_close!(body)
