@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   historical names are not deprecated, and all six are `public`. ([#1277])
 
 ### Fixed
+- The HTTP/1.1 client now writes `Host` as the first header field line after
+  the request line, as RFC 9112 §3.2 recommends and as curl, Go and Python do.
+  It used to be appended after every caller-supplied and client-default header
+  (`User-Agent`, `Accept-Encoding`, ...), which some CDN front ends reject with
+  403 for an otherwise identical request. A caller-supplied `Host` header is
+  moved to the front rather than kept in place, and exactly one `Host` line is
+  written; `Request.headers` itself is not reordered. ([#1361])
 - Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
   thread pool so default-pool compute work cannot starve server and health-check
   tasks when an interactive thread is configured. ([#1342])
@@ -879,3 +886,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
+[#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361
