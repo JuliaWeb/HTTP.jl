@@ -116,6 +116,20 @@ end
     @test occursin("; Secure", values[1])
 end
 
+@testset "HTTP addcookie! keeps request cookies in one \"; \"-separated header" begin
+    request = HT.Request("GET", "/")
+    HT.addcookie!(request, HT.Cookie("a", "1"))
+    HT.addcookie!(request, HT.Cookie("b", "2"))
+    # RFC 6265 4.2.1/5.4: one Cookie header, pairs separated by "; ".
+    @test HT.headers(request.headers, "Cookie") == ["a=1; b=2"]
+    @test [(c.name, c.value) for c in HT.cookies(request)] == [("a", "1"), ("b", "2")]
+
+    # A cookie added on top of a caller-supplied Cookie header joins it.
+    seeded = HT.Request("GET", "/", ["Cookie" => "a=1"])
+    HT.addcookie!(seeded, HT.Cookie("b", "2"))
+    @test HT.headers(seeded.headers, "Cookie") == ["a=1; b=2"]
+end
+
 @testset "HTTP CookieJar matches host, path, secure, and delete semantics" begin
     jar = HT.CookieJar()
     headers = _set_cookie_headers(

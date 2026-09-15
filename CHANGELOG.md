@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported as `unexpected EOF`) are now classified by their public error shape
   in the transport's reused-connection retry. HTTP/2 read-loop wrappers also
   preserve this classification. ([#1353])
+- `addcookie!(::Request, ::Cookie)` now keeps every request cookie in a single
+  `Cookie` header with the pairs separated by `"; "`. It went through
+  `appendheader`, which merges a repeated header into the previous entry with a
+  comma, so two adjacent calls produced `Cookie: a=1,b=2`. `cookies(::Request)`
+  splits a `Cookie` header on `;` only, so that header parsed back as the single
+  cookie `a="1,b=2"` and the second cookie was lost.
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
