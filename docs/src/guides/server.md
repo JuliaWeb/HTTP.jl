@@ -70,6 +70,22 @@ HTTP.forceclose(server)
 
 This is the simplest server path and the best default for ordinary APIs.
 
+### Reusing Responses
+
+A `Response` built from a `String` or a `Vector{UInt8}` body keeps that value
+as-is, so one response object can be returned for many requests ("baked"
+responses), on both the request-handler and stream-handler paths:
+
+```julia
+const HEALTH = HTTP.Response(200; headers = ["Content-Type" => "text/plain"], body = "ok")
+handler(req) = HEALTH
+```
+
+Streaming bodies (`HTTP.BytesBody`, `HTTP.CallbackBody`, and the bodies of
+incoming messages) are single-use: they are consumed and closed as they are
+sent. Returning such a response a second time fails before any bytes reach the
+wire, and the server answers that request with a `500`.
+
 ## Stream Handlers
 
 Use `HTTP.listen!` when you need lower-level ownership of the connection
@@ -189,6 +205,44 @@ router = HTTP.Router(
 
 The router stores route metadata on the request context. Read it with
 `HTTP.getroute`, `HTTP.getparams`, and `HTTP.getparam`.
+
+### Request Logging
+
+`HTTP.Handlers.logging_middleware` is an opt-in access log. It wraps a handler
+and emits one log record per request through Julia's logging system:
+
+```julia
+using HTTP, Logging
+
+server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
+```
+
+With the default `ConsoleLogger`, each request prints a record like:
+
+```
+┌ Info: GET /users/42 200 0.412ms
+│   method = "GET"
+│   target = "/users/42"
+│   status = 200
+│   elapsed_ms = 0.412
+└   length = 7
+```
+
+The record carries the method, the target, the response status, the handler
+time in milliseconds, and the response body length when it is known without
+reading the body. A handler that throws is logged at `Logging.Error` with the
+exception, and the exception is rethrown so the server still answers with an
+error status. Pass `level` to log successful requests at another level, and
+`logger` to send the records to a specific logger instead of the current one:
+
+```julia
+access_log = HTTP.Handlers.logging_middleware(router; level = Logging.Debug)
+```
+
+The same wrapper works for `HTTP.listen!` stream handlers, where the record
+also carries the client `peer` address. All records use the `:access` log
+group, so they are easy to filter or route with a package such as
+LoggingExtras.jl.
 
 ## Static Files
 

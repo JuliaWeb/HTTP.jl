@@ -456,7 +456,9 @@ end
 @inline _message_body_bytes(body::BytesBody) =
     body.next_index > length(body.data) ? UInt8[] :
     @view body.data[body.next_index:end]
-@inline _message_body_bytes(body::Vector{UInt8}) = body
+@inline _message_body_bytes(body::AbstractVector{UInt8}) = body
+# Server-built responses keep `String` bodies as-is (#1333); parse them in place.
+@inline _message_body_bytes(body::AbstractString) = codeunits(body)
 @inline _message_body_bytes(::AbstractBody) = nothing
 
 """

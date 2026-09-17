@@ -1199,6 +1199,257 @@ end
     end
 end
 
+# Scripted HTTP/2 origin for the informational-response tests (#1360): performs
+# the connection preface, reads one request head, then hands `respond!` the
+# accepted connection, the request's stream id and the server HPACK encoder.
+function _h2_serve_scripted_response(respond!)
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            hf = _read_next_headers_frame!(reader)
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            respond!(accepted_conn, hf.stream_id, server_encoder)
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    return listener, address, server_task
+end
+
+# Runs one request against a scripted origin and returns the error the
+# roundtrip (or the body read) raised, or `nothing` when it succeeded.
+function _h2_scripted_roundtrip_error(address::String, target::String)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0)
+        return try
+            response = HT.h2_roundtrip!(h2_conn, request)
+            _read_all_h2_body(response.body)
+            nothing
+        catch err
+            err
+        end
+    finally
+        close(h2_conn)
+    end
+end
+
+@testset "HTTP/2 client skips informational responses before the final head (#1360)" begin
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        # 100 Continue: a bare informational block.
+        continue_block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "100", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, continue_block))
+        # 103 Early Hints, split across HEADERS + CONTINUATION.
+        hints_block = HT.encode_header_block(enc, HT.HeaderField[
+            HT.HeaderField(":status", "103", false),
+            HT.HeaderField("link", "</style.css>; rel=preload; as=style", false),
+        ])
+        mid = cld(length(hints_block), 2)
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, false, hints_block[1:mid]))
+        _write_frame_to_conn!(conn, HT.ContinuationFrame(stream_id, true, hints_block[(mid + 1):end]))
+        # The final head, the body and trailers.
+        final_block = HT.encode_header_block(enc, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+            HT.HeaderField("content-length", "2", false),
+            HT.HeaderField("x-final", "yes", false),
+        ])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, final_block))
+        _write_frame_to_conn!(conn, HT.DataFrame(stream_id, false, collect(codeunits("ok"))))
+        trailer_block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField("x-trailer", "done", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, true, trailer_block))
+        return nothing
+    end
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/hints"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test HT.header(response.headers, "x-final") == "yes"
+        # Headers of the informational blocks do not leak into the response.
+        @test !HT.hasheader(response.headers, "link")
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        @test HT.header(response.trailers, "x-trailer") == "done"
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 high-level client returns the final response after 103 Early Hints (#1360)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            # Two requests on the pooled connection: `/hints` answers with a
+            # 103 before its 200, `/plain` answers with the 200 alone.
+            for _ in 1:2
+                hf = _read_next_headers_frame!(reader)
+                fields = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+                path_index = findfirst(f -> f.name == ":path", fields)
+                path = fields[path_index::Int].value
+                if path == "/hints"
+                    hints_block = HT.encode_header_block(server_encoder, HT.HeaderField[
+                        HT.HeaderField(":status", "103", false),
+                        HT.HeaderField("link", "</style.css>; rel=preload; as=style", false),
+                    ])
+                    _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, hints_block))
+                end
+                body = path == "/hints" ? "hinted" : "plain"
+                final_block = HT.encode_header_block(server_encoder, HT.HeaderField[
+                    HT.HeaderField(":status", "200", false),
+                    HT.HeaderField("content-length", string(sizeof(body)), false),
+                ])
+                _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, final_block))
+                _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits(body))))
+            end
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    client = HT.Client(cookiejar = nothing)
+    try
+        hinted = HT.get(client, "http://$(address)/hints"; protocol = :h2)
+        @test hinted.status == 200
+        @test String(hinted.body) == "hinted"
+        @test !HT.hasheader(hinted.headers, "link")
+        plain = HT.get(client, "http://$(address)/plain"; protocol = :h2)
+        @test plain.status == 200
+        @test String(plain.body) == "plain"
+        _wait_task_h2!(server_task)
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client rejects an informational response that ends the stream (#1360)" begin
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "103", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, true, block))
+        return nothing
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/early-hints-end-stream")
+        @test err isa HT.ProtocolError
+        @test err isa HT.ProtocolError && occursin("informational response 103 must not end the stream", sprint(showerror, err))
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client rejects 101 Switching Protocols (#1360)" begin
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "101", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, block))
+        return nothing
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/switching-protocols")
+        @test err isa HT.ProtocolError
+        @test err isa HT.ProtocolError && occursin("101 Switching Protocols", sprint(showerror, err))
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client rejects DATA between an informational response and the final head (#1360)" begin
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "103", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, block))
+        _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("ok"))))
+        return nothing
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/data-before-head")
+        @test err isa HT.ProtocolError
+        @test err isa HT.ProtocolError && occursin("DATA frame received before the response headers", sprint(showerror, err))
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client applies END_STREAM once a multi-frame header block completes" begin
+    # Trailers whose block starts on a HEADERS frame carrying END_STREAM and
+    # ends on a CONTINUATION frame.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        final_block = HT.encode_header_block(enc, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+            HT.HeaderField("content-length", "2", false),
+        ])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, final_block))
+        _write_frame_to_conn!(conn, HT.DataFrame(stream_id, false, collect(codeunits("ok"))))
+        trailer_block = HT.encode_header_block(enc, HT.HeaderField[
+            HT.HeaderField("x-trailer", "done", false),
+            HT.HeaderField("x-more", "split", false),
+        ])
+        mid = cld(length(trailer_block), 2)
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, false, trailer_block[1:mid]))
+        _write_frame_to_conn!(conn, HT.ContinuationFrame(stream_id, true, trailer_block[(mid + 1):end]))
+        return nothing
+    end
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/split-trailers"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        @test HT.header(response.trailers, "x-trailer") == "done"
+        @test HT.header(response.trailers, "x-more") == "split"
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A bodiless head whose block starts on a HEADERS frame carrying END_STREAM
+    # and ends on a CONTINUATION frame.
+    listener2, address2, server_task2 = _h2_serve_scripted_response() do conn, stream_id, enc
+        head_block = HT.encode_header_block(enc, HT.HeaderField[
+            HT.HeaderField(":status", "204", false),
+            HT.HeaderField("x-split", "head", false),
+        ])
+        mid = cld(length(head_block), 2)
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, false, head_block[1:mid]))
+        _write_frame_to_conn!(conn, HT.ContinuationFrame(stream_id, true, head_block[(mid + 1):end]))
+        return nothing
+    end
+    h2_conn2 = HT.connect_h2!(address2; secure = false)
+    try
+        request = HT.Request("GET", "/split-head"; host = address2, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn2, request)
+        @test response.status == 204
+        @test HT.header(response.headers, "x-split") == "head"
+        @test isempty(_read_all_h2_body(response.body))
+        _wait_task_h2!(server_task2)
+    finally
+        close(h2_conn2)
+        HTTP.@try_ignore NC.close(listener2)
+    end
+end
+
 @testset "HTTP/2 client strips padded DATA payload bytes" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

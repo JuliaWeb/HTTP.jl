@@ -31,8 +31,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
   Each pair is the same function (extending one name extends the other), the
   historical names are not deprecated, and all six are `public`. ([#1277])
+- Added `HTTP.Handlers.logging_middleware`, an opt-in access-log middleware.
+  It wraps a request handler (or a stream handler) and emits one log record
+  per request through Julia's logging system with the method, target, response
+  status, elapsed milliseconds, the response body length when it is known
+  without reading the body, and the client peer address for stream handlers.
+  A handler exception is logged at `Logging.Error` and rethrown. This restores
+  the request logging that HTTP.jl 1.x offered through `access_log`; the
+  middleware is not exported and is off unless a handler is wrapped with it.
+  ([#1345])
 
 ### Fixed
+- `Response` objects built from a `String` body can now be sent repeatedly:
+  the string is stored as-is instead of being wrapped in a single-use
+  `BytesBody`, matching `Vector{UInt8}` bodies, so "baked" responses work on
+  the request-handler, stream-handler and HTTP/2 paths. Returning a response
+  whose streaming body was already sent now fails before the head is written
+  and the server answers `500`, instead of emitting a truncated body. ([#1333])
 - The HTTP/1.1 client now writes `Host` as the first header field line after
   the request line, as RFC 9112 §3.2 recommends and as curl, Go and Python do.
   It used to be appended after every caller-supplied and client-default header
@@ -73,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported as `unexpected EOF`) are now classified by their public error shape
   in the transport's reused-connection retry. HTTP/2 read-loop wrappers also
   preserve this classification. ([#1353])
+- The HTTP/2 client now skips informational (1xx) response header blocks such
+  as `103 Early Hints` and keeps waiting for the final response head, matching
+  the HTTP/1 client. Previously the first header block became the response
+  regardless of its `:status`, so the real head was treated as trailers and
+  the request failed with `HTTP/2 response trailers must end the stream`. A
+  1xx block carrying END_STREAM, a `101 Switching Protocols` block (not
+  supported by HTTP/2), and a DATA frame arriving before the final head are
+  rejected as protocol errors. END_STREAM on a HEADERS frame whose block ends
+  on a CONTINUATION frame is now applied once the block completes, so trailers
+  split across frames are no longer rejected. ([#1360])
 - `addcookie!(::Request, ::Cookie)` now keeps every request cookie in a single
   `Cookie` header with the pairs separated by `"; "`. It went through
   `appendheader`, which merges a repeated header into the previous entry with a
@@ -889,7 +914,10 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
 [#1277]: https://github.com/JuliaWeb/HTTP.jl/issues/1277
+[#1333]: https://github.com/JuliaWeb/HTTP.jl/issues/1333
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
+[#1345]: https://github.com/JuliaWeb/HTTP.jl/issues/1345
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
+[#1360]: https://github.com/JuliaWeb/HTTP.jl/issues/1360
 [#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361

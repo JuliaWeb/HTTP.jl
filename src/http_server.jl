@@ -1064,7 +1064,7 @@ end
     return _H2_CONN_CLOSE_INTERNAL
 end
 
-function _server_error_status(err::Exception)::Union{Nothing,Int}
+function _server_error_status(err)::Union{Nothing,Int}
     if err isa ParseError
         return 400
     end
@@ -1148,7 +1148,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 read_request(reader; max_header_bytes=server.max_header_bytes)
             catch err
                 action = _classify_server_conn_error(err::Exception)
-                status = _server_error_status(err::Exception)
+                status = _server_error_status(err)
                 status === nothing || _try_write_server_error!(tracked.conn, nothing, status::Int)
                 if action != _SERVER_CONN_ERR_RETHROW
                     return nothing
@@ -1180,7 +1180,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         return nothing
                     end
                 catch err
-                    status = _server_error_status(err::Exception)
+                    status = _server_error_status(err)
                     if !(@atomic :acquire stream.response_started)
                         @try_ignore begin
                             setstatus(stream, status === nothing ? 500 : status::Int)
@@ -1217,7 +1217,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     handler_request = _buffer_server_request(request, server.max_body_bytes)
                     server.handler(handler_request)
                 catch err
-                    status = _server_error_status(err::Exception)
+                    status = _server_error_status(err)
                     _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
                     return nothing
                 end
@@ -1228,6 +1228,16 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 response_obj = response::Response
                 response_obj.request = handler_request
+                # A response whose streaming body was already sent cannot be
+                # serialized again. Answer 500 before any bytes go out instead
+                # of failing mid-response and dropping the connection (#1333).
+                try
+                    _check_response_body_unsent(response_obj)
+                catch err
+                    @error "server handler returned a response whose body was already sent or closed" exception = err
+                    _try_write_server_error!(tracked.conn, request, 500)
+                    return nothing
+                end
                 if !_request_body_fully_consumed(handler_request)
                     response_obj.close = true
                     @try_ignore begin
