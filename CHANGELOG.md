@@ -66,8 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the string is stored as-is instead of being wrapped in a single-use
   `BytesBody`, matching `Vector{UInt8}` bodies, so "baked" responses work on
   the request-handler, stream-handler and HTTP/2 paths. Returning a response
-  whose streaming body was already sent now fails before the head is written
-  and the server answers `500`, instead of emitting a truncated body. ([#1333])
+  whose built-in `BytesBody` or `CallbackBody` was already sent now fails
+  before the head is written and the server answers `500`, instead of emitting
+  a truncated body. Bodyless responses remain valid. ([#1333])
 - The HTTP/1.1 client now writes `Host` as the first header field line after
   the request line, as RFC 9112 §3.2 recommends and as curl, Go and Python do.
   It used to be appended after every caller-supplied and client-default header
