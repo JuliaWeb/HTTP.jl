@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The HTTP/1 connection pool now honors a server-advertised
+  `Keep-Alive: timeout=<seconds>` response header: the connection is not reused
+  once that window (less a one-second safety margin) has elapsed since it went
+  idle, whichever of it and `idle_timeout_ns` is tighter, and a hint with no
+  headroom (`timeout=1` or less) makes the connection non-reusable. Previously
+  a request could be written onto a connection the server had already closed
+  at its own keep-alive deadline. ([#1155])
 - Added `HTTP2Settings` to configure HTTP/2 receive flow-control windows (per-stream `initial_window_size` and connection-level `connection_window_size`). Pass it via the `http2_settings` keyword on `Client`, `Server`, `listen!`, `serve!`, `serve`, and `connect_h2!`. Defaults preserve the protocol-default 65535-byte windows, and the per-stream receive buffer cap is derived from the window. Raising the windows improves single-stream throughput on links with non-trivial latency.
 - Added `HTTP.peeraddr(::HTTP.Stream)`, returning the remote (client) `SocketAddr` of a server stream for both plain-TCP and TLS connections and both HTTP/1 and HTTP/2. This is the supported way to obtain the client IP (for rate limiting, audit logging, and per-client policy) without reaching into transport internals, and restores the capability `Sockets.getpeername(::HTTP.Stream)` provided in HTTP.jl 1.x.
 - Added `HTTP.RetrySkippedEvent`, a request trace event emitted when the retry
@@ -26,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   historical names are not deprecated, and all six are `public`. ([#1277])
 
 ### Fixed
+- The HTTP/1.1 client now writes `Host` as the first header field line after
+  the request line, as RFC 9112 §3.2 recommends and as curl, Go and Python do.
+  It used to be appended after every caller-supplied and client-default header
+  (`User-Agent`, `Accept-Encoding`, ...), which some CDN front ends reject with
+  403 for an otherwise identical request. A caller-supplied `Host` header is
+  moved to the front rather than kept in place, and exactly one `Host` line is
+  written; `Request.headers` itself is not reordered. ([#1361])
 - Restored HTTP and WebSocket server task scheduling to Julia's `:interactive`
   thread pool so default-pool compute work cannot starve server and health-check
   tasks when an interactive thread is configured. ([#1342])
@@ -880,5 +894,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
 [#1277]: https://github.com/JuliaWeb/HTTP.jl/issues/1277
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
+[#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
 [#1360]: https://github.com/JuliaWeb/HTTP.jl/issues/1360
+[#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361
