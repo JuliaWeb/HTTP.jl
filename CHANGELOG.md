@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the request logging that HTTP.jl 1.x offered through `access_log`; the
   middleware is not exported and is off unless a handler is wrapped with it.
   ([#1345])
+- Added `max_line_bytes` and `max_header_bytes` keywords to `Transport` so the
+  HTTP/1 client's per-line and header-block limits can be tuned per transport
+  (`HTTP.Transport(max_line_bytes = 128 * 1024)`). Both must be positive and
+  `max_line_bytes` may not exceed `max_header_bytes`. ([#1362])
+
+### Changed
+- Raised the default HTTP/1 per-line limit (request/status lines and single
+  header lines) from 8 KiB to 64 KiB, matching Python's `http.client`. Real
+  origins send single header lines longer than 8 KiB — a 9,695-byte
+  `Content-Security-Policy` was reported — and HTTP.jl failed such responses
+  with `ProtocolError: HTTP/1 line exceeds configured max_line_bytes` while
+  curl and Python accepted them. The 1 MiB header-block limit is unchanged and
+  still bounds memory; the server-side request parser shares the new per-line
+  default. ([#1362])
 
 ### Fixed
 - `Response` objects built from a `String` body can now be sent repeatedly:
@@ -915,3 +929,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
 [#1360]: https://github.com/JuliaWeb/HTTP.jl/issues/1360
 [#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361
+[#1362]: https://github.com/JuliaWeb/HTTP.jl/issues/1362
