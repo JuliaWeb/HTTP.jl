@@ -1526,6 +1526,12 @@ function _handle_h2_stream!(
                 return nothing
             end
             response_obj = response::Response
+            try
+                _check_response_body_unsent(response_obj, handler_request)
+            catch err
+                @error "h2 server handler returned an unusable response body" exception = err
+                response_obj = Response(500; proto_major=2, proto_minor=0, request=handler_request)
+            end
             _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
         end
         _request_body_fully_consumed(request) || body_close!(request.body)

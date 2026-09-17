@@ -1544,6 +1544,7 @@ end
     HT.register!(router, "GET", "/string", req -> baked_string)
     HT.register!(router, "GET", "/bytes", req -> baked_bytes)
     HT.register!(router, "GET", "/once", req -> single_use)
+    HT.register!(router, "HEAD", "/once", req -> single_use)
     handler_server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
     stream_server = HT.listen!(HT.streamhandler(router), "127.0.0.1", 0; listenany = true)
     try
@@ -1567,6 +1568,9 @@ end
         @test String(response.body) == "once"
         response = HT.get("http://$(address)/once"; headers = ["Connection" => "close"], proxy = HT.ProxyConfig(), status_exception = false)
         @test response.status == 500
+        response = HT.request("HEAD", "http://$(address)/once"; proxy = HT.ProxyConfig(), retry = false, status_exception = false)
+        @test response.status == 200
+        @test isempty(String(response.body))
     finally
         HT.forceclose(handler_server)
         HT.forceclose(stream_server)

@@ -575,3 +575,15 @@ end
     HT.write_response!(IOBuffer(), empty_closed)
     @test HT.body_closed(empty_closed.body)
 end
+
+@testset "Body suppression bypasses the single-use response guard" begin
+    for (method, status) in (("HEAD", 200), ("GET", 204), ("GET", 304))
+        body = HT.BytesBody(UInt8[1])
+        HT.body_close!(body)
+        response = HT.Response(status, body; request = HT.Request(method, "/"))
+        @test HT._check_response_body_unsent(response) === nothing
+        wire = IOBuffer()
+        HT.write_response!(wire, response)
+        @test endswith(String(take!(wire)), "\r\n\r\n")
+    end
+end

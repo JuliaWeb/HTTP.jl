@@ -1882,34 +1882,18 @@ mutable struct Response{B}
     redirect_count::Int
 end
 
-"""
-    _check_response_body_unsent(response)
-
-Fail before any bytes reach the wire when `response.body` is one of HTTP's own
-in-memory streaming bodies that can no longer satisfy the framing the head is
-about to promise: a `BytesBody` or `CallbackBody` that was already sent or
-closed, or a `BytesBody` with fewer remaining bytes than the declared
-`Content-Length`. Without this the head goes out first and the peer sees a
-truncated response instead of a clean server error. `String` and
-`AbstractVector{UInt8}` bodies are stateless and always sendable, and other
-`AbstractBody` implementations are left to their own semantics.
-"""
-function _check_response_body_unsent(response::Response)::Nothing
+# Check single-use bodies before committing a response head to the wire.
+function _check_response_body_unsent(response::Response, request=response.request)::Nothing
+    _body_allowed_for_status(response.status) || return nothing
+    request !== nothing && request.method == "HEAD" && return nothing
     body = response.body
     declared = response.content_length
-    if body isa BytesBody
-        bytes = body::BytesBody
-        if body_closed(bytes)
-            declared == 0 && return nothing
-            throw(ArgumentError("response body is closed: a Response whose body was already sent cannot be sent again; use a String or Vector{UInt8} body for a reusable response"))
-        end
-        if declared > 0 && Int64(length(bytes)) < declared
-            throw(ProtocolError("response body has fewer bytes than the declared Content-Length"))
-        end
-    elseif body isa CallbackBody
-        if body_closed(body::CallbackBody) && declared != 0
-            throw(ArgumentError("response body is closed: a Response whose body was already sent cannot be sent again; use a String or Vector{UInt8} body for a reusable response"))
-        end
+    declared == 0 && return nothing
+    if body isa Union{BytesBody,CallbackBody} && body_closed(body)
+        throw(ArgumentError("response body is closed: use a String or Vector{UInt8} body for a reusable response"))
+    end
+    if body isa BytesBody && declared > length(body)
+        throw(ProtocolError("response body has fewer bytes than the declared Content-Length"))
     end
     return nothing
 end

@@ -2108,3 +2108,22 @@ end
         HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
+
+@testset "HTTP/2 refuses a spent body with a complete 500 response" begin
+    baked = HT.Response(200, HT.BytesBody(Vector{UInt8}(codeunits("once"))))
+    server = HT.serve!(_ -> baked, "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        for (method, status, text) in (("GET", 200, "once"), ("GET", 500, ""), ("HEAD", 200, ""))
+            request = HT.Request(method, "/"; host = address, content_length = 0, proto_major = 2, proto_minor = 0)
+            response = HT.h2_roundtrip!(conn, request)
+            @test response.status == status
+            @test String(_read_all_h2_server(response.body)) == text
+        end
+    finally
+        close(conn)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
