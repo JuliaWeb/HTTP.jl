@@ -484,3 +484,112 @@ end
         host = "internal\r\nX-Injected: 1", body = HT.EmptyBody(), content_length = 0)
     @test_throws HT.ParseError HT._write_request_head!(IOBuffer(), poison_host, proxy_plan)
 end
+
+@testset "HTTP/1 request writes Host as the first header field (#1361)" begin
+    # RFC 9112 §3.2: a user agent that sends Host SHOULD send it as the first
+    # field line after the request-line (curl, Go and Python all do). The
+    # injected Host used to be appended after every other header, and some
+    # CDN front ends 403 an otherwise identical request on that basis alone.
+    function header_lines(wire::AbstractString)::Vector{String}
+        head = first(split(wire, "\r\n\r\n"; limit = 2))
+        return String.(split(head, "\r\n"))[2:end]
+    end
+    host_lines(lines::Vector{String}) = filter(line -> startswith(line, "Host:"), lines)
+    function write_wire(request::HT.Request; kwargs...)::String
+        io = IOBuffer()
+        HT.write_request!(io, request; kwargs...)
+        return String(take!(io))
+    end
+
+    # Host derived from `request.host`, with client-default-style headers that
+    # were stored before the request was written (the reporter's shape).
+    headers = HT.Headers()
+    HT.setheader(headers, "User-Agent", "example")
+    HT.setheader(headers, "Accept", "*/*")
+    HT.setheader(headers, "Accept-Encoding", "gzip, deflate")
+    request = HT.Request("GET", "/"; headers = headers, host = "127.0.0.1:18798", body = HT.EmptyBody(), content_length = 0)
+    wire = write_wire(request)
+    @test wire == "GET / HTTP/1.1\r\nHost: 127.0.0.1:18798\r\nUser-Agent: example\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate\r\nContent-Length: 0\r\n\r\n"
+    @test HT.read_request(IOBuffer(codeunits(wire))).host == "127.0.0.1:18798"
+    # The writer works on a copy: the caller's headers gain no Host entry.
+    @test collect(request.headers) == ["User-Agent" => "example", "Accept" => "*/*", "Accept-Encoding" => "gzip, deflate"]
+
+    # A caller-supplied Host stored after other headers is moved to the front,
+    # written exactly once, and its value still wins over `request.host`.
+    headers = HT.Headers()
+    HT.setheader(headers, "User-Agent", "example")
+    HT.setheader(headers, "Accept", "*/*")
+    HT.setheader(headers, "Host", "override.example")
+    HT.setheader(headers, "X-Test", "1")
+    request = HT.Request("GET", "/path"; headers = headers, host = "dial.example:8080", body = HT.EmptyBody(), content_length = 0)
+    lines = header_lines(write_wire(request))
+    @test lines == ["Host: override.example", "User-Agent: example", "Accept: */*", "X-Test: 1", "Content-Length: 0"]
+    # The caller's stored order is left alone.
+    @test collect(request.headers) == ["User-Agent" => "example", "Accept" => "*/*", "Host" => "override.example", "X-Test" => "1"]
+
+    # Header keys are canonicalized on storage, so a lower-case caller key is
+    # still recognized and hoisted.
+    headers = HT.Headers()
+    push!(headers, "x-first" => "a")
+    push!(headers, "host" => "lower.example")
+    request = HT.Request("GET", "/"; headers = headers, body = HT.EmptyBody(), content_length = 0)
+    @test header_lines(write_wire(request)) == ["Host: lower.example", "X-First: a", "Content-Length: 0"]
+
+    # Duplicate stored Host entries collapse to the first one.
+    headers = HT.Headers()
+    push!(headers, "X-First" => "a")
+    push!(headers, "Host" => "one.example")
+    push!(headers, "X-Second" => "b")
+    push!(headers, "Host" => "two.example")
+    request = HT.Request("GET", "/"; headers = headers, host = "dial.example", body = HT.EmptyBody(), content_length = 0)
+    lines = header_lines(write_wire(request))
+    @test host_lines(lines) == ["Host: one.example"]
+    @test lines == ["Host: one.example", "X-First: a", "X-Second: b", "Content-Length: 0"]
+
+    # An empty caller Host defers to `request.host` (as `hasheader` always
+    # treated it), and is kept as-is when there is no `request.host` at all.
+    headers = HT.Headers()
+    push!(headers, "X-First" => "a")
+    push!(headers, "Host" => "")
+    request = HT.Request("GET", "/"; headers = headers, host = "dial.example", body = HT.EmptyBody(), content_length = 0)
+    @test header_lines(write_wire(request)) == ["Host: dial.example", "X-First: a", "Content-Length: 0"]
+    request = HT.Request("GET", "/"; headers = headers, body = HT.EmptyBody(), content_length = 0)
+    @test header_lines(write_wire(request)) == ["Host: ", "X-First: a", "Content-Length: 0"]
+
+    # No Host anywhere: none is invented (an HTTP/1.0 request may omit it).
+    request = HT.Request("GET", "/"; headers = HT.Headers(["X-First" => "a"]), proto_minor = 0, body = HT.EmptyBody(), content_length = 0)
+    lines = header_lines(write_wire(request))
+    @test isempty(host_lines(lines))
+    @test first(lines) == "X-First: a"
+
+    # Absolute-form (forward-proxy) write path via the `write_request!`
+    # keywords: Host still leads, and the injected Proxy-Authorization follows
+    # the caller's headers.
+    headers = HT.Headers()
+    HT.setheader(headers, "User-Agent", "example")
+    request = HT.Request("GET", "/x?q=1"; headers = headers, host = "origin.example", body = HT.EmptyBody(), content_length = 0)
+    wire = write_wire(request; wire_target = "http://origin.example/x?q=1", proxy_authorization = "Basic dXNlcjpwYXNz")
+    @test startswith(wire, "GET http://origin.example/x?q=1 HTTP/1.1\r\nHost: origin.example\r\n")
+    @test header_lines(wire) == ["Host: origin.example", "User-Agent: example", "Proxy-Authorization: Basic dXNlcjpwYXNz", "Content-Length: 0"]
+
+    # The transport's proxy-plan writer shares the same header preparation.
+    forward_plan = HT._ProxyPlan(HT._ProxyPlanMode.HTTP_FORWARD, nothing, "proxy:8080", "proxy-key")
+    plan_io = IOBuffer()
+    HT._write_request_head!(plan_io, request, forward_plan)
+    plan_wire = String(take!(plan_io))
+    @test startswith(plan_wire, "GET http://origin.example/x?q=1 HTTP/1.1\r\nHost: origin.example\r\n")
+    @test host_lines(header_lines(plan_wire)) == ["Host: origin.example"]
+
+    # The CONNECT tunnel request built by the transport (Host stored before
+    # Proxy-Authorization) keeps Host as its first field line, once.
+    headers = HT.Headers()
+    HT.setheader(headers, "Host", "origin.example:443")
+    HT.setheader(headers, "Proxy-Authorization", "Basic dXNlcjpwYXNz")
+    connect = HT.Request("CONNECT", "origin.example:443"; headers = headers, host = "origin.example:443", content_length = 0)
+    wire = write_wire(connect)
+    @test startswith(wire, "CONNECT origin.example:443 HTTP/1.1\r\nHost: origin.example:443\r\nProxy-Authorization: Basic dXNlcjpwYXNz\r\n")
+    @test host_lines(header_lines(wire)) == ["Host: origin.example:443"]
+    parsed = HT.read_request(IOBuffer(codeunits(wire)))
+    @test parsed.method == "CONNECT"
+    @test parsed.host == "origin.example:443"
+end

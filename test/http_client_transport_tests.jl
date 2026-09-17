@@ -1665,3 +1665,145 @@ end
         wait(server)
     end
 end
+
+@testset "Keep-Alive timeout hint parsing (#1155)" begin
+    hint = value -> HT._keepalive_timeout_hint_ns(HT.Headers("Keep-Alive" => value))
+    @test hint("timeout=5") == 5_000_000_000
+    @test hint("timeout=5, max=100") == 5_000_000_000
+    @test hint("max=100, timeout=7") == 7_000_000_000
+    @test hint("Timeout = 3") == 3_000_000_000
+    @test hint("timeout=\"4\"") == 4_000_000_000
+    @test hint("timeout=0") == 0
+    @test hint("max=100") == -1
+    @test hint("timeout=abc") == -1
+    @test hint("timeout=-5") == -1
+    @test hint("timeout=+5") == -1
+    @test hint("timeout=1.5") == -1
+    @test hint("timeout=") == -1
+    @test hint("timeout") == -1
+    @test hint("") == -1
+    @test HT._keepalive_timeout_hint_ns(HT.Headers()) == -1
+    @test hint("timeout=99999999999999999999") == HT._KEEPALIVE_TIMEOUT_MAX_S * 1_000_000_000
+    # Multiple header lines: the first well-formed timeout wins.
+    multi = HT.Headers("Keep-Alive" => "max=5", "Keep-Alive" => "timeout=2")
+    @test HT._keepalive_timeout_hint_ns(multi) == 2_000_000_000
+end
+
+@testset "HTTP client transport evicts an idle conn past its server keep-alive window (#1155)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    accepted = Channel{NC.Conn}(2)
+    server_task = Threads.@spawn begin
+        for _ in 1:2
+            put!(accepted, NC.accept(listener))
+        end
+        return nothing
+    end
+    # The pool-wide idle timeout is disabled, so only the per-connection
+    # server hint can expire a pooled connection here.
+    transport = HT.Transport(
+        max_idle_per_host = 2,
+        max_idle_total = 2,
+        max_conns_per_host = 2,
+        idle_timeout_ns = 0,
+    )
+    plan = HT._proxy_plan(transport.proxy, false, address)
+    stale_conn = nothing
+    fresh_conn = nothing
+    acquired_conn = nothing
+    server_conns = NC.Conn[]
+    try
+        stale_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        push!(server_conns, take!(accepted))
+        fresh_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        push!(server_conns, take!(accepted))
+        _wait_task!(server_task)
+
+        HT._put_idle_conn!(transport, stale_conn::HT.Conn)
+        HT._put_idle_conn!(transport, fresh_conn::HT.Conn)
+        (stale_conn::HT.Conn).keepalive_timeout_ns = 1
+        (stale_conn::HT.Conn).last_used_ns = 0
+        (fresh_conn::HT.Conn).keepalive_timeout_ns = 1
+        (fresh_conn::HT.Conn).last_used_ns = typemax(Int64)
+
+        acquired_conn = HT._acquire_conn!(transport, plan, address, false, nothing)
+        @test acquired_conn === fresh_conn
+        @test HT._conn_closed(stale_conn::HT.Conn)
+        @test (@atomic transport.idle_total) == 0
+
+        HT._close_owned_conn!(transport, acquired_conn::HT.Conn)
+        acquired_conn = nothing
+        fresh_conn = nothing
+    finally
+        acquired_conn === nothing || HT._close_owned_conn!(transport, acquired_conn::HT.Conn)
+        fresh_conn === nothing || HT._close_owned_conn!(transport, fresh_conn::HT.Conn)
+        stale_conn === nothing || HT._close_owned_conn!(transport, stale_conn::HT.Conn)
+        close(transport)
+        for conn in server_conns
+            HTTP.@try_ignore NC.close(conn)
+        end
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
+@testset "HTTP client transport honors the server Keep-Alive timeout hint end to end (#1155)" begin
+    for (hint, expect_reuse, expect_bound_ns) in (
+        ("timeout=5, max=100", true, 4_000_000_000),
+        ("max=100", true, 0),
+        ("timeout=1", false, 0),
+    )
+        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        laddr = NC.addr(listener)::NC.SocketAddrV4
+        address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+        response_bytes = collect(codeunits("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nKeep-Alive: $(hint)\r\n\r\nok"))
+        server_task = errormonitor(Threads.@spawn begin
+            nconns = 0
+            served = 0
+            while served < 2
+                conn = NC.accept(listener)
+                nconns += 1
+                served_here = 0
+                reader = HT._ConnReader(conn)
+                try
+                    while served < 2
+                        request = HT.read_request(reader)
+                        _read_all_transport_body_bytes(request.body)
+                        _write_all_tcp!(conn, response_bytes)
+                        served += 1
+                        served_here += 1
+                    end
+                catch err
+                    # A non-reusable client closes between requests.
+                    served_here > 0 || rethrow()
+                finally
+                    HTTP.@try_ignore NC.close(conn)
+                end
+            end
+            return nconns
+        end)
+        transport = HT.Transport(max_idle_per_host = 2, max_idle_total = 2)
+        try
+            for i in 1:2
+                request = HT.Request("GET", "/$(i)"; host = address, body = HT.EmptyBody(), content_length = 0)
+                response = HT.roundtrip!(transport, address, request)
+                @test String(_read_all_transport_body_bytes(response.body)) == "ok"
+                HT.body_close!(response.body)
+                if expect_reuse
+                    @test HT.idle_connection_count(transport) == 1
+                    pooled = lock(transport.lock) do
+                        first(first(values(transport.idle)))
+                    end
+                    @test pooled.keepalive_timeout_ns == expect_bound_ns
+                else
+                    @test HT.idle_connection_count(transport) == 0
+                end
+            end
+            @test fetch(server_task) == (expect_reuse ? 1 : 2)
+        finally
+            close(transport)
+            HTTP.@try_ignore NC.close(listener)
+            HTTP.@try_ignore wait(server_task)
+        end
+    end
+end
