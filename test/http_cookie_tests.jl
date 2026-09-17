@@ -128,6 +128,13 @@ end
     seeded = HT.Request("GET", "/", ["Cookie" => "a=1"])
     HT.addcookie!(seeded, HT.Cookie("b", "2"))
     @test HT.headers(seeded.headers, "Cookie") == ["a=1; b=2"]
+
+    repeated = HT.Request("GET", "/")
+    push!(repeated.headers, "Cookie" => "a=1")
+    push!(repeated.headers, "Cookie" => "b=2")
+    HT.addcookie!(repeated, HT.Cookie("c", "3"))
+    @test HT.headers(repeated, "Cookie") == ["a=1; b=2; c=3"]
+    @test [(c.name, c.value) for c in HT.cookies(repeated)] == [("a", "1"), ("b", "2"), ("c", "3")]
 end
 
 @testset "HTTP CookieJar matches host, path, secure, and delete semantics" begin
