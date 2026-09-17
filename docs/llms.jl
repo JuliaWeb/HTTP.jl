@@ -4,7 +4,7 @@
 # after `makedocs`, so the files land in the build directory and `deploydocs`
 # publishes them next to the HTML pages (`/stable/llms.txt`, `/dev/llms.txt`, ...).
 
-using HTTP
+using HTTP, Documenter
 
 # Canonical site root used for every link in the generated files.
 const LLMS_SITE_ROOT = "https://juliaweb.github.io/HTTP.jl/stable/"
@@ -294,45 +294,13 @@ function llms_current_module(body, current::Module)
     return current
 end
 
-llms_module(s::Symbol, m::Module) = getfield(m, s)::Module
-function llms_module(ex::Expr, m::Module)
-    Meta.isexpr(ex, :.) || error("llms: unsupported module expression $ex")
-    return getfield(llms_module(ex.args[1], m), ex.args[2].value)::Module
-end
+llms_module(ex, m::Module) = Documenter.DocSystem.getmod(m, ex)::Module
+llms_binding(entry::AbstractString, current::Module) =
+    Documenter.DocSystem.binding(current, Meta.parse(entry))
 
-# Resolve a `@docs` entry such as `HTTP.WebSockets.open`, `HTTP.@client`, `Request`,
-# or `f(::Int)` (the signature is ignored) to a `Base.Docs.Binding`.
-llms_binding(entry::AbstractString, current::Module) = llms_binding(Meta.parse(entry), current)
-llms_binding(s::Symbol, m::Module) = Base.Docs.Binding(m, s)
-function llms_binding(ex::Expr, m::Module)
-    if Meta.isexpr(ex, :.)
-        return Base.Docs.Binding(llms_module(ex.args[1], m), ex.args[2].value)
-    elseif Meta.isexpr(ex, (:macrocall, :call, :curly, :where))
-        return llms_binding(ex.args[1], m)
-    end
-    error("llms: unsupported @docs entry $ex")
-end
-
-# All docstrings attached to `binding`, in definition order, mirroring how
-# `Base.Docs.doc` and Documenter look them up: every module's docs dictionary is
-# checked, and an alias binding (e.g. a module or type reached through another
-# module's namespace) falls back to the binding it aliases.
-function llms_docstrings(binding::Base.Docs.Binding)
-    docs = Base.Docs.DocStr[]
-    for mod in Base.Docs.modules
-        meta = Base.Docs.meta(mod; autoinit = false)
-        (meta === nothing || !haskey(meta, binding)) && continue
-        multidoc = meta[binding]
-        for sig in multidoc.order
-            push!(docs, multidoc.docs[sig])
-        end
-    end
-    if isempty(docs)
-        alias = Base.Docs.aliasof(binding)
-        alias == binding || return llms_docstrings(alias)
-    end
-    return docs
-end
+# Reuse Documenter's alias-aware lookup, including every method's docstring.
+llms_docstrings(binding::Base.Docs.Binding) =
+    Documenter.DocSystem.getdocs(binding, Union{}; compare = (<:))
 
 # The raw markdown source of a docstring, exactly as written (no re-rendering).
 function llms_docstring_text(d::Base.Docs.DocStr)
@@ -356,8 +324,7 @@ function llms_emit_docstrings!(out::Vector{String}, entry::AbstractString, curre
     binding = llms_binding(entry, current)
     docs = llms_docstrings(binding)
     if isempty(docs)
-        @warn "llms: no docstring found for @docs entry" entry path
-        return out
+        error("llms: no docstring found for $entry in $path")
     end
     llms_emit!(out, "")
     llms_emit!(out, "### `" * entry * "` — " * llms_category(binding))

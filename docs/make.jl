@@ -22,7 +22,7 @@ pages = [
 ]
 
 makedocs(
-    sitename = "HTTP.jl v$(HTTP.VERSION)",
+    sitename = "HTTP.jl v$(pkgversion(HTTP))",
     format = Documenter.HTML(
         prettyurls = true,
         canonical = "https://juliaweb.github.io/HTTP.jl/stable",
@@ -40,6 +40,7 @@ makedocs(
 # `makedocs` (which cleans the build directory first) so that `deploydocs` publishes
 # them next to the HTML output, e.g. at `/stable/llms.txt` and `/stable/llms-full.txt`.
 write_llms_files(joinpath(@__DIR__, "build"), pages)
+include("test_llms.jl")
 
 if get(ENV, "CI", "false") == "true"
     deploydocs(
