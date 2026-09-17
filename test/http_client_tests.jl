@@ -2998,3 +2998,57 @@ end
         close(server)
     end
 end
+
+@testset "HTTP/1 client sends Host as the first header field (#1361)" begin
+    # End-to-end form of the wire-level test in http1_wire_tests.jl: the
+    # high-level client stores its default headers (User-Agent,
+    # Accept-Encoding) before the request is written, and Host must still be
+    # the first field line (RFC 9112 §3.2) both when derived from the URL and
+    # when the caller supplies it in `headers`.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    captured = Vector{Vector{String}}()
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:2
+            conn = NC.accept(listener)
+            try
+                reader = HT._ConnReader(conn)
+                lines = String[]
+                while true
+                    line = HT._readline_crlf(reader, 8192)
+                    isempty(line) && break
+                    push!(lines, line)
+                end
+                push!(captured, lines)
+                req = HT.read_request(IOBuffer(codeunits(join(lines, "\r\n") * "\r\n\r\n")))
+                _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), cookiejar = nothing)
+    try
+        derived = HT.request("GET", "http://$(address)/first?x=1"; client = client, headers = ["X-Test" => "1"], retry = false)
+        @test derived.status == 200
+        supplied = HT.request("GET", "http://$(address)/second"; client = client, headers = ["X-Test" => "2", "Host" => "override.example"], retry = false)
+        @test supplied.status == 200
+        _wait_task_client!(server_task)
+        @test length(captured) == 2
+        derived_lines, supplied_lines = captured
+        @test derived_lines[1] == "GET /first?x=1 HTTP/1.1"
+        @test derived_lines[2] == "Host: $(address)"
+        @test count(startswith("Host:"), derived_lines) == 1
+        @test "X-Test: 1" in derived_lines
+        @test any(startswith("User-Agent:"), derived_lines)
+        @test supplied_lines[1] == "GET /second HTTP/1.1"
+        @test supplied_lines[2] == "Host: override.example"
+        @test count(startswith("Host:"), supplied_lines) == 1
+        @test "X-Test: 2" in supplied_lines
+    finally
+        close(client.transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
