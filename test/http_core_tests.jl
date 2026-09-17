@@ -260,13 +260,13 @@ end
     @test compat_res.status_code == 202
     @test HT.header(compat_res.headers, "X-Reply") == "yes"
     @test compat_res.request === compat_req
-    @test compat_res.body isa HT.BytesBody
+    @test compat_res.body isa String
     @test compat_res.content_length == 2
 
     keyword_body_res = HT.Response(200; headers=["X-Body" => "keyword"], body="ok")
     @test keyword_body_res.status == 200
     @test HT.header(keyword_body_res.headers, "X-Body") == "keyword"
-    @test keyword_body_res.body isa HT.BytesBody
+    @test keyword_body_res.body isa String
     @test keyword_body_res.content_length == 2
 
     keyword_empty_res = HT.Response(204; body=nothing)
@@ -537,5 +537,53 @@ end
         @test Base.ispublic(HTTP, :setheader!)
         @test Base.ispublic(HTTP, :appendheader!)
         @test Base.ispublic(HTTP, :removeheader!)
+    end
+end
+
+@testset "String response bodies are stateless and reusable (#1333)" begin
+    text = "hello"^3
+    response = HT.Response(200; headers = ["Content-Type" => "text/plain"], body = text)
+    @test response.body === text
+    @test response.content_length == ncodeunits(text)
+    @test HT.Response(200, text).body === text
+    @test HT.Response(text).body === text
+    @test HT.Response(200, SubString("xhellox", 2, 6)).body == "hello"
+    @test HT.Response(200, ["X-A" => "1"], text).body === text
+    first_io = IOBuffer()
+    HT.write_response!(first_io, response)
+    first_bytes = take!(first_io)
+    second_io = IOBuffer()
+    HT.write_response!(second_io, response)
+    @test take!(second_io) == first_bytes
+    @test endswith(String(first_bytes), "\r\n\r\n" * text)
+
+    # Streaming bodies stay single-use, and a reuse fails before the head is
+    # written: nothing reaches the wire, so a server can still answer cleanly.
+    spent = HT.Response(200; body = HT.BytesBody(Vector{UInt8}(codeunits("once"))))
+    io = IOBuffer()
+    HT.write_response!(io, spent)
+    @test endswith(String(take!(io)), "\r\n\r\nonce")
+    again = IOBuffer()
+    @test_throws HT.ProtocolError HT.write_response!(again, spent)
+    @test position(again) == 0
+    HT.body_close!(spent.body)
+    @test_throws ArgumentError HT.write_response!(again, spent)
+    @test position(again) == 0
+    # A closed body that declared no payload is still fine to send.
+    empty_closed = HT.Response(200; body = HT.BytesBody(UInt8[]), content_length = 0)
+    HT.body_close!(empty_closed.body)
+    HT.write_response!(IOBuffer(), empty_closed)
+    @test HT.body_closed(empty_closed.body)
+end
+
+@testset "Body suppression bypasses the single-use response guard" begin
+    for (method, status) in (("HEAD", 200), ("GET", 204), ("GET", 304))
+        body = HT.BytesBody(UInt8[1])
+        HT.body_close!(body)
+        response = HT.Response(status, body; request = HT.Request(method, "/"))
+        @test HT._check_response_body_unsent(response) === nothing
+        wire = IOBuffer()
+        HT.write_response!(wire, response)
+        @test endswith(String(take!(wire)), "\r\n\r\n")
     end
 end

@@ -1533,3 +1533,48 @@ end
         @test !isopen(server)
     end
 end
+
+@testset "Baked responses are served repeatedly on both server APIs (#1333)" begin
+    text = "Hello from a baked String body!\n"^32
+    bytes = Vector{UInt8}(codeunits("Hello from a baked Vector{UInt8} body!\n"^32))
+    baked_string = HT.Response(200, ["Content-Type" => "text/plain"]; body = text)
+    baked_bytes = HT.Response(200, ["Content-Type" => "text/plain"]; body = bytes)
+    single_use = HT.Response(200, ["Content-Type" => "text/plain"]; body = HT.BytesBody(Vector{UInt8}(codeunits("once"))))
+    router = HT.Router()
+    HT.register!(router, "GET", "/string", req -> baked_string)
+    HT.register!(router, "GET", "/bytes", req -> baked_bytes)
+    HT.register!(router, "GET", "/once", req -> single_use)
+    HT.register!(router, "HEAD", "/once", req -> single_use)
+    handler_server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
+    stream_server = HT.listen!(HT.streamhandler(router), "127.0.0.1", 0; listenany = true)
+    try
+        for server in (handler_server, stream_server)
+            address = HT.server_addr(server)
+            for _ in 1:2
+                response = HT.get("http://$(address)/string"; headers = ["Connection" => "close"], proxy = HT.ProxyConfig())
+                @test response.status == 200
+                @test String(response.body) == text
+                response = HT.get("http://$(address)/bytes"; headers = ["Connection" => "close"], proxy = HT.ProxyConfig())
+                @test response.status == 200
+                @test String(response.body) == String(copy(bytes))
+            end
+        end
+        # A streaming body is single-use: the second send is refused before the
+        # head is written, so the client gets a clean 500 instead of a
+        # truncated body on a dropped connection.
+        address = HT.server_addr(handler_server)
+        response = HT.get("http://$(address)/once"; headers = ["Connection" => "close"], proxy = HT.ProxyConfig())
+        @test response.status == 200
+        @test String(response.body) == "once"
+        response = HT.get("http://$(address)/once"; headers = ["Connection" => "close"], proxy = HT.ProxyConfig(), status_exception = false)
+        @test response.status == 500
+        response = HT.request("HEAD", "http://$(address)/once"; proxy = HT.ProxyConfig(), retry = false, status_exception = false)
+        @test response.status == 200
+        @test isempty(String(response.body))
+    finally
+        HT.forceclose(handler_server)
+        HT.forceclose(stream_server)
+        wait(handler_server)
+        wait(stream_server)
+    end
+end

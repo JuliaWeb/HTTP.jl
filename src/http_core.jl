@@ -1563,7 +1563,13 @@ end
 @inline _response_body_arg(::Nothing) = EmptyBody()
 @inline _response_body_arg(body::AbstractBody) = body
 @inline _response_body_arg(body::AbstractVector{UInt8}) = body
-@inline _response_body_arg(body::AbstractString) = _compat_body_arg(body)
+# Server-built responses keep `String` and `AbstractVector{UInt8}` bodies as given.
+# Both are stateless, so one `Response` can be sent any number of times (baked
+# responses), and every write path emits them zero-copy. Wrapping a string in a
+# cursor-based `BytesBody` made the first send consume it and left the second
+# send with a truncated or empty body (#1333). Requests keep `BytesBody`, since
+# `Request` requires an `AbstractBody`.
+@inline _response_body_arg(body::AbstractString) = String(body)
 _response_body_arg(body) = _compat_body_arg(body)
 
 """
@@ -1876,6 +1882,22 @@ mutable struct Response{B}
     redirect_count::Int
 end
 
+# Check single-use bodies before committing a response head to the wire.
+function _check_response_body_unsent(response::Response, request=response.request)::Nothing
+    _body_allowed_for_status(response.status) || return nothing
+    request !== nothing && request.method == "HEAD" && return nothing
+    body = response.body
+    declared = response.content_length
+    declared == 0 && return nothing
+    if body isa Union{BytesBody,CallbackBody} && body_closed(body)
+        throw(ArgumentError("response body is closed: use a String or Vector{UInt8} body for a reusable response"))
+    end
+    if body isa BytesBody && declared > length(body)
+        throw(ProtocolError("response body has fewer bytes than the declared Content-Length"))
+    end
+    return nothing
+end
+
 struct _IncomingResponseHead
     status::Int
     reason::String
@@ -1942,8 +1964,7 @@ end
 
 Response() = Response(0)
 
-Response(status::Int, body::AbstractString) = Response(status, BytesBody(Vector{UInt8}(codeunits(String(body)))))
-Response(body::AbstractString) = Response(200, BytesBody(Vector{UInt8}(codeunits(String(body)))))
+Response(body::AbstractString) = Response(200, body)
 Response(body::AbstractVector{UInt8}) = Response(200, body)
 
 function Response(

@@ -141,6 +141,10 @@ Important `Client` and `Transport` knobs:
 
 - `prefer_http2 = true` to prefer ALPN-negotiated HTTP/2 for secure traffic
 - connection-pool sizing via `max_idle_per_host` and `max_idle_total`
+- HTTP/1 response header limits via `max_line_bytes` (one status or header
+  line, default 64 KiB) and `max_header_bytes` (the whole header block,
+  default 1 MiB); raise `max_line_bytes` for origins that send very long
+  header lines such as large `Content-Security-Policy` values
 - shared `CookieJar` state across related requests
 - explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`;
   proxy URLs may use `http://`, `socks5://`, or `socks5h://`

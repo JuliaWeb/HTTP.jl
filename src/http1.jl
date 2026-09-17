@@ -1,6 +1,12 @@
 # HTTP/1.1 parser and serializer primitives used by client and server stacks.
 
-const _HTTP1_DEFAULT_MAX_LINE_BYTES = 8 * 1024
+# Per-line limit for a request/status line or a single header line (counted
+# including its CRLF terminator), shared by the client and server parsers.
+# 64 KiB matches Python's `http.client`/`http.server` `_MAXLINE`; real-world
+# responses carry single header lines well over 8 KiB (a 9,695-byte
+# `Content-Security-Policy` was reported in #1362), and the header-block limit
+# below still bounds the memory one message's headers can pin.
+const _HTTP1_DEFAULT_MAX_LINE_BYTES = 64 * 1024
 const _HTTP1_DEFAULT_MAX_HEADER_BYTES = 1 * 1024 * 1024
 
 """
@@ -903,6 +909,7 @@ function write_response!(io::IO, response::Response)
     end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
+    allows_body && _check_response_body_unsent(response)
     # Buffer the entire response head (status line + all header lines + blank
     # CRLF) into a single IOBuffer and write it to the transport in one
     # syscall. The transport's `write` does not buffer internally, so emitting

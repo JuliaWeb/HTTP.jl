@@ -1807,3 +1807,215 @@ end
         end
     end
 end
+
+# --- Response header limits (issue #1362) -------------------------------------
+
+@testset "HTTP transport constructor validates header limits" begin
+    transport = HT.Transport()
+    try
+        @test HT._HTTP1_DEFAULT_MAX_LINE_BYTES == 64 * 1024
+        @test transport.max_line_bytes == 64 * 1024
+        @test transport.max_header_bytes == 1024 * 1024
+    finally
+        close(transport)
+    end
+    # A header-block limit below the default per-line limit pulls the per-line
+    # limit down with it instead of rejecting the lone keyword.
+    small = HT.Transport(max_header_bytes = 16 * 1024)
+    try
+        @test small.max_line_bytes == 16 * 1024
+        @test small.max_header_bytes == 16 * 1024
+    finally
+        close(small)
+    end
+    large = HT.Transport(max_line_bytes = 2 * 1024 * 1024, max_header_bytes = 4 * 1024 * 1024)
+    try
+        @test large.max_line_bytes == 2 * 1024 * 1024
+        @test large.max_header_bytes == 4 * 1024 * 1024
+    finally
+        close(large)
+    end
+    @test_throws ArgumentError HT.Transport(max_line_bytes = 0)
+    @test_throws ArgumentError HT.Transport(max_line_bytes = -1)
+    @test_throws ArgumentError HT.Transport(max_header_bytes = 0)
+    @test_throws ArgumentError HT.Transport(max_header_bytes = -1)
+    # The per-line limit can never usefully exceed the header-block limit.
+    @test_throws ArgumentError HT.Transport(max_line_bytes = 2 * 1024 * 1024)
+    @test_throws ArgumentError HT.Transport(max_line_bytes = 64 * 1024, max_header_bytes = 16 * 1024)
+end
+
+# Mock origin for the header-limit tests: accept one connection, read one
+# request, write `response_bytes` verbatim, and close. The write is
+# best-effort because a client that rejects the response mid-header closes its
+# end before the whole payload has been delivered.
+function _serve_one_raw_response(response_bytes::Vector{UInt8})
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            request = HT.read_request(HT._ConnReader(conn))
+            _read_all_transport_body_bytes(request.body)
+            HTTP.@try_ignore _write_all_tcp!(conn, response_bytes)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    return listener, address, server_task
+end
+
+function _raw_response_bytes(header_lines::Vector{String}, body::String)::Vector{UInt8}
+    io = IOBuffer()
+    write(io, "HTTP/1.1 200 OK\r\n")
+    for line in header_lines
+        write(io, line, "\r\n")
+    end
+    write(io, "Content-Length: ", string(ncodeunits(body)), "\r\nConnection: close\r\n\r\n", body)
+    return take!(io)
+end
+
+# One GET through a fresh `Transport(; kwargs...)` against a mock origin that
+# replies with `response_bytes`. Returns the response, its body text, and the
+# exception the roundtrip raised (or `nothing`).
+function _roundtrip_raw_response(response_bytes::Vector{UInt8}; kwargs...)
+    listener, address, server_task = _serve_one_raw_response(response_bytes)
+    transport = HT.Transport(; kwargs...)
+    result = (response = nothing, body = "", error = nothing)
+    try
+        request = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0)
+        try
+            response = HT.roundtrip!(transport, address, request)
+            body = String(_read_all_transport_body_bytes(response.body))
+            result = (response = response, body = body, error = nothing)
+        catch err
+            result = (response = nothing, body = "", error = err)
+        end
+    finally
+        close(transport)
+        _wait_task!(server_task)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    return result
+end
+
+if _http_windows_ci()
+    @testset "HTTP client transport accepts long response header lines" begin
+        @test_skip true
+    end
+
+    @testset "HTTP client transport still bounds response header lines" begin
+        @test_skip true
+    end
+
+    @testset "HTTP client transport bounds the response header block" begin
+        @test_skip true
+    end
+else
+@testset "HTTP client transport accepts long response header lines" begin
+    # Issue #1362: a 9,695-byte Content-Security-Policy line seen in the wild
+    # failed under the old 8 KiB per-line default while curl and Python
+    # accepted the response.
+    csp_prefix = "Content-Security-Policy: "
+    csp_value = repeat("a", 9_695 - ncodeunits(csp_prefix))
+    csp_line = csp_prefix * csp_value
+    @test ncodeunits(csp_line) == 9_695
+    response_bytes = _raw_response_bytes([csp_line], "ok")
+
+    accepted = _roundtrip_raw_response(response_bytes)
+    @test accepted.error === nothing
+    if accepted.response !== nothing
+        @test accepted.response.status == 200
+        @test HT.header(accepted.response, "Content-Security-Policy") == csp_value
+        @test accepted.body == "ok"
+    end
+
+    # The old default is still reachable through the knob, and it rejects the
+    # same response: max_line_bytes lowers the limit.
+    lowered = _roundtrip_raw_response(response_bytes; max_line_bytes = 8 * 1024)
+    @test lowered.error isa HT.ProtocolError
+    if lowered.error isa HT.ProtocolError
+        @test lowered.error.code == HT._PROTOCOL_ERROR_LINE_TOO_LONG
+        @test lowered.error.message == "HTTP/1 line exceeds configured max_line_bytes"
+    end
+end
+
+@testset "HTTP client transport still bounds response header lines" begin
+    limit = HT._HTTP1_DEFAULT_MAX_LINE_BYTES
+    prefix = "X-Long: "
+    # The limit counts the CRLF terminator: a line of exactly `limit` bytes on
+    # the wire is accepted, one more byte is rejected.
+    at_limit = prefix * repeat("b", limit - 2 - ncodeunits(prefix))
+    over_limit = prefix * repeat("b", limit - 1 - ncodeunits(prefix))
+    @test ncodeunits(at_limit) + 2 == limit
+    @test ncodeunits(over_limit) + 2 == limit + 1
+
+    accepted = _roundtrip_raw_response(_raw_response_bytes([at_limit], "ok"))
+    @test accepted.error === nothing
+    if accepted.response !== nothing
+        @test accepted.response.status == 200
+        @test ncodeunits(HT.header(accepted.response, "X-Long")) == limit - 2 - ncodeunits(prefix)
+        @test accepted.body == "ok"
+    end
+
+    rejected = _roundtrip_raw_response(_raw_response_bytes([over_limit], "ok"))
+    @test rejected.error isa HT.ProtocolError
+    if rejected.error isa HT.ProtocolError
+        @test rejected.error.code == HT._PROTOCOL_ERROR_LINE_TOO_LONG
+        @test rejected.error.message == "HTTP/1 line exceeds configured max_line_bytes"
+    end
+
+    # Raising max_line_bytes accepts the longer line.
+    raised = _roundtrip_raw_response(_raw_response_bytes([over_limit], "ok"); max_line_bytes = 2 * limit)
+    @test raised.error === nothing
+    if raised.response !== nothing
+        @test raised.response.status == 200
+        @test raised.body == "ok"
+    end
+end
+
+@testset "HTTP client transport bounds the response header block" begin
+    # Ten ~1 KiB header lines: each fits the per-line limit, together they
+    # exceed a 4 KiB max_header_bytes.
+    lines = ["X-Filler-$(i): " * repeat("c", 1000) for i in 1:10]
+    response_bytes = _raw_response_bytes(lines, "ok")
+
+    rejected = _roundtrip_raw_response(response_bytes; max_header_bytes = 4 * 1024)
+    @test rejected.error isa HT.ProtocolError
+    if rejected.error isa HT.ProtocolError
+        @test rejected.error.code == HT._PROTOCOL_ERROR_HEADERS_TOO_LARGE
+        @test rejected.error.message == "HTTP/1 headers exceed configured max_header_bytes"
+    end
+
+    accepted = _roundtrip_raw_response(response_bytes)
+    @test accepted.error === nothing
+    if accepted.response !== nothing
+        @test accepted.response.status == 200
+        @test HT.header(accepted.response, "X-Filler-10") == repeat("c", 1000)
+        @test accepted.body == "ok"
+    end
+end
+@testset "HTTP transport limits cover informational heads and trailers" begin
+    final = String(_raw_response_bytes(["X-Final: " * "x"^128], "ok"))
+    informational = Vector{UInt8}(codeunits("HTTP/1.1 103 Early Hints\r\nLink: </style.css>\r\n\r\n" * final))
+    accepted = _roundtrip_raw_response(informational; max_line_bytes = 256)
+    @test accepted.error === nothing
+    @test accepted.body == "ok"
+    rejected = _roundtrip_raw_response(informational; max_line_bytes = 64)
+    @test rejected.error isa HT.ProtocolError
+    @test rejected.error.code == HT._PROTOCOL_ERROR_LINE_TOO_LONG
+
+    chunked = Vector{UInt8}(codeunits("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\nX-Trailer: " * "x"^128 * "\r\n\r\n"))
+    accepted = _roundtrip_raw_response(chunked; max_line_bytes = 256)
+    @test accepted.error === nothing
+    @test accepted.body == "ok"
+    @test HT.header(accepted.response.trailers, "X-Trailer") == "x"^128
+    rejected = _roundtrip_raw_response(chunked; max_line_bytes = 64)
+    @test rejected.error isa HT.ProtocolError
+    @test rejected.error.code == HT._PROTOCOL_ERROR_LINE_TOO_LONG
+    rejected = _roundtrip_raw_response(chunked; max_header_bytes = 128)
+    @test rejected.error isa HT.ProtocolError
+end
+
+end
