@@ -546,3 +546,24 @@ end
         wait(server)
     end
 end
+
+@testset "Access log status matches non-Exception handler failures" begin
+    for stream in (false, true), protocol in (:h1, :h2)
+        logger = Test.TestLogger()
+        handler = HT.Handlers.logging_middleware(_ -> throw(:boom); logger = logger)
+        server = stream ? HT.listen!(handler, "127.0.0.1", 0; listenany = true) :
+                          HT.serve!(handler, "127.0.0.1", 0; listenany = true)
+        client = HT.Client()
+        try
+            response = HT.get(client, "http://$(HT.server_addr(server))/"; protocol = protocol, retry = false, status_exception = false)
+            @test response.status == 500
+        finally
+            close(client)
+            HT.forceclose(server)
+            wait(server)
+        end
+        record = only(logger.logs)
+        @test record.kwargs[:status] == 500
+        @test record.kwargs[:exception][1] === :boom
+    end
+end

@@ -446,7 +446,7 @@ end
 # The status the server writes when a handler throws before its response head
 # is on the wire (mirrors the `_serve_h1_conn!` and h2 catch blocks).
 @inline function _access_error_status(err)::Int
-    status = err isa Exception ? _server_error_status(err) : nothing
+    status = _server_error_status(err)
     return status === nothing ? 500 : status::Int
 end
 

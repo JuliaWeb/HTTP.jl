@@ -1472,7 +1472,7 @@ function _handle_h2_stream!(
                         _write_frame_h2_server_threadsafe!(write_lock, conn, RSTStreamFrame(stream_id, UInt32(0x2)))
                     end
                 else
-                    status = _server_error_status(err::Exception)
+                    status = _server_error_status(err)
                     stream.request_buffer = IOBuffer()
                     stream.response = Response(
                         status === nothing ? 500 : status::Int;
@@ -1493,7 +1493,7 @@ function _handle_h2_stream!(
                 handler_request = _buffer_server_request(request, server.max_body_bytes; close_body_on_error=false)
                 server.handler(handler_request)
             catch err
-                status = _server_error_status(err::Exception)
+                status = _server_error_status(err)
                 _write_h2_response!(
                     conn,
                     write_lock,
