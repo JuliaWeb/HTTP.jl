@@ -16,6 +16,7 @@ import ..Request
 import ..Response
 import ..appendheader
 import ..headers
+import ..setheader
 import .._valid_header_field_name
 
 include("http_public_suffix.jl")
@@ -190,7 +191,8 @@ slot.
 function addcookie! end
 
 function addcookie!(r::Request, c::Cookie)
-    appendheader(r.headers, "Cookie", stringify(c))
+    # one Cookie header, pairs joined with "; " (RFC 6265 5.4); appendheader would join with ","
+    setheader(r.headers, "Cookie" => stringify(join(headers(r.headers, "Cookie"), "; "), [c]))
     return r
 end
 

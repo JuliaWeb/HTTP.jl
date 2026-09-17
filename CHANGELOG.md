@@ -112,6 +112,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejected as protocol errors. END_STREAM on a HEADERS frame whose block ends
   on a CONTINUATION frame is now applied once the block completes, so trailers
   split across frames are no longer rejected. ([#1360])
+- `addcookie!(::Request, ::Cookie)` now keeps every request cookie in a single
+  `Cookie` header with the pairs separated by `"; "`. It went through
+  `appendheader`, which merges a repeated header into the previous entry with a
+  comma, so two adjacent calls produced `Cookie: a=1,b=2`. `cookies(::Request)`
+  splits a `Cookie` header on `;` only, so that header parsed back as the single
+  cookie `a="1,b=2"` and the second cookie was lost.
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
