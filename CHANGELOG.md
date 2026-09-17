@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
   Each pair is the same function (extending one name extends the other), the
   historical names are not deprecated, and all six are `public`. ([#1277])
+- Added `HTTP.Handlers.logging_middleware`, an opt-in access-log middleware.
+  It wraps a request handler (or a stream handler) and emits one log record
+  per request through Julia's logging system with the method, target, response
+  status, elapsed milliseconds, the response body length when it is known
+  without reading the body, and the client peer address for stream handlers.
+  A handler exception is logged at `Logging.Error` and rethrown. This restores
+  the request logging that HTTP.jl 1.x offered through `access_log`; the
+  middleware is not exported and is off unless a handler is wrapped with it.
+  ([#1345])
 
 ### Fixed
 - The HTTP/1.1 client now writes `Host` as the first header field line after
@@ -885,5 +894,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1277]: https://github.com/JuliaWeb/HTTP.jl/issues/1277
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
+[#1345]: https://github.com/JuliaWeb/HTTP.jl/issues/1345
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
 [#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361

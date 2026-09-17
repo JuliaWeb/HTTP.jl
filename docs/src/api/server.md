@@ -49,6 +49,7 @@ HTTP.Handlers.getparams
 HTTP.Handlers.getparam
 HTTP.Handlers.getcookies
 HTTP.Handlers.handlertimeout
+HTTP.Handlers.logging_middleware
 ```
 
 ## Server-Sent Events
