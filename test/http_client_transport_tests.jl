@@ -1996,4 +1996,26 @@ end
         @test accepted.body == "ok"
     end
 end
+@testset "HTTP transport limits cover informational heads and trailers" begin
+    final = String(_raw_response_bytes(["X-Final: " * "x"^128], "ok"))
+    informational = Vector{UInt8}(codeunits("HTTP/1.1 103 Early Hints\r\nLink: </style.css>\r\n\r\n" * final))
+    accepted = _roundtrip_raw_response(informational; max_line_bytes = 256)
+    @test accepted.error === nothing
+    @test accepted.body == "ok"
+    rejected = _roundtrip_raw_response(informational; max_line_bytes = 64)
+    @test rejected.error isa HT.ProtocolError
+    @test rejected.error.code == HT._PROTOCOL_ERROR_LINE_TOO_LONG
+
+    chunked = Vector{UInt8}(codeunits("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\nX-Trailer: " * "x"^128 * "\r\n\r\n"))
+    accepted = _roundtrip_raw_response(chunked; max_line_bytes = 256)
+    @test accepted.error === nothing
+    @test accepted.body == "ok"
+    @test HT.header(accepted.response.trailers, "X-Trailer") == "x"^128
+    rejected = _roundtrip_raw_response(chunked; max_line_bytes = 64)
+    @test rejected.error isa HT.ProtocolError
+    @test rejected.error.code == HT._PROTOCOL_ERROR_LINE_TOO_LONG
+    rejected = _roundtrip_raw_response(chunked; max_header_bytes = 128)
+    @test rejected.error isa HT.ProtocolError
+end
+
 end

@@ -1799,9 +1799,9 @@ function _read_transport_incoming_response(
     transport::Transport,
     conn::Conn,
     request::Request,
-    max_line_bytes::Integer,
-    max_header_bytes::Integer,
 )
+    max_line_bytes = transport.max_line_bytes
+    max_header_bytes = transport.max_header_bytes
     line = _readline_crlf(reader, max_line_bytes)
     proto_major, proto_minor, status, reason = _parse_status_line(line)
     headers = _read_headers(reader, max_line_bytes, max_header_bytes)
@@ -2005,7 +2005,7 @@ function _roundtrip_incoming!(
             end
             reader = conn.reader
             _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(attempt_request))
-            raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request, transport.max_line_bytes, transport.max_header_bytes)
+            raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request)
             # HTTP/1 informational responses are consumed internally so callers
             # observe the final non-1xx response.
             while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
@@ -2015,7 +2015,7 @@ function _roundtrip_incoming!(
                 @try_ignore begin
                     body_close!(raw_response.rawbody)
                 end
-                raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request, transport.max_line_bytes, transport.max_header_bytes)
+                raw_response = _read_transport_incoming_response(reader, transport, conn, attempt_request)
             end
             _set_conn_read_deadline!(conn, request_deadline)
             early_final = false
