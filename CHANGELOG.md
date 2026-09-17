@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported as `unexpected EOF`) are now classified by their public error shape
   in the transport's reused-connection retry. HTTP/2 read-loop wrappers also
   preserve this classification. ([#1353])
+- The HTTP/2 client now skips informational (1xx) response header blocks such
+  as `103 Early Hints` and keeps waiting for the final response head, matching
+  the HTTP/1 client. Previously the first header block became the response
+  regardless of its `:status`, so the real head was treated as trailers and
+  the request failed with `HTTP/2 response trailers must end the stream`. A
+  1xx block carrying END_STREAM, a `101 Switching Protocols` block (not
+  supported by HTTP/2), and a DATA frame arriving before the final head are
+  rejected as protocol errors. END_STREAM on a HEADERS frame whose block ends
+  on a CONTINUATION frame is now applied once the block completes, so trailers
+  split across frames are no longer rejected. ([#1360])
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
@@ -903,4 +913,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
 [#1345]: https://github.com/JuliaWeb/HTTP.jl/issues/1345
 [#1353]: https://github.com/JuliaWeb/HTTP.jl/issues/1353
+[#1360]: https://github.com/JuliaWeb/HTTP.jl/issues/1360
 [#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361
