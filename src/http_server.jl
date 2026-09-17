@@ -1064,7 +1064,7 @@ end
     return _H2_CONN_CLOSE_INTERNAL
 end
 
-function _server_error_status(err::Exception)::Union{Nothing,Int}
+function _server_error_status(err)::Union{Nothing,Int}
     if err isa ParseError
         return 400
     end
@@ -1148,7 +1148,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 read_request(reader; max_header_bytes=server.max_header_bytes)
             catch err
                 action = _classify_server_conn_error(err::Exception)
-                status = _server_error_status(err::Exception)
+                status = _server_error_status(err)
                 status === nothing || _try_write_server_error!(tracked.conn, nothing, status::Int)
                 if action != _SERVER_CONN_ERR_RETHROW
                     return nothing
@@ -1180,7 +1180,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         return nothing
                     end
                 catch err
-                    status = _server_error_status(err::Exception)
+                    status = _server_error_status(err)
                     if !(@atomic :acquire stream.response_started)
                         @try_ignore begin
                             setstatus(stream, status === nothing ? 500 : status::Int)
@@ -1217,7 +1217,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     handler_request = _buffer_server_request(request, server.max_body_bytes)
                     server.handler(handler_request)
                 catch err
-                    status = _server_error_status(err::Exception)
+                    status = _server_error_status(err)
                     _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
                     return nothing
                 end
