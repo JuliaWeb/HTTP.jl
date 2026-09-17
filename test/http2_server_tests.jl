@@ -2127,3 +2127,33 @@ end
         wait(server)
     end
 end
+
+@testset "HTTP/2 reset interrupts a server request-body read" begin
+    reading = Channel{Nothing}(1)
+    outcome = Channel{Any}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        HT.startread(stream)
+        put!(reading, nothing)
+        result = try
+            readbytes!(stream, Vector{UInt8}(undef, 1), 1)
+        catch err
+            err
+        end
+        put!(outcome, result)
+    end
+    conn = nothing
+    try
+        address = HT.server_addr(server)
+        conn, _ = _open_raw_h2_server_conn(address)
+        _write_h2_server_request_headers!(conn, HT.Encoder(), UInt32(1), address, "/reset"; method = "POST", end_stream = false)
+        take!(reading)
+        _write_frame_h2_server_raw!(conn, HT.RSTStreamFrame(UInt32(1), UInt32(0x8)))
+        err = take!(outcome)
+        @test err isa HT.ProtocolError
+        @test err isa HT.ProtocolError && err.message == "HTTP/2 stream reset by peer"
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn)
+        HT.forceclose(server)
+        wait(server)
+    end
+end

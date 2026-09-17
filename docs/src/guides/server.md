@@ -82,9 +82,9 @@ handler(req) = HEALTH
 ```
 
 Streaming bodies (`HTTP.BytesBody`, `HTTP.CallbackBody`, and the bodies of
-incoming messages) are single-use: they are consumed and closed as they are
-sent. Returning such a response a second time fails before any bytes reach the
-wire, and the server answers that request with a `500`.
+incoming messages) are single-use. Use a new streaming body for each response.
+HTTP checks `BytesBody` and `CallbackBody` before sending the response head;
+do not rely on this check for other `AbstractBody` implementations.
 
 ## Stream Handlers
 

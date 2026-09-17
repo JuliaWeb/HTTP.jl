@@ -49,6 +49,16 @@ String(resp.body)
 - The [Migration guide](guides/migration-1x.md) calls out the major 1.x to 2.0 shifts.
 - The [API reference](api/reference.md) is the canonical home for exported and documented submodule APIs.
 
+## Docs for LLMs
+
+The documentation is also published as plain markdown for LLM tooling, following
+the [llms.txt](https://llmstxt.org/) convention:
+
+- [llms.txt](https://juliaweb.github.io/HTTP.jl/stable/llms.txt): a short index of the documentation pages.
+- [llms-full.txt](https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt): every page, with all docstrings expanded, in a single file.
+
+Give either file to an assistant when you ask it about HTTP.jl.
+
 ## Design Direction
 
 - `HTTP.jl` owns the HTTP protocol stack; `Reseau` owns the transport/runtime/TLS substrate.
