@@ -2085,3 +2085,45 @@ end
                                   HT.HeaderField("host", "internal-admin", false)])
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(merged_hosts)
 end
+
+@testset "HTTP/2 server sends a baked String response repeatedly (#1333)" begin
+    text = "Hello from a baked String body over h2!\n"^16
+    baked = HT.Response(200, ["Content-Type" => "text/plain"]; body = text)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return baked
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        for i in 1:2
+            request = HT.Request("GET", "/baked/$(i)"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            response = HT.h2_roundtrip!(conn, request)
+            @test response.status == 200
+            @test String(_read_all_h2_server(response.body)) == text
+        end
+    finally
+        close(conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+@testset "HTTP/2 refuses a spent body with a complete 500 response" begin
+    baked = HT.Response(200, HT.BytesBody(Vector{UInt8}(codeunits("once"))))
+    server = HT.serve!(_ -> baked, "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        for (method, status, text) in (("GET", 200, "once"), ("GET", 500, ""), ("HEAD", 200, ""))
+            request = HT.Request(method, "/"; host = address, content_length = 0, proto_major = 2, proto_minor = 0)
+            response = HT.h2_roundtrip!(conn, request)
+            @test response.status == status
+            @test String(_read_all_h2_server(response.body)) == text
+        end
+    finally
+        close(conn)
+        HT.forceclose(server)
+        wait(server)
+    end
+end

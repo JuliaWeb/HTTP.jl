@@ -903,6 +903,7 @@ function write_response!(io::IO, response::Response)
     end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
+    allows_body && _check_response_body_unsent(response)
     # Buffer the entire response head (status line + all header lines + blank
     # CRLF) into a single IOBuffer and write it to the transport in one
     # syscall. The transport's `write` does not buffer internally, so emitting

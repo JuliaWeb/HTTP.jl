@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#1345])
 
 ### Fixed
+- `Response` objects built from a `String` body can now be sent repeatedly:
+  the string is stored as-is instead of being wrapped in a single-use
+  `BytesBody`, matching `Vector{UInt8}` bodies, so "baked" responses work on
+  the request-handler, stream-handler and HTTP/2 paths. Returning a response
+  whose streaming body was already sent now fails before the head is written
+  and the server answers `500`, instead of emitting a truncated body. ([#1333])
 - The HTTP/1.1 client now writes `Host` as the first header field line after
   the request line, as RFC 9112 §3.2 recommends and as curl, Go and Python do.
   It used to be appended after every caller-supplied and client-default header
@@ -892,6 +898,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
 [#1277]: https://github.com/JuliaWeb/HTTP.jl/issues/1277
+[#1333]: https://github.com/JuliaWeb/HTTP.jl/issues/1333
 [#1342]: https://github.com/JuliaWeb/HTTP.jl/issues/1342
 [#1155]: https://github.com/JuliaWeb/HTTP.jl/issues/1155
 [#1345]: https://github.com/JuliaWeb/HTTP.jl/issues/1345
