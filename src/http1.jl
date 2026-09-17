@@ -735,6 +735,33 @@ function _request_has_body(request::Request)::Bool
     return true
 end
 
+# RFC 9112 §3.2: "A user agent that sends Host SHOULD send it as the first
+# field line after the request-line." curl, Go's net/http and Python's
+# http.client all do, and some CDN/WAF front ends reject an otherwise identical
+# request whose Host arrives after other fields (#1361). `setheader` appends a
+# key that is not already stored, which used to land the injected `Host` after
+# every caller-supplied and client-default header.
+#
+# The value is the caller's `Host` header when one is stored with a non-empty
+# value, otherwise `request.host` (the URL authority as written); an
+# empty-valued caller `Host` is kept as-is when there is no `request.host`
+# (RFC 9112 §3.2.2 requires an empty Host for authority-less targets). Exactly
+# one `Host` line is written: a caller-supplied `Host` is moved to the front
+# rather than duplicated, and any further stored `Host` entries are dropped.
+function _hoist_host_header!(headers::Headers, request_host::Union{Nothing,String})::Nothing
+    host_value = header(headers, "Host")::String
+    if isempty(host_value)
+        if request_host !== nothing
+            host_value = request_host::String
+        elseif !haskey(headers, "Host")
+            return nothing
+        end
+    end
+    removeheader(headers, "Host")
+    pushfirst!(headers.entries, "Host" => host_value)
+    return nothing
+end
+
 function _prepare_request_headers_for_write(
     request::Request,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
@@ -743,10 +770,7 @@ function _prepare_request_headers_for_write(
     if proxy_authorization !== nothing && !hasheader(headers, "Proxy-Authorization")
         setheader(headers, "Proxy-Authorization", String(proxy_authorization))
     end
-    has_host = hasheader(headers, "Host")
-    if !has_host && request.host !== nothing
-        setheader(headers, "Host", request.host::String)
-    end
+    _hoist_host_header!(headers, request.host)
     request_close = request.close || _should_close_connection(headers, request.proto_major, request.proto_minor)
     request_close && setheader(headers, "Connection", "close")
     use_chunked = _parse_transfer_encoding!(headers, request.proto_major, request.proto_minor)
@@ -810,7 +834,9 @@ end
 Serialize an HTTP/1 request to `io`, including body framing.
 
 Behavior:
-- injects `Host` from `request.host` when missing
+- writes exactly one `Host` line as the first header field (RFC 9112 §3.2),
+  taking the value from a caller-supplied `Host` header when present and from
+  `request.host` otherwise
 - normalizes connection-close signaling
 - chooses between `Content-Length` and chunked transfer-coding
 - serializes trailers only for chunked bodies
