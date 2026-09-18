@@ -1,6 +1,6 @@
 # HTTP.jl documentation
 
-> Complete documentation for HTTP.jl v2.7.0 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+> Complete documentation for HTTP.jl v2.7.1 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
 
 ---
 
