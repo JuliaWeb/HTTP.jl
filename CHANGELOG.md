@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- The HTTP/2 client now returns connection-level flow-control credit for
+  response bytes it received but never read: when a body is closed unread
+  (including every attempt the built-in retry loop gives up on), when DATA
+  arrives for a stream that was already reset, and for DATA frame padding.
+  Previously each such body permanently shrank the shared 65535-byte
+  connection window, and once it hit zero every later response on that
+  connection stalled until a timeout or a peer reset. Polling an endpoint that
+  answers `5xx` for a while was enough to trigger it. ([#1371])
 - `Response` objects built from a `String` body can now be sent repeatedly:
   the string is stored as-is instead of being wrapped in a single-use
   `BytesBody`, matching `Vector{UInt8}` bodies, so "baked" responses work on
@@ -944,3 +952,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1360]: https://github.com/JuliaWeb/HTTP.jl/issues/1360
 [#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361
 [#1362]: https://github.com/JuliaWeb/HTTP.jl/issues/1362
+[#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371

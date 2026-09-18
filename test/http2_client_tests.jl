@@ -1454,6 +1454,7 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    window_updates = HT.WindowUpdateFrame[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
@@ -1472,6 +1473,11 @@ end
             encoded = HT.encode_header_block(server_encoder, response_headers)
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_padded_data_frame_to_conn!(accepted_conn, hf.stream_id, collect(codeunits("ok")); end_stream = true, padding = 3)
+            # Collect the client's WINDOW_UPDATE frames until it closes the connection.
+            HTTP.@try_ignore while true
+                frame = HT.read_frame!(reader)
+                frame isa HT.WindowUpdateFrame && push!(window_updates, frame::HT.WindowUpdateFrame)
+            end
         finally
             HTTP.@try_ignore NC.close(accepted_conn)
         end
@@ -1483,11 +1489,18 @@ end
         response = HT.h2_roundtrip!(h2_conn, request)
         @test response.status == 200
         @test String(_read_all_h2_body(response.body)) == "ok"
-        _wait_task_h2!(server_task)
     finally
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
     end
+    _wait_task_h2!(server_task)
+    # The whole 6-byte payload (pad length octet + "ok" + 3 padding octets) is
+    # flow-controlled, so all of it must be credited back at the connection level:
+    # the 2 body bytes when they are read, the 4 padding bytes right away.
+    @test sum(Int(f.window_size_increment) for f in window_updates if f.stream_id == UInt32(0); init = 0) == 6
+    # Only the body bytes are credited on the stream itself; the padding refund
+    # skips the stream-level update because the peer already ended the stream.
+    @test [Int(f.window_size_increment) for f in window_updates if f.stream_id != UInt32(0)] == [2]
 end
 
 @testset "HTTP/2 client sequential streams" begin
@@ -1691,6 +1704,118 @@ end
     finally
         close(client)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client returns connection-level window credit for a body closed unread (#1371)" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    body_bytes = 4000
+    late_bytes = 1000
+    frames_after_close = HT.AbstractFrame[]
+    late_refund_seen = Channel{Bool}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            # Start the body but leave the stream open; the client abandons it.
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, false, fill(UInt8('a'), body_bytes)))
+            # Wait for the client's RST_STREAM ...
+            while true
+                frame = HT.read_frame!(reader)
+                (frame isa HT.SettingsFrame || frame isa HT.PingFrame) && continue
+                push!(frames_after_close, frame)
+                frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == hf.stream_id && break
+            end
+            # ... then deliver DATA that was already in flight when the reset arrived.
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, fill(UInt8('b'), late_bytes)))
+            HTTP.@try_ignore while true
+                frame = HT.read_frame!(reader)
+                (frame isa HT.SettingsFrame || frame isa HT.PingFrame) && continue
+                push!(frames_after_close, frame)
+                if frame isa HT.WindowUpdateFrame && (frame::HT.WindowUpdateFrame).stream_id == UInt32(0) &&
+                   Int((frame::HT.WindowUpdateFrame).window_size_increment) == late_bytes
+                    put!(late_refund_seen, true)
+                end
+            end
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/unread"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        body = response.body::HT.H2Body
+        # Let the DATA frame land in the client's buffer before abandoning the
+        # body; the read loop notifies the stream condition after each append.
+        lock(body.state.lock)
+        try
+            while HT._stream_available_bytes(body.state) < body_bytes
+                wait(body.state.condition)
+            end
+        finally
+            unlock(body.state.lock)
+        end
+        HT.body_close!(body)
+        @test take!(late_refund_seen)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
+    resets = [f for f in frames_after_close if f isa HT.RSTStreamFrame]
+    @test length(resets) == 1
+    @test (resets[1]::HT.RSTStreamFrame).error_code == UInt32(0x8)
+    conn_updates = [Int(f.window_size_increment) for f in frames_after_close if f isa HT.WindowUpdateFrame && f.stream_id == UInt32(0)]
+    stream_updates = [f for f in frames_after_close if f isa HT.WindowUpdateFrame && f.stream_id != UInt32(0)]
+    # The bytes buffered at close time are returned right after the reset, and
+    # the DATA that arrives for the already-reset stream is returned as well.
+    @test conn_updates == [body_bytes, late_bytes]
+    # A stream-level update for a stream we reset would be meaningless.
+    @test isempty(stream_updates)
+end
+
+@testset "HTTP/2 connection stays usable after response bodies are discarded (#1371)" begin
+    # A body of exactly 65535 bytes fills the default connection-level receive
+    # window. If the client does not hand that window back when it drops a body
+    # unread, the very next response on the connection can never be delivered.
+    body = repeat("x", 65535)
+    status = Ref(200)
+    server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+        return HTTP.Response(status[]; body = body)
+    end
+    url = "http://127.0.0.1:$(HTTP.port(server))/"
+    client = HT.Client()
+    try
+        # Explicitly abandoned body: only the response head is read.
+        HTTP.open("GET", url; client, protocol = :h2, retry = false, request_timeout = 10) do stream
+            HTTP.startread(stream)
+        end
+        response = HTTP.get(url; client, protocol = :h2, retry = false, request_timeout = 10)
+        @test response.status == 200
+        @test length(response.body) == 65535
+        # Implicitly abandoned bodies: the retry loop closes the body of every
+        # attempt it gives up on, so a retried 503 discards four full windows.
+        status[] = 503
+        response = HTTP.get(url; client, protocol = :h2, status_exception = false, retry_bucket = false,
+                            respect_retry_after = false, request_timeout = 30)
+        @test response.status == 503
+        @test length(response.body) == 65535
+    finally
+        close(client)
+        HTTP.forceclose(server)
     end
 end
 
