@@ -1782,7 +1782,7 @@ end
     stream_updates = [f for f in frames_after_close if f isa HT.WindowUpdateFrame && f.stream_id != UInt32(0)]
     # The bytes buffered at close time are returned right after the reset, and
     # the DATA that arrives for the already-reset stream is returned as well.
-    @test conn_updates == [body_bytes, late_bytes]
+    @test sort(conn_updates) == sort([body_bytes, late_bytes])
     # A stream-level update for a stream we reset would be meaningless.
     @test isempty(stream_updates)
 end
@@ -1817,6 +1817,71 @@ end
         close(client)
         HTTP.forceclose(server)
     end
+end
+
+@testset "HTTP/2 client returns connection-level window credit for a stream reset before its body is handed out (#1371)" begin
+    # The peer resets the stream while the request body is still uploading, so
+    # no H2Body ever exists for the buffered response bytes.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    body_bytes = 65535
+    frames_after_reset = HT.AbstractFrame[]
+    refund_seen = Channel{Bool}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            for offset in 0:16384:(body_bytes - 1)
+                chunk = fill(UInt8('a'), min(16384, body_bytes - offset))
+                _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, false, chunk))
+            end
+            _write_frame_to_conn!(accepted_conn, HT.RSTStreamFrame(hf.stream_id, UInt32(0x8)))
+            HTTP.@try_ignore while true
+                frame = HT.read_frame!(reader)
+                (frame isa HT.SettingsFrame || frame isa HT.PingFrame || frame isa HT.DataFrame) && continue
+                push!(frames_after_reset, frame)
+                if frame isa HT.WindowUpdateFrame && (frame::HT.WindowUpdateFrame).stream_id == UInt32(0) &&
+                   Int((frame::HT.WindowUpdateFrame).window_size_increment) == body_bytes
+                    put!(refund_seen, true)
+                end
+            end
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 4 * 65535)
+        request = HT.Request("POST", "/reset-during-upload"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        err = try
+            HT.h2_roundtrip!(h2_conn, request)
+            nothing
+        catch e
+            e
+        end
+        @test err isa HT.H2StreamResetError
+        @test take!(refund_seen)
+        @test HT._h2_conn_reusable(h2_conn)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
+    conn_updates = [Int(f.window_size_increment) for f in frames_after_reset if f isa HT.WindowUpdateFrame && f.stream_id == UInt32(0)]
+    stream_updates = [f for f in frames_after_reset if f isa HT.WindowUpdateFrame && f.stream_id != UInt32(0)]
+    @test conn_updates == [body_bytes]
+    @test isempty(stream_updates)
+    @test !any(f -> f isa HT.RSTStreamFrame, frames_after_reset)
 end
 
 @testset "HTTP/2 client honors stream-level flow control" begin

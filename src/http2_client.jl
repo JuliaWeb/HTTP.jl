@@ -924,6 +924,30 @@ function _take_unread_h2_body_bytes!(state::H2StreamState)::Int
 end
 
 """
+    _discard_h2_stream!(conn, state)
+
+Unregister a stream whose response never reached a reader (the request failed
+before an `H2Body` existed) and return the connection-level window credit for
+any response DATA already buffered on it.
+"""
+function _discard_h2_stream!(conn::H2Connection, state::H2StreamState)
+    unread = 0
+    lock(state.lock)
+    try
+        if !state.stream_done
+            state.stream_done = true
+            notify(state.condition)
+        end
+        state.conn_errored || (unread = _take_unread_h2_body_bytes!(state))
+    finally
+        unlock(state.lock)
+    end
+    @try_ignore _send_window_updates!(conn, state.stream_id, unread; stream_level=false)
+    _unregister_stream!(conn, state.stream_id)
+    return nothing
+end
+
+"""
     _h2_stream_was_opened(conn, stream_id) -> Bool
 
 Whether `stream_id` is a client-initiated stream this connection has already
@@ -2014,7 +2038,7 @@ function _h2_roundtrip_incoming!(
         end
     finally
         cleanup_cancel_callback && _remove_cancel_callback!(request_ctx, cancel_cb)
-        cleanup_on_exit && _unregister_stream!(conn, stream_state.stream_id)
+        cleanup_on_exit && _discard_h2_stream!(conn, stream_state)
     end
 end
 

@@ -64,8 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The HTTP/2 client now returns connection-level flow-control credit for
   response bytes it received but never read: when a body is closed unread
-  (including every attempt the built-in retry loop gives up on), when DATA
-  arrives for a stream that was already reset, and for DATA frame padding.
+  (including every attempt the built-in retry loop gives up on), when the
+  request fails before its response body is handed out (for example a peer
+  reset while the request body is still uploading), when DATA arrives for a
+  stream that was already reset, and for DATA frame padding.
   Previously each such body permanently shrank the shared 65535-byte
   connection window, and once it hit zero every later response on that
   connection stalled until a timeout or a peer reset. Polling an endpoint that
