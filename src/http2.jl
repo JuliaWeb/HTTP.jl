@@ -104,7 +104,14 @@ struct DataFrame <: AbstractFrame
     stream_id::UInt32
     end_stream::Bool
     data::Vector{UInt8}
+    # Bytes of the frame payload that were padding (pad length octet included).
+    # They carry no body data but still count against the receiver's
+    # flow-control windows, so the receiver has to return them itself.
+    # Always 0 for frames built locally; `write_frame!` never emits padding.
+    padding::Int
 end
+
+DataFrame(stream_id::UInt32, end_stream::Bool, data::Vector{UInt8}) = DataFrame(stream_id, end_stream, data, 0)
 
 struct HeadersFrame <: AbstractFrame
     stream_id::UInt32
@@ -303,7 +310,8 @@ function read_frame!(io::IO)::AbstractFrame
         else
             payload
         end
-        return DataFrame(header.stream_id, (header.flags & FLAG_END_STREAM) != 0, data)
+        padding = Int(header.length) - length(data)
+        return DataFrame(header.stream_id, (header.flags & FLAG_END_STREAM) != 0, data, padding)
     end
     if header.type == FRAME_HEADERS
         _require_nonzero_stream_id(header.stream_id, "HEADERS")

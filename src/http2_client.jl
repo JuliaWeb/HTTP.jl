@@ -876,36 +876,102 @@ function _handle_stream_header_fragment!(
     return nothing
 end
 
-function _handle_stream_data!(state::H2StreamState, frame::DataFrame)
+function _handle_stream_data!(conn::H2Connection, state::H2StreamState, frame::DataFrame)
+    refund = 0
     lock(state.lock)
     try
         while ((length(state.body) - state.body_read_index) + 1) >= state.max_buffered_bytes && !_stream_failed(state) && !state.stream_done
             wait(state.condition)
         end
-        _stream_failed(state) && return nothing
-        # DATA may only follow the final response head (RFC 9113 §8.1). A DATA
-        # frame arriving before it, including between an informational (1xx)
-        # header block and the final head, is malformed rather than body bytes.
-        state.headers_complete || throw(ProtocolError("HTTP/2 DATA frame received before the response headers"))
-        append!(state.body, frame.data)
-        if frame.end_stream
-            state.stream_done = true
-            notify(state.condition)
+        if _stream_failed(state) || state.stream_done
+            # Nobody will read this body any more (closed unread, reset, or
+            # already ended), but the bytes still consumed the connection-level
+            # receive window. Hand them back or the window leaks for good.
+            state.conn_errored || (refund = length(frame.data))
         else
-            notify(state.condition)
+            # DATA may only follow the final response head (RFC 9113 §8.1). A DATA
+            # frame arriving before it, including between an informational (1xx)
+            # header block and the final head, is malformed rather than body bytes.
+            state.headers_complete || throw(ProtocolError("HTTP/2 DATA frame received before the response headers"))
+            append!(state.body, frame.data)
+            if frame.end_stream
+                state.stream_done = true
+                notify(state.condition)
+            else
+                notify(state.condition)
+            end
         end
     finally
         unlock(state.lock)
     end
+    _send_window_updates!(conn, frame.stream_id, refund; stream_level=false)
     return nothing
 end
 
-function _send_window_updates!(conn::H2Connection, stream_id::UInt32, nbytes::Int)
+"""
+    _take_unread_h2_body_bytes!(state) -> Int
+
+Drop whatever response-body bytes are still buffered in `state` and return how
+many there were. Used when a body is abandoned so the caller can return the
+connection-level flow-control credit for bytes that will never be read.
+Callers must hold `state.lock`.
+"""
+function _take_unread_h2_body_bytes!(state::H2StreamState)::Int
+    unread = _stream_available_bytes(state)
+    state.body_read_index = length(state.body) + 1
+    _compact_stream_body_buffer!(state)
+    return unread
+end
+
+"""
+    _discard_h2_stream!(conn, state)
+
+Unregister a stream whose response never reached a reader (the request failed
+before an `H2Body` existed) and return the connection-level window credit for
+any response DATA already buffered on it.
+"""
+function _discard_h2_stream!(conn::H2Connection, state::H2StreamState)
+    unread = 0
+    lock(state.lock)
+    try
+        if !state.stream_done
+            state.stream_done = true
+            notify(state.condition)
+        end
+        state.conn_errored || (unread = _take_unread_h2_body_bytes!(state))
+    finally
+        unlock(state.lock)
+    end
+    @try_ignore _send_window_updates!(conn, state.stream_id, unread; stream_level=false)
+    _unregister_stream!(conn, state.stream_id)
+    return nothing
+end
+
+"""
+    _h2_stream_was_opened(conn, stream_id) -> Bool
+
+Whether `stream_id` is a client-initiated stream this connection has already
+allocated, i.e. a stream we may have abandoned rather than one the peer made up.
+"""
+function _h2_stream_was_opened(conn::H2Connection, stream_id::UInt32)::Bool
+    isodd(stream_id) || return false
+    lock(conn.state_lock)
+    try
+        return stream_id < conn.next_stream_id
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
+# Return `nbytes` of receive-window credit to the peer. The connection-level
+# update is always sent; the stream-level one only while the stream is still
+# alive (`stream_level=true`), since credit for a closed stream is meaningless.
+function _send_window_updates!(conn::H2Connection, stream_id::UInt32, nbytes::Int; stream_level::Bool=true)
     nbytes <= 0 && return nothing
     increment = UInt32(nbytes)
     try
         _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(UInt32(0), increment))
-        _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(stream_id, increment))
+        stream_level && _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(stream_id, increment))
     catch err
         if err isa EOFError || err isa IOPoll.NetClosingError || err isa SystemError
             return nothing
@@ -1100,11 +1166,22 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     elseif frame isa DataFrame
         data = frame::DataFrame
         state = _stream_state(conn, data.stream_id)
-        state === nothing && return nothing
+        if state === nothing
+            # DATA for a stream we already abandoned (typically closed unread
+            # and reset, with the peer's DATA still in flight). Nobody consumes
+            # it, but it did count against the connection-level window.
+            if _h2_stream_was_opened(conn, data.stream_id)
+                _send_window_updates!(conn, data.stream_id, length(data.data) + data.padding; stream_level=false)
+            end
+            return nothing
+        end
+        # Padding is flow-controlled but never reaches the body reader, so it
+        # has to be returned here rather than on read.
+        _send_window_updates!(conn, data.stream_id, data.padding; stream_level=!data.end_stream)
         # Mark before `_handle_stream_data!`, which can block while the
         # buffered body is drained.
         data.end_stream && _mark_h2_send_closed!(conn, data.stream_id)
-        _handle_stream_data!(state::H2StreamState, data)
+        _handle_stream_data!(conn, state::H2StreamState, data)
         return nothing
     end
     return nothing
@@ -1675,6 +1752,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
     body_closed(body) && return 0
     while true
         nread = 0
+        unread = 0
         done = false
         too_many = false
         terminal_error::Union{Nothing,Exception} = nothing
@@ -1690,6 +1768,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                     too_many = true
                     body.state.stream_error = ProtocolError("HTTP/2 response body exceeded Content-Length")
                     body.state.stream_done = true
+                    unread = _take_unread_h2_body_bytes!(body.state)
                     notify(body.state.condition)
                 else
                     copyto!(dst, 1, body.state.body, body.state.body_read_index, nread)
@@ -1730,6 +1809,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         if too_many
             @atomic :release body.closed = true
             @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
+            @try_ignore _send_window_updates!(body.conn, body.stream_id, unread; stream_level=false)
             _clear_h2_cancel_callback!(body)
             _unregister_stream!(body.conn, body.stream_id)
             throw(ProtocolError("HTTP/2 response body exceeded Content-Length"))
@@ -1764,6 +1844,7 @@ function body_close!(body::H2Body)
     was_closed && return nothing
     @atomic :release body.closed = true
     should_reset = false
+    unread = 0
     lock(body.state.lock)
     try
         if !body.state.stream_done
@@ -1772,12 +1853,19 @@ function body_close!(body::H2Body)
             body.state.stream_done = true
             notify(body.state.condition)
         end
+        # Anything still buffered will never be read. Once `stream_done` is set
+        # the read loop refunds later DATA for this stream itself, so the two
+        # never double count.
+        body.state.conn_errored || (unread = _take_unread_h2_body_bytes!(body.state))
     finally
         unlock(body.state.lock)
     end
     if should_reset
         @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)))
     end
+    # The stream is gone either way, but the connection-level window is shared
+    # with every other stream on this connection and has to be refilled.
+    @try_ignore _send_window_updates!(body.conn, body.stream_id, unread; stream_level=false)
     _clear_h2_cancel_callback!(body)
     _unregister_stream!(body.conn, body.stream_id)
     return nothing
@@ -1950,7 +2038,7 @@ function _h2_roundtrip_incoming!(
         end
     finally
         cleanup_cancel_callback && _remove_cancel_callback!(request_ctx, cancel_cb)
-        cleanup_on_exit && _unregister_stream!(conn, stream_state.stream_id)
+        cleanup_on_exit && _discard_h2_stream!(conn, stream_state)
     end
 end
 
