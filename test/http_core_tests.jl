@@ -51,6 +51,14 @@ const HT = HTTP
     empty_value = HT.Headers(["X-Empty" => ""])
     @test HT.header(empty_value, "X-Empty") == ""
     @test !HT.hasheader(empty_value, "X-Empty")
+    for container in (empty_value, HT.Request("GET", "/", empty_value), HT.Response(200, empty_value))
+        @test haskey(container, "x-empty")
+        @test get(container, "x-empty", "fallback") == ""
+        @test get(container, "X-EMPTY", nothing) == ""
+        @test get(container, "X-Missing", "fallback") == "fallback"
+        @test get(container, "X-Missing", nothing) === nothing
+    end
+
 
     headers = HT.Headers(var"content-type" = "application/json")
     @test headers == HTTP.Headers(["Content-Type" => "application/json"])
