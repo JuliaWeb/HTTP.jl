@@ -643,14 +643,19 @@ Ordered, case-canonicalized collection of header pairs.
 `Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
 written against the long-standing pair-vector header representation can reuse
 the same helper functions. Keys are canonicalized on insertion, but pair order
-is preserved.
+is preserved. Constructing from a vector copies the pair storage and canonicalizes
+its keys without changing the source vector.
 """
 mutable struct Headers <: AbstractVector{Pair{String,String}}
     entries::Vector{Pair{String,String}}
-end
 
-"""Create and return an empty `Headers` collection."""
-Headers() = Headers(Pair{String,String}[])
+    """Create and return an empty `Headers` collection."""
+    Headers() = new(Pair{String,String}[])
+
+    function Headers(entries::Vector{Pair{String,String}})
+        return new([canonical_header_key(key) => value for (key, value) in entries])
+    end
+end
 
 """
     Headers(hint)
@@ -660,9 +665,9 @@ the backing pair storage. Throws `ArgumentError` when `hint < 0`.
 """
 function Headers(hint::Integer)
     hint < 0 && throw(ArgumentError("hint must be >= 0"))
-    entries = Pair{String,String}[]
-    sizehint!(entries, Int(hint))
-    return Headers(entries)
+    headers = Headers()
+    sizehint!(headers.entries, Int(hint))
+    return headers
 end
 
 """
@@ -671,7 +676,7 @@ end
 Deep-copy constructor for header collections. The underlying pair storage is
 copied, so mutating the result does not affect the source.
 """
-Headers(headers::Headers) = Headers(copy(headers.entries))
+Headers(headers::Headers) = Headers(headers.entries)
 
 Headers(items::AbstractDict) = mkheaders(items)
 Headers(items::AbstractVector) = mkheaders(items)
