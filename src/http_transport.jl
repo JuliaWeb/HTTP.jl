@@ -512,7 +512,7 @@ function _write_exact_bytes_body_transport!(
         # `stream` is deliberately untyped (multiple transports); without the
         # Int assert `n` infers Any and poisons the loop comparisons with
         # invalidation-prone `>(::Any, ::Int)` edges
-        n = Int(write(stream, chunk))
+        n = Int(_write_body_bytes(stream, chunk))
         n == chunk_len || throw(ProtocolError("transport short write"))
         body.next_index = stop_index + 1
         remaining -= n

@@ -1480,6 +1480,20 @@ function BytesBody(data::T) where {T<:AbstractVector{UInt8}}
     return BytesBody{T}(data, 1, false)
 end
 
+# String-backed views are contiguous but are not StridedVectors. Keep their
+# owner rooted while synchronous consumers use a non-owning array. This avoids
+# generic transport materialization and repeated whole-string alias checks.
+_with_body_bytes(f::F, data) where {F} = f(data)
+const _StringBodyBytes = Base.CodeUnits{UInt8,<:Union{String,SubString{String}}}
+function _with_body_bytes(f::F, data::Union{_StringBodyBytes,SubArray{UInt8,1,<:_StringBodyBytes,Tuple{UnitRange{Int}},true}}) where {F}
+    GC.@preserve data begin
+        bytes = unsafe_wrap(Vector{UInt8}, pointer(data), length(data); own=false)
+        return f(bytes)
+    end
+end
+
+_write_body_bytes(stream, data) = _with_body_bytes(bytes -> write(stream, bytes), data)
+
 function Base.String(body::BytesBody)
     remaining = (length(body.data) - body.next_index) + 1
     remaining <= 0 && return ""

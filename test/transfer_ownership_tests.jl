@@ -38,7 +38,8 @@ end
 end
 
 @testset "Header ownership and replay through HTTP/1 and HTTP/2" begin
-    payload = collect(codeunits(repeat("ownership", 8192)))
+    vector_payload = collect(codeunits(repeat("ownership", 8192)))
+    string_payload = view(codeunits("!" * repeat("ownership", 8192) * "!"), 2:length(vector_payload)+1)
     received = Channel{Any}(8)
     server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
         io = IOBuffer()
@@ -52,7 +53,7 @@ end
     end
     client = HTTP.Client()
     try
-        for protocol in (:h1, :h2), owned in (false, true)
+        for protocol in (:h1, :h2), owned in (false, true), payload in (vector_payload, string_payload)
             headers = HTTP.Headers(["X-Caller" => "retained"])
             attempts = HTTP.Request[]
             trace = function(ev)

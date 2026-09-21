@@ -1500,7 +1500,9 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
             body = request.body::BytesBody
             data = body_closed(body) ? view(body.data, 1:0) : view(body.data, body.next_index:length(body.data))
             if !isempty(data)
-                sent = _write_data_frames_h2!(conn, stream_id, request, data, true, framebuf)
+                sent = _with_body_bytes(data) do bytes
+                    _write_data_frames_h2!(conn, stream_id, request, bytes, true, framebuf)
+                end
                 sent && (body.next_index = length(body.data) + 1)
                 return sent
             end

@@ -27,16 +27,16 @@ else
         client = HTTP.Client()
         try
             println("Julia=", VERSION, " HTTP=", Base.pkgversion(HTTP), " path=", pathof(HTTP))
-            println("protocol,payload_bytes,allocated_bytes,seconds")
-            for protocol in (:h1, :h2), n in (1 << 20, 16 << 20)
-                payload = fill(0x61, n)
+            println("protocol,storage,payload_bytes,allocated_bytes,seconds")
+            for protocol in (:h1, :h2), storage in (:vector, :codeunits), n in (1 << 20, 16 << 20)
+                payload = storage === :vector ? fill(0x61, n) : view(codeunits("x" * repeat("a", n)), 2:n+1)
                 send() = HTTP.put("http://127.0.0.1:$port/", HTTP.Headers(), payload;
                     client, protocol, copyheaders=false, request_timeout=60)
                 @assert parse(Int, String(send().body)) == n
                 samples = [@timed(send()) for _ in 1:3]
                 @assert all(parse(Int, String(s.value.body)) == n for s in samples)
                 allocated = minimum(s.bytes for s in samples)
-                println(protocol, ',', n, ',', allocated, ',', minimum(s.time for s in samples))
+                println(protocol, ',', storage, ',', n, ',', allocated, ',', minimum(s.time for s in samples))
                 flush(stdout)
                 if "--check" in ARGS
                     # Allows protocol metadata and flow-control events, but rejects
