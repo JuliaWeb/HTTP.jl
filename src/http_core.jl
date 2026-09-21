@@ -1492,7 +1492,13 @@ function _with_body_bytes(f::F, data::Union{_StringBodyBytes,SubArray{UInt8,1,<:
     end
 end
 
-_write_body_bytes(stream, data) = _with_body_bytes(bytes -> write(stream, bytes), data)
+_write_body_bytes(stream, data) = write(stream, data)
+function _write_body_bytes(stream, data::SubArray{UInt8,1,<:_StringBodyBytes,Tuple{UnitRange{Int}},true})
+    # Use the pointer API rather than letting an asynchronous transport retain
+    # a non-owning array. Reseau bounds its Windows pointer-write scratch and
+    # owns that scratch through cancellation and runtime shutdown.
+    GC.@preserve data return Int(unsafe_write(stream, pointer(data), UInt(length(data))))
+end
 
 function Base.String(body::BytesBody)
     remaining = (length(body.data) - body.next_index) + 1
