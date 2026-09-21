@@ -1827,9 +1827,8 @@ function _is_headers_input(x)::Bool
 end
 
 function _normalize_headers_input(headers_input, copyheaders::Bool=true)::Headers
-    copyheaders || return _owned_headers(headers_input)
     headers_input === nothing && return Headers()
-    headers_input isa Headers && return copy(headers_input)
+    headers_input isa Headers && return copyheaders ? copy(headers_input) : headers_input
     headers = Headers()
     if headers_input isa AbstractDict
         for (k, v) in pairs(headers_input)
@@ -2321,8 +2320,9 @@ Keyword arguments:
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body
 - `copyheaders`: `true` copies caller headers (the default). `false` transfers
   an existing `HTTP.Headers` collection to the operation. Do not access or
-  mutate it until the call completes; final contents are unspecified. Raw
-  collections are rejected. Retry attempts still receive isolated headers.
+  mutate it until the call completes; final contents are unspecified. Other
+  header inputs become a new collection either way. Retry attempts still
+  receive isolated headers.
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for

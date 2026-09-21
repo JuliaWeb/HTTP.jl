@@ -20,8 +20,10 @@ end
         @test req.headers === headers
         @test HTTP.Request("PUT", "/"; headers).headers !== headers
     end
-    @test_throws ArgumentError HTTP.Request("GET", "/"; headers=["x" => "y"], copyheaders=false)
-    @test_throws ArgumentError HTTP._normalize_headers_input(["x" => "y"], false)
+    # Non-`Headers` inputs are converted, not rejected, so the keyword is safe anywhere.
+    converted = HTTP.Request("GET", "/"; headers=["x" => "y"], copyheaders=false).headers
+    @test converted isa HTTP.Headers && collect(converted) == ["X" => "y"]
+    @test collect(HTTP._normalize_headers_input(["x" => "y"], false)) == ["X" => "y"]
     for n in (1024, 1 << 20)
         data = fill(0x61, n)
         body = HTTP.BytesBody(data)

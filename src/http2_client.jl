@@ -377,8 +377,9 @@ end
 
 # Returns `true` when all of `data` was written, `false` when the stream's send
 # side closed mid-body and the remaining payload must be abandoned.
-# Each body writer owns this scratch buffer. Coalescing frame headers and payload
-# into one write avoids tiny TLS records; the buffer is reused across DATA frames.
+# `framebuf` holds one frame header plus payload so both go out in one transport
+# write, as before. Each body writer owns and reuses it across DATA frames instead
+# of allocating a frame per chunk.
 function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request,
     data::AbstractVector{UInt8}, end_stream::Bool, framebuf::Vector{UInt8})::Bool
     offset = 1
@@ -1494,12 +1495,12 @@ end
 # decides how to close out the abandoned stream.
 function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request::Request)::Bool
     request.body isa EmptyBody && return true
-    framebuf = Vector{UInt8}(undef, 9 + 16 * 1024)
     try
         if request.body isa BytesBody
             body = request.body::BytesBody
             data = body_closed(body) ? view(body.data, 1:0) : view(body.data, body.next_index:length(body.data))
             if !isempty(data)
+                framebuf = Vector{UInt8}(undef, 9 + min(16 * 1024, length(data)))
                 sent = _with_body_bytes(data) do bytes
                     _write_data_frames_h2!(conn, stream_id, request, bytes, true, framebuf)
                 end
@@ -1509,6 +1510,7 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
         else
             # Keep one chunk pending so END_STREAM travels with the last DATA.
             # Swap buffers after each write rather than allocating per chunk.
+            framebuf = Vector{UInt8}(undef, 9 + 16 * 1024)
             pending = Vector{UInt8}(undef, 16 * 1024)
             buf = similar(pending)
             pending_n = body_read!(request.body, pending)

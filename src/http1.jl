@@ -679,7 +679,7 @@ function _write_exact_bytes_body!(stream, body::BytesBody, expected_len::Int64)
     else
         view(body.data, body.next_index:stop_index)
     end
-    n = Int(_write_body_bytes(stream, chunk))
+    n = Int(write(stream, chunk))
     n == expected_len || throw(ProtocolError("transport short write"))
     body.next_index = stop_index + 1
     return nothing

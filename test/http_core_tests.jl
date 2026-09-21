@@ -107,14 +107,18 @@ end
 @testset "Headers vector constructor canonicalizes keys" begin
     source = ["content-type" => "text/plain", "x-test" => "one", "X-TEST" => "two"]
     headers = HT.Headers(source)
-    @test collect(headers) == ["Content-Type" => "text/plain", "X-Test" => "one", "X-Test" => "two"]
+    # Same normalization as `mkheaders` and `Request`: adjacent duplicates join.
+    @test collect(headers) == ["Content-Type" => "text/plain", "X-Test" => "one,two"]
+    @test collect(headers) == collect(HT.Request("GET", "/", source).headers)
+    @test collect(headers) == collect(HT.Headers(Pair{String,Any}[k => v for (k, v) in source]))
     @test source == ["content-type" => "text/plain", "x-test" => "one", "X-TEST" => "two"]
     @test HT.header(headers, "CONTENT-TYPE") == "text/plain"
-    @test HT.headers(headers, "x-test") == ["one", "two"]
+    @test HT.headers(headers, "x-test") == ["one,two"]
     @test haskey(headers, "X-TEST")
     for message in (HT.Request("GET", "/", headers), HT.Response(200, headers))
         @test HT.header(message, "content-type") == "text/plain"
     end
+    @test collect(HT.Headers(["set-cookie" => "a=1", "Set-Cookie" => "b=2"])) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
     HT.setheader(headers, "X-TEST", "replacement")
     @test HT.headers(headers, "x-test") == ["replacement"]
     @test source[2] == ("x-test" => "one")

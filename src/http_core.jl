@@ -643,8 +643,9 @@ Ordered, case-canonicalized collection of header pairs.
 `Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
 written against the long-standing pair-vector header representation can reuse
 the same helper functions. Keys are canonicalized on insertion, but pair order
-is preserved. Constructing from a vector copies the pair storage and canonicalizes
-its keys without changing the source vector.
+is preserved. Constructing from a vector, dictionary, or tuple goes through
+`mkheaders`: the source is left unchanged, keys are canonicalized, and adjacent
+duplicate keys are joined the way `appendheader` joins them.
 """
 mutable struct Headers <: AbstractVector{Pair{String,String}}
     entries::Vector{Pair{String,String}}
@@ -654,10 +655,6 @@ mutable struct Headers <: AbstractVector{Pair{String,String}}
 
     """Copy pair storage without re-canonicalizing keys in an existing `Headers`."""
     Headers(headers::Headers) = new(copy(headers.entries))
-
-    function Headers(entries::Vector{Pair{String,String}})
-        return new([canonical_header_key(key) => value for (key, value) in entries])
-    end
 end
 
 """
@@ -1480,9 +1477,10 @@ function BytesBody(data::T) where {T<:AbstractVector{UInt8}}
     return BytesBody{T}(data, 1, false)
 end
 
-# String-backed views are contiguous but are not StridedVectors. Keep their
-# owner rooted while synchronous consumers use a non-owning array. This avoids
-# generic transport materialization and repeated whole-string alias checks.
+# `copyto!` out of string-backed bytes runs an alias check on every block, and
+# that check hashes the whole backing string because `objectid(::String)` is
+# content-based. Let synchronous consumers copy through a non-owning array while
+# the owner stays rooted, so the copy is linear. The array must not escape `f`.
 _with_body_bytes(f::F, data) where {F} = f(data)
 const _StringBodyBytes = Base.CodeUnits{UInt8,<:Union{String,SubString{String}}}
 function _with_body_bytes(f::F, data::Union{_StringBodyBytes,SubArray{UInt8,1,<:_StringBodyBytes,Tuple{UnitRange{Int}},true}}) where {F}
@@ -1490,14 +1488,6 @@ function _with_body_bytes(f::F, data::Union{_StringBodyBytes,SubArray{UInt8,1,<:
         bytes = unsafe_wrap(Vector{UInt8}, pointer(data), length(data); own=false)
         return f(bytes)
     end
-end
-
-_write_body_bytes(stream, data) = write(stream, data)
-function _write_body_bytes(stream, data::SubArray{UInt8,1,<:_StringBodyBytes,Tuple{UnitRange{Int}},true})
-    # Use the pointer API rather than letting an asynchronous transport retain
-    # a non-owning array. Reseau bounds its Windows pointer-write scratch and
-    # owns that scratch through cancellation and runtime shutdown.
-    GC.@preserve data return Int(unsafe_write(stream, pointer(data), UInt(length(data))))
 end
 
 function Base.String(body::BytesBody)
@@ -1687,7 +1677,7 @@ Keyword arguments:
 - `copyheaders=false`: take ownership of existing `Headers` collections for both
   headers and trailers. The caller must stop accessing or mutating them while
   the request is in use. Their final contents are unspecified. Other input
-  types are rejected in this mode.
+  types are converted into new collections, as with the default.
 - `body`: any `AbstractBody`; ownership stays with the request.
 - `host`: optional authority used for HTTP/1 `Host` and HTTP/2 `:authority`.
 - `content_length`: exact byte length, or `-1` when unknown.
@@ -1720,9 +1710,11 @@ end
 
 Request() = _request_nocopy("", "", Headers(), Headers(), EmptyBody(), nothing, Int64(-1), UInt8(1), UInt8(1), false, RequestContext())
 
-function _owned_headers(headers)::Headers
-    headers isa Headers || throw(ArgumentError("copyheaders=false requires HTTP.Headers"))
-    return headers
+# `copyheaders=false` adopts an existing `Headers` collection without copying it.
+# Every other input becomes a new collection either way.
+function _request_headers(headers, copyheaders::Bool)::Headers
+    headers isa Headers && return copyheaders ? copy(headers) : headers
+    return mkheaders(headers)
 end
 
 function Request(
@@ -1750,8 +1742,8 @@ function Request(
     return Request{typeof(actual_body)}(
         String(method),
         String(target),
-        copyheaders ? copy(mkheaders(headers)) : _owned_headers(headers),
-        copyheaders ? copy(mkheaders(trailers)) : _owned_headers(trailers),
+        _request_headers(headers, copyheaders),
+        _request_headers(trailers, copyheaders),
         actual_body,
         host_s,
         actual_content_length,

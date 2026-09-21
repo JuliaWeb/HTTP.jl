@@ -565,10 +565,12 @@ read `body.data` from `body.next_index` through its end without consuming the bo
 
 Callers that own their headers can pass `HTTP.Headers` with `copyheaders=false`
 to `HTTP.request` or `HTTP.open`. Build headers through the constructor and setters,
-then stop accessing the collection until the call completes (until stream close
-for `open`). Its final contents are unspecified. Each concurrent request needs its
-own collection. Raw pair collections require the default `copyheaders=true`.
-The same keyword on `HTTP.Request` transfers its headers and trailers.
+then stop accessing the collection until the call returns. Its final contents are
+unspecified. Each concurrent request needs its own collection. Other header inputs
+become a new collection either way, so the keyword is safe on any call site.
+`HTTP.open` copies the collection into its stream request, so it only saves the
+initial copy there. The same keyword on `HTTP.Request` transfers its headers and
+trailers.
 
 ```julia
 headers = HTTP.Headers(["Content-Type" => "application/octet-stream"])

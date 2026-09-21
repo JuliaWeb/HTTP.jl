@@ -702,8 +702,8 @@ Treat these as temporary migration aids. New code should use the documented
 
 ### Explicit header ownership
 
-`copyheaders=false` is supported by `request`, `open`, and `Request` for
-`HTTP.Headers` inputs. It transfers ownership of the collection; do not access
-it while the request or stream is active. Raw pair vectors must use the default
-copying behavior or be converted to `HTTP.Headers` first. HTTP 2.7.1 and earlier
+`copyheaders=false` is supported by `request`, `open`, and `Request`. With an
+`HTTP.Headers` input it transfers ownership of the collection; do not access it
+while the request is active. Any other header input, such as the pair vectors
+1.x call sites pass, becomes a new collection either way. HTTP 2.7.1 and earlier
 HTTP 2 releases ignored this keyword. Retries still isolate mutable headers.
