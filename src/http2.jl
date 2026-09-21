@@ -195,18 +195,24 @@ end
     return nothing
 end
 
-@inline function _encode_header_bytes(header::FrameHeader)::Vector{UInt8}
+@inline function _encode_header_bytes!(bytes::Vector{UInt8}, header::FrameHeader)
     header.length < 0 && throw(ArgumentError("HTTP/2 frame length must be >= 0"))
     header.length <= 0x00ff_ffff || throw(ArgumentError("HTTP/2 frame length must fit 24 bits"))
-    bytes = UInt8[]
-    push!(bytes, UInt8((header.length >> 16) & 0xff))
-    push!(bytes, UInt8((header.length >> 8) & 0xff))
-    push!(bytes, UInt8(header.length & 0xff))
-    push!(bytes, header.type)
-    push!(bytes, header.flags)
-    _write_u32_be!(bytes, header.stream_id & 0x7fff_ffff)
+    length(bytes) >= 9 || throw(ArgumentError("HTTP/2 frame header needs 9 bytes"))
+    bytes[1] = UInt8((header.length >> 16) & 0xff)
+    bytes[2] = UInt8((header.length >> 8) & 0xff)
+    bytes[3] = UInt8(header.length & 0xff)
+    bytes[4] = header.type
+    bytes[5] = header.flags
+    bytes[6] = UInt8((header.stream_id >> 24) & 0x7f)
+    bytes[7] = UInt8((header.stream_id >> 16) & 0xff)
+    bytes[8] = UInt8((header.stream_id >> 8) & 0xff)
+    bytes[9] = UInt8(header.stream_id & 0xff)
     return bytes
 end
+
+@inline _encode_header_bytes(header::FrameHeader)::Vector{UInt8} =
+    _encode_header_bytes!(Vector{UInt8}(undef, 9), header)
 
 function _read_frame_header!(io::IO)::FrameHeader
     header_bytes = _read_exact_bytes!(io, 9)

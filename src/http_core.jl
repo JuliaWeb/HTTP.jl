@@ -652,6 +652,9 @@ mutable struct Headers <: AbstractVector{Pair{String,String}}
     """Create and return an empty `Headers` collection."""
     Headers() = new(Pair{String,String}[])
 
+    """Copy pair storage without re-canonicalizing keys in an existing `Headers`."""
+    Headers(headers::Headers) = new(copy(headers.entries))
+
     function Headers(entries::Vector{Pair{String,String}})
         return new([canonical_header_key(key) => value for (key, value) in entries])
     end
@@ -669,14 +672,6 @@ function Headers(hint::Integer)
     sizehint!(headers.entries, Int(hint))
     return headers
 end
-
-"""
-    Headers(headers)
-
-Deep-copy constructor for header collections. The underlying pair storage is
-copied, so mutating the result does not affect the source.
-"""
-Headers(headers::Headers) = Headers(headers.entries)
 
 Headers(items::AbstractDict) = mkheaders(items)
 Headers(items::AbstractVector) = mkheaders(items)
@@ -1467,6 +1462,12 @@ Simple in-memory body backed by a retained `AbstractVector{UInt8}`. Reads
 advance an internal cursor until EOF; closing marks the body closed but does
 not free or truncate the stored bytes. Collection-style operations expose the
 remaining unread bytes.
+
+The public `data` field retains the original storage; `next_index` is the
+one-based offset of the next unread byte. A read-only consumer such as a signer
+may borrow `data` or `view(data, next_index:length(data))` without advancing the
+cursor. Do not modify or resize the storage until the request, including any
+retries, completes. Replay creates independent cursors over the same storage.
 """
 mutable struct BytesBody{T<:AbstractVector{UInt8}} <: AbstractBody
     data::T
@@ -1603,12 +1604,12 @@ Read up to `length(dst)` bytes into `dst`. Returns `0` on EOF.
 Concrete body types may throw `ProtocolError`, transport errors, or body-
 specific exceptions if the stream is malformed or the backing connection fails.
 """
-function body_read!(::EmptyBody, dst::Vector{UInt8})::Int
+function body_read!(::EmptyBody, dst::AbstractVector{UInt8})::Int
     _ = dst
     return 0
 end
 
-function body_read!(body::BytesBody, dst::Vector{UInt8})::Int
+function body_read!(body::BytesBody, dst::AbstractVector{UInt8})::Int
     body_closed(body) && return 0
     isempty(dst) && return 0
     available = (length(body.data) - body.next_index) + 1
@@ -1657,12 +1658,16 @@ end
 """
     Request(method, target; headers=Headers(), trailers=Headers(), body=EmptyBody(), host=nothing,
             content_length=-1, proto_major=1, proto_minor=1, close=false,
-            context=RequestContext())
+            context=RequestContext(), copyheaders=true)
 
 HTTP request object shared by the client and server stacks.
 
 Keyword arguments:
-- `headers`, `trailers`: copied into the request.
+- `headers`, `trailers`: copied into the request by default.
+- `copyheaders=false`: take ownership of existing `Headers` collections for both
+  headers and trailers. The caller must stop accessing or mutating them while
+  the request is in use. Their final contents are unspecified. Other input
+  types are rejected in this mode.
 - `body`: any `AbstractBody`; ownership stays with the request.
 - `host`: optional authority used for HTTP/1 `Host` and HTTP/2 `:authority`.
 - `content_length`: exact byte length, or `-1` when unknown.
@@ -1695,11 +1700,17 @@ end
 
 Request() = _request_nocopy("", "", Headers(), Headers(), EmptyBody(), nothing, Int64(-1), UInt8(1), UInt8(1), false, RequestContext())
 
+function _owned_headers(headers)::Headers
+    headers isa Headers || throw(ArgumentError("copyheaders=false requires HTTP.Headers"))
+    return headers
+end
+
 function Request(
     method::AbstractString,
     target::AbstractString;
     headers=Headers(),
     trailers=Headers(),
+    copyheaders::Bool=true,
     body=EmptyBody(),
     host::Union{Nothing,AbstractString}=nothing,
     content_length::Integer=Int64(-1),
@@ -1719,8 +1730,8 @@ function Request(
     return Request{typeof(actual_body)}(
         String(method),
         String(target),
-        copy(mkheaders(headers)),
-        copy(mkheaders(trailers)),
+        copyheaders ? copy(mkheaders(headers)) : _owned_headers(headers),
+        copyheaders ? copy(mkheaders(trailers)) : _owned_headers(trailers),
         actual_body,
         host_s,
         actual_content_length,

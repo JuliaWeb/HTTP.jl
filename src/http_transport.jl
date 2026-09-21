@@ -1373,7 +1373,7 @@ function Base.read(reader::_ConnReader, ::Type{UInt8})
     return b
 end
 
-function Base.readbytes!(reader::_ConnReader, dst::Vector{UInt8}, nb::Integer=length(dst))
+function Base.readbytes!(reader::_ConnReader, dst::AbstractVector{UInt8}, nb::Integer=length(dst))
     target = min(Int(nb), length(dst))
     target <= 0 && return 0
     total = 0
@@ -1734,7 +1734,7 @@ function body_close!(body::H1Body)
     return nothing
 end
 
-function body_read!(body::H1Body, dst::Vector{UInt8})::Int
+function body_read!(body::H1Body, dst::AbstractVector{UInt8})::Int
     isempty(dst) && return 0
     body_closed(body) && return 0
     try

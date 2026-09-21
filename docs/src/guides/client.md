@@ -549,8 +549,54 @@ as temporary compatibility, not as the preferred API:
 - `retry_delays` and `retry_check` should become `retry_if`, `retries`, and
   `retry_bucket`
 - `sslconfig` and `socket_type_tls` should move to transport/TLS configuration
-- `copyheaders`, `canonicalize_headers`, `detect_content_type`,
+- `canonicalize_headers`, `detect_content_type`,
   `observelayers`, `logerrors`, and `logtag` are accepted for compatibility
   where possible
 
 See the [migration guide](migration-1x.md) for before/after examples.
+
+
+## Buffered transfer ownership
+
+Pass byte vectors or contiguous byte views to upload existing storage. `BytesBody`
+retains that storage; retries create independent cursors without copying the
+payload. Keep the bytes unchanged until the operation completes. A signer may
+read `body.data` from `body.next_index` through its end without consuming the body.
+
+Callers that own their headers can pass `HTTP.Headers` with `copyheaders=false`
+to `HTTP.request` or `HTTP.open`. Build headers through the constructor and setters,
+then stop accessing the collection until the call completes (until stream close
+for `open`). Its final contents are unspecified. Each concurrent request needs its
+own collection. Raw pair collections require the default `copyheaders=true`.
+The same keyword on `HTTP.Request` transfers its headers and trailers.
+
+```julia
+headers = HTTP.Headers(["Content-Type" => "application/octet-stream"])
+response = HTTP.put(url, headers, payload; copyheaders=false, client)
+```
+
+Ownership transfer skips the initial defensive copy. High-level requests also
+reuse their owned state during construction. Each attempt still gets separate
+headers for signing, cookies, and redirects, and wire preparation retains its
+validation and isolation. Copying a `Headers` collection does not normalize its
+keys again. This contract does not promise zero metadata allocations.
+
+Use `response_stream=destination` to fill a byte vector or writable view. Built-in
+HTTP/1 and HTTP/2 bodies copy directly from their protocol buffers into this
+storage; they do not allocate an additional full response or staging buffer.
+The destination must be large enough. A one-byte EOF check detects overflow and
+consumes trailing protocol metadata. Custom bodies that only accept vectors and
+decompression retain a bounded scratch-buffer fallback.
+
+HTTP/2 uploads use a reusable 16 KiB DATA-frame payload buffer. Header and payload
+are coalesced into one transport write to avoid tiny TLS records. Streaming bodies
+also use two reusable look-ahead buffers. TLS encryption, receive flow control,
+and protocol metadata still have their own costs. Reuse an `HTTP.Client` to reuse
+connections. Allocation tests cover ownership, replay, and destination views;
+network benchmarks are still needed to establish throughput.
+
+Run `julia --threads=4 --project=. bench/buffered_upload_allocations.jl --check`
+for the local upload allocation gate. Its receiver runs in a separate process.
+CI runs this check on stable Julia/Linux for both HTTP/1 and HTTP/2. The gate
+allows protocol metadata and flow-control costs but rejects payload-sized
+staging allocations.
