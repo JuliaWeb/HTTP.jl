@@ -37,6 +37,26 @@ end
     end
 end
 
+# Downstream bodies can implement only the original Vector destination contract.
+struct _VectorOnlyTransferBody <: HTTP.AbstractBody
+    data::IOBuffer
+end
+HTTP.body_read!(body::_VectorOnlyTransferBody, dest::Vector{UInt8}) = readbytes!(body.data, dest, length(dest))
+
+@testset "Vector-only custom response bodies" begin
+    data = fill(0x61, 100_000) # more than one fallback scratch buffer
+    body() = _VectorOnlyTransferBody(IOBuffer(data))
+    padded = fill(0xff, length(data) + 2)
+    @test HTTP._copy_response_bytes!(view(padded, 2:length(data)+1), body()) == length(data)
+    @test padded[2:end-1] == data
+    @test padded[1] == padded[end] == 0xff
+    dest = zeros(UInt8, length(data) + 10)
+    @test HTTP._copy_response_bytes!(dest, body()) == length(data)
+    @test dest == data
+    @test_throws ArgumentError HTTP._copy_response_bytes!(zeros(UInt8, length(data)-1), body())
+    @test_throws ArgumentError HTTP._copy_response_bytes!(UInt8[], body())
+end
+
 @testset "Header ownership and replay through HTTP/1 and HTTP/2" begin
     vector_payload = collect(codeunits(repeat("ownership", 8192)))
     string_payload = view(codeunits("!" * repeat("ownership", 8192) * "!"), 2:length(vector_payload)+1)
