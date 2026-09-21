@@ -51,6 +51,14 @@ const HT = HTTP
     empty_value = HT.Headers(["X-Empty" => ""])
     @test HT.header(empty_value, "X-Empty") == ""
     @test !HT.hasheader(empty_value, "X-Empty")
+    for container in (empty_value, HT.Request("GET", "/", empty_value), HT.Response(200, empty_value))
+        @test haskey(container, "x-empty")
+        @test get(container, "x-empty", "fallback") == ""
+        @test get(container, "X-EMPTY", nothing) == ""
+        @test get(container, "X-Missing", "fallback") == "fallback"
+        @test get(container, "X-Missing", nothing) === nothing
+    end
+
 
     headers = HT.Headers(var"content-type" = "application/json")
     @test headers == HTTP.Headers(["Content-Type" => "application/json"])
@@ -154,6 +162,23 @@ end
     HT.appendheader(cookies, "Set-Cookie", "a=1")
     HT.appendheader(cookies, "Set-Cookie", "b=2")
     @test collect(cookies) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
+end
+
+@testset "Tuple header collections" begin
+    for items in ((), ("x-a" => "one",), ("x-a" => "one", "x-b" => "two"),
+                  ("x-a" => "one", "x-b" => "two", "x-c" => "three"),
+                  (("x-a", "one"), ("x-b", "two")),
+                  ("x-a" => "one", ("x-b", "two")))
+        expected = HT.mkheaders(collect(items))
+        @test HT.mkheaders(items) == expected
+        @test HT.Headers(items) == expected
+        @test HT.Request("GET", "/", items).headers == expected
+        @test HT.Response(200, items).headers == expected
+        @test HT.mkheaders(items; extra="value") == HT.Headers(collect(expected)..., "extra" => "value")
+    end
+    @test HT.mkheaders(("x-a", "one")) == HT.Headers("x-a" => "one")
+    @test HT.Headers(("x-a", "one")) == HT.Headers("x-a" => "one")
+    @test HT.Headers("x-a" => "one", ("x-b", "two")) == HT.Headers("x-a" => "one", "x-b" => "two")
 end
 
 @testset "HTTP core header tokens" begin

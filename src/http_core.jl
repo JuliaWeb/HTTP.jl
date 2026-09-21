@@ -799,6 +799,9 @@ function mkheaders(headers_input)
     return headers
 end
 
+mkheaders(items::Tuple{Vararg{Union{Pair,Tuple}}}; kwargs...) =
+    mkheaders(Base.Iterators.flatten((items, kwargs)))
+
 mkheaders(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(Base.Iterators.flatten((items, kwargs)))
 
 """Return a newly allocated `Vector{String}` of header keys in insertion order."""
@@ -858,17 +861,12 @@ function Base.getindex(headers::Headers, key::AbstractString)::String
 end
 
 """
-    get(headers, key, default) -> String
+    get(headers, key, default)
 
-Dict-style `get` on `Headers`. Returns the first value for `key`, or
-`default` if the header is absent.
+Dict-style `get` on `Headers`. Returns the first value for `key`, including
+an empty value, or `default` if the header is absent.
 """
-function Base.get(headers::Headers, key::AbstractString, default)
-    v = header(headers, key)
-    !isempty(v) && return v
-    hasheader(headers, key) && return v
-    return default
-end
+Base.get(headers::Headers, key::AbstractString, default) = header(headers, key, default)
 
 """
     haskey(headers, key) -> Bool
