@@ -140,6 +140,23 @@ end
     @test collect(cookies) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
 end
 
+@testset "Tuple header collections" begin
+    for items in ((), ("x-a" => "one",), ("x-a" => "one", "x-b" => "two"),
+                  ("x-a" => "one", "x-b" => "two", "x-c" => "three"),
+                  (("x-a", "one"), ("x-b", "two")),
+                  ("x-a" => "one", ("x-b", "two")))
+        expected = HT.mkheaders(collect(items))
+        @test HT.mkheaders(items) == expected
+        @test HT.Headers(items) == expected
+        @test HT.Request("GET", "/", items).headers == expected
+        @test HT.Response(200, items).headers == expected
+        @test HT.mkheaders(items; extra="value") == HT.Headers(collect(expected)..., "extra" => "value")
+    end
+    @test HT.mkheaders(("x-a", "one")) == HT.Headers("x-a" => "one")
+    @test HT.Headers(("x-a", "one")) == HT.Headers("x-a" => "one")
+    @test HT.Headers("x-a" => "one", ("x-b", "two")) == HT.Headers("x-a" => "one", "x-b" => "two")
+end
+
 @testset "HTTP core header tokens" begin
     headers = HT.Headers()
     HT.setheader(headers, "Connection", "keep-alive, Upgrade")

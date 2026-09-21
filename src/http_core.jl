@@ -794,6 +794,9 @@ function mkheaders(headers_input)
     return headers
 end
 
+mkheaders(items::Tuple{Vararg{Union{Pair,Tuple}}}; kwargs...) =
+    mkheaders(Base.Iterators.flatten((items, kwargs)))
+
 mkheaders(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(Base.Iterators.flatten((items, kwargs)))
 
 """Return a newly allocated `Vector{String}` of header keys in insertion order."""
