@@ -594,8 +594,9 @@ HTTP/2 uploads use a reusable 16 KiB DATA-frame payload buffer. Header and paylo
 are coalesced into one transport write to avoid tiny TLS records. Streaming bodies
 also use two reusable look-ahead buffers. TLS encryption, receive flow control,
 and protocol metadata still have their own costs. Reuse an `HTTP.Client` to reuse
-connections. Allocation tests cover ownership, replay, and destination views;
-network benchmarks are still needed to establish throughput.
+connections. Functional tests cover ownership, replay, and destination views.
+The allocation gate below measures buffered uploads without retries; network
+benchmarks are still needed to establish throughput.
 
 Run `julia --threads=4 --project=. bench/buffered_upload_allocations.jl --check`
 for the local upload allocation gate. Its receiver runs in a separate process.
