@@ -123,8 +123,9 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
     _append_status_line!(io, response)
     _write_headers!(io, headers)
     write(io, "\r\n")
-    body_bytes === nothing || write(io, body_bytes)
-    _write_server_stream_bytes!(stream, take!(io), false)
+    bytes = take!(io)
+    body_bytes === nothing || append!(bytes, body_bytes)
+    _write_server_stream_bytes!(stream, bytes, false)
     @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     return nothing
