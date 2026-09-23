@@ -372,12 +372,12 @@ function _server_closewrite(stream::Stream)::Nothing
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length"))
         end
+        body_bytes = take!(stream.request_buffer)
         # Bound the extra copy: large buffered bodies keep separate writes.
-        if stream.written_bytes <= 4096
-            _write_server_stream_head!(stream, take!(stream.request_buffer))
+        if length(body_bytes) <= 4096
+            _write_server_stream_head!(stream, body_bytes)
         else
             _write_server_stream_head!(stream)
-            body_bytes = take!(stream.request_buffer)
             _write_server_stream_bytes!(stream, body_bytes, false)
         end
     elseif stream.write_mode == _ServerStreamWriteMode.CHUNKED
