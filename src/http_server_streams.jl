@@ -57,7 +57,9 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
         end
     catch
         # A transport error can follow a partial write, including a complete
-        # head. Neither a replacement response nor a retry is safe.
+        # head. A replacement response, a retry, and connection reuse are all
+        # unsafe, even when the handler catches this error.
+        stream.response.close = true
         @atomic :release stream.head_committed = true
         @atomic :release stream.response_started = true
         @atomic :release stream.write_closed = true

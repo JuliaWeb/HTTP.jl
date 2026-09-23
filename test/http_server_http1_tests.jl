@@ -1064,6 +1064,12 @@ end
     try
         write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
         @test take!(timeout_seen)
+        # The handler caught the failed write, so the response may be
+        # truncated. The server must close the connection, not serve another
+        # request on it.
+        HT.@try_ignore write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n")))
+        HT.@try_ignore read(sock)
+        @test !isready(timeout_seen)
     finally
         HT.@try_ignore begin
             NC.close(sock)
