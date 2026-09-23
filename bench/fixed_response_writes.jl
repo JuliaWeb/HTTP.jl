@@ -6,8 +6,8 @@
 using HTTP
 
 port = parse(Int, ARGS[1])
-body = fill(UInt8('x'), parse(Int, get(ARGS, 2, "2")))
-content_length = string(length(body))
+const body = fill(UInt8('x'), parse(Int, get(ARGS, 2, "2")))
+const content_length = string(length(body))
 server = HTTP.listen!("127.0.0.1", port; backlog = 4096) do stream
     HTTP.setheader(stream, "Content-Type", "application/octet-stream")
     HTTP.setheader(stream, "Content-Length", content_length)
