@@ -46,13 +46,22 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
         )
         return nothing
     end
-    _set_write_deadline!(stream.server, stream.tracked.conn)
-    total = 0
-    while total < length(data)
-        chunk = total == 0 ? data : data[(total+1):end]
-        n = write(stream.tracked.conn, chunk)
-        n > 0 || throw(ProtocolError("server stream write made no progress"))
-        total += n
+    try
+        _set_write_deadline!(stream.server, stream.tracked.conn)
+        total = 0
+        while total < length(data)
+            chunk = total == 0 ? data : data[(total+1):end]
+            n = write(stream.tracked.conn, chunk)
+            n > 0 || throw(ProtocolError("server stream write made no progress"))
+            total += n
+        end
+    catch
+        # A transport error can follow a partial write, including a complete
+        # head. Neither a replacement response nor a retry is safe.
+        @atomic :release stream.head_committed = true
+        @atomic :release stream.response_started = true
+        @atomic :release stream.write_closed = true
+        rethrow()
     end
     return nothing
 end
@@ -115,17 +124,7 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
     _write_headers!(io, headers)
     write(io, "\r\n")
     body_bytes === nothing || write(io, body_bytes)
-    bytes = take!(io)
-    try
-        _write_server_stream_bytes!(stream, bytes, false)
-    catch
-        # A transport error can follow a partial write, including a complete
-        # head. Neither a replacement response nor a retry is safe.
-        @atomic :release stream.head_committed = true
-        @atomic :release stream.response_started = true
-        @atomic :release stream.write_closed = true
-        rethrow()
-    end
+    _write_server_stream_bytes!(stream, take!(io), false)
     @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     return nothing

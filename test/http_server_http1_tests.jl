@@ -1628,14 +1628,16 @@ end
     end
 end
 
-@testset "HTTP failed fixed-length writes cannot send a replacement response" begin
+@testset "HTTP failed stream writes cannot send a replacement response" for n in (2, 4097, nothing)
     states = Channel{Any}(1)
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
-        HT.setheader(stream, "Content-Length", "2")
-        write(stream, "ok")
+        if n !== nothing
+            HT.setheader(stream, "Content-Length", string(n))
+            write(stream, fill(UInt8('x'), n))
+        end
         close(stream.tracked.conn)
         err = try
-            HT.closewrite(stream)
+            n === nothing ? write(stream, "chunk") : HT.closewrite(stream)
         catch e
             e
         end
