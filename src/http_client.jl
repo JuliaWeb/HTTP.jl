@@ -234,7 +234,6 @@ function _handle_client_compat_kwargs(;
     logerrors=nothing,
     logtag=nothing,
 )::Nothing
-    copyheaders === nothing || _warn_ignored_client_compat_kw("copyheaders")
     pool === nothing || _warn_ignored_client_compat_kw("pool")
     canonicalize_headers === nothing || _warn_ignored_client_compat_kw("canonicalize_headers")
     detect_content_type === nothing || _warn_ignored_client_compat_kw("detect_content_type")
@@ -864,7 +863,8 @@ function _do_incoming!(
     retry_controller=nothing,
     proxy_config::ProxyConfig=client.transport.proxy,
     cookies::Union{Bool,Vector{Cookie}}=true,
-    cookiejar::Union{Nothing,CookieJar}=client.cookiejar,
+    cookiejar::Union{Nothing,CookieJar}=client.cookiejar;
+    copyrequest::Bool=true,
 )
     current_address = String(address)
     initial_address = current_address
@@ -882,7 +882,7 @@ function _do_incoming!(
     auto_server_name = _host_for_sni(current_address)
     user_pinned_server_name = server_name !== nothing && String(server_name::AbstractString) != auto_server_name
     current_server_name = user_pinned_server_name ? String(server_name::AbstractString) : auto_server_name
-    current_request = _copy_request_shallow_body(request)
+    current_request = copyrequest ? _copy_request_shallow_body(request) : request
     previous_response = nothing
     retry_attempt = 1
     retry_token = nothing
@@ -1499,6 +1499,27 @@ function _copy_response_bytes!(dest::AbstractVector{UInt8}, body::AbstractBody):
     return Int64(total)
 end
 
+# Built-in buffered and network bodies accept destination views. Custom bodies
+# retain the Vector-based scratch fallback above, including callback bodies.
+function _copy_response_bytes!(dest::AbstractVector{UInt8}, body::Union{EmptyBody,BytesBody,H1Body,H2Body})::Int64
+    capacity = length(dest)
+    total = 0
+    while total < capacity
+        stop = min(capacity, total + _RESPONSE_COPY_BUFFER_BYTES)
+        n = body_read!(body, @view dest[(total + 1):stop])
+        n == 0 && break
+        total += n
+    end
+    if total == capacity
+        # Read through EOF/trailers and detect overflow without writing outside
+        # the caller's storage. An empty destination still checks for data.
+        n = body_read!(body, Vector{UInt8}(undef, 1))
+        n == 0 || throw(ArgumentError("Unable to grow response stream IOBuffer $(capacity) large enough for response body size: $(total + n)"))
+    end
+    dest isa Vector{UInt8} && resize!(dest, total)
+    return Int64(total)
+end
+
 function _response_content_encoding(headers::Headers, decompress::Union{Nothing,Bool})::Union{Nothing,Symbol}
     decompress === false && return nothing
     encoding = header(headers, "Content-Encoding", nothing)
@@ -1805,9 +1826,9 @@ function _is_headers_input(x)::Bool
     return false
 end
 
-function _normalize_headers_input(headers_input)::Headers
+function _normalize_headers_input(headers_input, copyheaders::Bool=true)::Headers
     headers_input === nothing && return Headers()
-    headers_input isa Headers && return copy(headers_input)
+    headers_input isa Headers && return copyheaders ? copy(headers_input) : headers_input
     headers = Headers()
     if headers_input isa AbstractDict
         for (k, v) in pairs(headers_input)
@@ -2099,7 +2120,7 @@ function request(
     write_idle_timeout::Real=0,
     expect_continue_timeout=nothing,
     readtimeout=nothing,
-    copyheaders=nothing,
+    copyheaders::Bool=true,
     pool=nothing,
     canonicalize_headers=nothing,
     detect_content_type=nothing,
@@ -2165,7 +2186,7 @@ function request(
         merged_query = _merge_client_default_query(client, query)
         parsed = _parse_http_url(url, merged_query)
         request_url = parsed.url
-        req_headers = _normalize_headers_input(headers)
+        req_headers = _normalize_headers_input(headers, copyheaders)
         _apply_client_default_headers!(req_headers, client)
         normalized_cookies = _normalize_cookies_input(cookies)
         sink = _resolve_response_sink(response_stream)
@@ -2181,6 +2202,7 @@ function request(
             _method_upper(method),
             parsed.target;
             headers=req_headers,
+            copyheaders=false,
             body=normalized_body.body,
             host=parsed.host_header,
             content_length=normalized_body.content_length,
@@ -2205,7 +2227,8 @@ function request(
                 retry_controller,
                 proxy_config,
                 normalized_cookies,
-                effective_cookiejar,
+                effective_cookiejar;
+                copyrequest=false,
             )
             incoming = incoming_response::_IncomingResponse
             resolved_request = incoming.head.request === nothing ? req : incoming.head.request::Request
@@ -2295,6 +2318,11 @@ Keyword arguments:
   shared `HTTP.COOKIEJAR`
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body
+- `copyheaders`: `true` copies caller headers (the default). `false` transfers
+  an existing `HTTP.Headers` collection to the operation. Do not access or
+  mutate it until the call completes; final contents are unspecified. Other
+  header inputs become a new collection either way. Retry attempts still
+  receive isolated headers.
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
@@ -2325,7 +2353,7 @@ Keyword arguments:
 
 HTTP.jl 2.0 accepts several HTTP.jl 1.x keywords as migration shims:
 `readtimeout` maps to `read_idle_timeout`; `pool`, `retry_delays`,
-`retry_check`, `sslconfig`, `socket_type_tls`, `copyheaders`,
+`retry_check`, `sslconfig`, `socket_type_tls`,
 `canonicalize_headers`, `detect_content_type`, `logerrors`, `logtag`, and
 `observelayers` are accepted so older call sites fail less abruptly. Prefer the
 2.0 forms listed above for new code: `client` / `transport` for pooling,

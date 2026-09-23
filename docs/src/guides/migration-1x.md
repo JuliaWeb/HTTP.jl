@@ -676,7 +676,7 @@ abruptly:
 - `retry_delays` and `retry_check`: accepted, but use `retry_if`,
   `retries`, and `retry_bucket`
 - `sslconfig` and `socket_type_tls`: accepted, but configure the transport
-- `copyheaders`, `canonicalize_headers`, `detect_content_type`,
+- `canonicalize_headers`, `detect_content_type`,
   `observelayers`, `logerrors`, and `logtag`: accepted for compatibility, but
   not the preferred 2.0 observation/configuration surface
 
@@ -698,3 +698,12 @@ Treat these as temporary migration aids. New code should use the documented
 - Replace internal parser/connection/HPACK/HTTP2 usage with documented APIs.
 - Run integration tests for redirects, retries, proxy configuration, cookies,
   streaming, WebSockets, SSE, and HTTP/2 after upgrading.
+
+
+### Explicit header ownership
+
+`copyheaders=false` is supported by `request`, `open`, and `Request`. With an
+`HTTP.Headers` input it transfers ownership of the collection; do not access it
+while the request is active. Any other header input, such as the pair vectors
+1.x call sites pass, becomes a new collection either way. HTTP 2.7.1 and earlier
+HTTP 2 releases ignored this keyword. Retries still isolate mutable headers.

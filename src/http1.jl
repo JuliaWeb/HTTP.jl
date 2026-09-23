@@ -354,7 +354,7 @@ function _content_length_allowed_for_status(status::Integer)::Bool
     return _body_allowed_for_status(status)
 end
 
-function _read_exact!(io::IO, dst::Vector{UInt8}, nbytes::Integer)::Int
+function _read_exact!(io::IO, dst::AbstractVector{UInt8}, nbytes::Integer)::Int
     nbytes < 0 && throw(ArgumentError("nbytes must be >= 0"))
     nbytes == 0 && return 0
     nbytes <= length(dst) || throw(ArgumentError("nbytes must be <= destination length"))

@@ -462,7 +462,7 @@ function open(
     write_idle_timeout::Real=0,
     expect_continue_timeout=nothing,
     readtimeout=nothing,
-    copyheaders=nothing,
+    copyheaders::Bool=true,
     pool=nothing,
     canonicalize_headers=nothing,
     detect_content_type=nothing,
@@ -501,7 +501,7 @@ function open(
     end
     merged_query = _merge_client_default_query(client, query)
     parsed = _parse_http_url(url, merged_query)
-    req_headers = _normalize_headers_input(headers)
+    req_headers = _normalize_headers_input(headers, copyheaders)
     _apply_client_default_headers!(req_headers, client)
     normalized_cookies = _normalize_cookies_input(cookies)
     _apply_default_accept_encoding!(req_headers, decompress)

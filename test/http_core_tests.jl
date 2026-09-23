@@ -104,6 +104,34 @@ const HT = HTTP
     @test length([v for (k, v) in collect(headers6) if k == "Set-Cookie"]) == 2
 end
 
+@testset "Headers vector constructor canonicalizes keys" begin
+    source = ["content-type" => "text/plain", "x-test" => "one", "X-TEST" => "two"]
+    headers = HT.Headers(source)
+    # Same normalization as `mkheaders` and `Request`: adjacent duplicates join.
+    @test collect(headers) == ["Content-Type" => "text/plain", "X-Test" => "one,two"]
+    @test collect(headers) == collect(HT.Request("GET", "/", source).headers)
+    @test collect(headers) == collect(HT.Headers(Pair{String,Any}[k => v for (k, v) in source]))
+    @test source == ["content-type" => "text/plain", "x-test" => "one", "X-TEST" => "two"]
+    @test HT.header(headers, "CONTENT-TYPE") == "text/plain"
+    @test HT.headers(headers, "x-test") == ["one,two"]
+    @test haskey(headers, "X-TEST")
+    for message in (HT.Request("GET", "/", headers), HT.Response(200, headers))
+        @test HT.header(message, "content-type") == "text/plain"
+    end
+    @test collect(HT.Headers(["set-cookie" => "a=1", "Set-Cookie" => "b=2"])) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
+    HT.setheader(headers, "X-TEST", "replacement")
+    @test HT.headers(headers, "x-test") == ["replacement"]
+    @test source[2] == ("x-test" => "one")
+    copied = copy(headers)
+    HT.removeheader(copied, "CONTENT-TYPE")
+    @test !haskey(copied, "content-type")
+    @test haskey(headers, "content-type")
+    hinted = HT.Headers(8)
+    @test isempty(hinted)
+    push!(hinted, "x-test" => "value")
+    @test HT.header(hinted, "X-Test") == "value"
+end
+
 @testset "appendheader joins duplicates with a bare comma (RFC 9110 §5.3)" begin
     # Two adjacent duplicates: joined with "," and no whitespace. AWS SigV4 and
     # Azure SharedKey canonicalization both require exactly this form, so any

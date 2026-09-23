@@ -64,6 +64,7 @@ end
 test_files = [
     "test_policy_tests.jl",
     "http_core_tests.jl",
+    "transfer_ownership_tests.jl",
     "http1_wire_tests.jl",
     "http_cookie_tests.jl",
     "http_forms_tests.jl",

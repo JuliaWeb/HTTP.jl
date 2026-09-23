@@ -643,14 +643,19 @@ Ordered, case-canonicalized collection of header pairs.
 `Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
 written against the long-standing pair-vector header representation can reuse
 the same helper functions. Keys are canonicalized on insertion, but pair order
-is preserved.
+is preserved. Constructing from a vector, dictionary, or tuple goes through
+`mkheaders`: the source is left unchanged, keys are canonicalized, and adjacent
+duplicate keys are joined the way `appendheader` joins them.
 """
 mutable struct Headers <: AbstractVector{Pair{String,String}}
     entries::Vector{Pair{String,String}}
-end
 
-"""Create and return an empty `Headers` collection."""
-Headers() = Headers(Pair{String,String}[])
+    """Create and return an empty `Headers` collection."""
+    Headers() = new(Pair{String,String}[])
+
+    """Copy pair storage without re-canonicalizing keys in an existing `Headers`."""
+    Headers(headers::Headers) = new(copy(headers.entries))
+end
 
 """
     Headers(hint)
@@ -660,18 +665,10 @@ the backing pair storage. Throws `ArgumentError` when `hint < 0`.
 """
 function Headers(hint::Integer)
     hint < 0 && throw(ArgumentError("hint must be >= 0"))
-    entries = Pair{String,String}[]
-    sizehint!(entries, Int(hint))
-    return Headers(entries)
+    headers = Headers()
+    sizehint!(headers.entries, Int(hint))
+    return headers
 end
-
-"""
-    Headers(headers)
-
-Deep-copy constructor for header collections. The underlying pair storage is
-copied, so mutating the result does not affect the source.
-"""
-Headers(headers::Headers) = Headers(copy(headers.entries))
 
 Headers(items::AbstractDict) = mkheaders(items)
 Headers(items::AbstractVector) = mkheaders(items)
@@ -1462,6 +1459,12 @@ Simple in-memory body backed by a retained `AbstractVector{UInt8}`. Reads
 advance an internal cursor until EOF; closing marks the body closed but does
 not free or truncate the stored bytes. Collection-style operations expose the
 remaining unread bytes.
+
+The public `data` field retains the original storage; `next_index` is the
+one-based offset of the next unread byte. A read-only consumer such as a signer
+may borrow `data` or `view(data, next_index:length(data))` without advancing the
+cursor. Do not modify or resize the storage until the request, including any
+retries, completes. Replay creates independent cursors over the same storage.
 """
 mutable struct BytesBody{T<:AbstractVector{UInt8}} <: AbstractBody
     data::T
@@ -1472,6 +1475,19 @@ end
 """Retain `data` in a new `BytesBody` and reset the read cursor to the start."""
 function BytesBody(data::T) where {T<:AbstractVector{UInt8}}
     return BytesBody{T}(data, 1, false)
+end
+
+# `copyto!` out of string-backed bytes runs an alias check on every block, and
+# that check hashes the whole backing string because `objectid(::String)` is
+# content-based. Copy through a non-owning array while the owner stays rooted,
+# so the copy is linear. The array must not escape `f`.
+_with_body_bytes(f::F, data) where {F} = f(data)
+const _StringBodyBytes = Base.CodeUnits{UInt8,<:Union{String,SubString{String}}}
+function _with_body_bytes(f::F, data::Union{_StringBodyBytes,SubArray{UInt8,1,<:_StringBodyBytes,Tuple{UnitRange{Int}},true}}) where {F}
+    GC.@preserve data begin
+        bytes = unsafe_wrap(Vector{UInt8}, pointer(data), length(data); own=false)
+        return f(bytes)
+    end
 end
 
 function Base.String(body::BytesBody)
@@ -1598,18 +1614,21 @@ Read up to `length(dst)` bytes into `dst`. Returns `0` on EOF.
 Concrete body types may throw `ProtocolError`, transport errors, or body-
 specific exceptions if the stream is malformed or the backing connection fails.
 """
-function body_read!(::EmptyBody, dst::Vector{UInt8})::Int
+function body_read!(::EmptyBody, dst::AbstractVector{UInt8})::Int
     _ = dst
     return 0
 end
 
-function body_read!(body::BytesBody, dst::Vector{UInt8})::Int
+function body_read!(body::BytesBody, dst::AbstractVector{UInt8})::Int
     body_closed(body) && return 0
     isempty(dst) && return 0
     available = (length(body.data) - body.next_index) + 1
     available <= 0 && return 0
     n = min(length(dst), available)
-    copyto!(dst, 1, body.data, body.next_index, n)
+    start = body.next_index
+    _with_body_bytes(body.data) do bytes
+        copyto!(dst, 1, bytes, start, n)
+    end
     body.next_index += n
     return n
 end
@@ -1652,12 +1671,16 @@ end
 """
     Request(method, target; headers=Headers(), trailers=Headers(), body=EmptyBody(), host=nothing,
             content_length=-1, proto_major=1, proto_minor=1, close=false,
-            context=RequestContext())
+            context=RequestContext(), copyheaders=true)
 
 HTTP request object shared by the client and server stacks.
 
 Keyword arguments:
-- `headers`, `trailers`: copied into the request.
+- `headers`, `trailers`: copied into the request by default.
+- `copyheaders=false`: take ownership of existing `Headers` collections for both
+  headers and trailers. The caller must stop accessing or mutating them while
+  the request is in use. Their final contents are unspecified. Other input
+  types are converted into new collections, as with the default.
 - `body`: any `AbstractBody`; ownership stays with the request.
 - `host`: optional authority used for HTTP/1 `Host` and HTTP/2 `:authority`.
 - `content_length`: exact byte length, or `-1` when unknown.
@@ -1690,11 +1713,19 @@ end
 
 Request() = _request_nocopy("", "", Headers(), Headers(), EmptyBody(), nothing, Int64(-1), UInt8(1), UInt8(1), false, RequestContext())
 
+# `copyheaders=false` adopts an existing `Headers` collection without copying it.
+# Every other input becomes a new collection either way.
+function _request_headers(headers, copyheaders::Bool)::Headers
+    headers isa Headers && return copyheaders ? copy(headers) : headers
+    return mkheaders(headers)
+end
+
 function Request(
     method::AbstractString,
     target::AbstractString;
     headers=Headers(),
     trailers=Headers(),
+    copyheaders::Bool=true,
     body=EmptyBody(),
     host::Union{Nothing,AbstractString}=nothing,
     content_length::Integer=Int64(-1),
@@ -1714,8 +1745,8 @@ function Request(
     return Request{typeof(actual_body)}(
         String(method),
         String(target),
-        copy(mkheaders(headers)),
-        copy(mkheaders(trailers)),
+        _request_headers(headers, copyheaders),
+        _request_headers(trailers, copyheaders),
         actual_body,
         host_s,
         actual_content_length,

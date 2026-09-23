@@ -1394,6 +1394,9 @@ end
 @testset "HTTP/2 client applies END_STREAM once a multi-frame header block completes" begin
     # Trailers whose block starts on a HEADERS frame carrying END_STREAM and
     # ends on a CONTINUATION frame.
+    # Keep the peer open until the client consumes all frames. Closing with
+    # unread control frames can reset the socket on Windows.
+    consumed = Base.Event()
     listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
         final_block = HT.encode_header_block(enc, HT.HeaderField[
             HT.HeaderField(":status", "200", false),
@@ -1408,6 +1411,7 @@ end
         mid = cld(length(trailer_block), 2)
         _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, false, trailer_block[1:mid]))
         _write_frame_to_conn!(conn, HT.ContinuationFrame(stream_id, true, trailer_block[(mid + 1):end]))
+        wait(consumed)
         return nothing
     end
     h2_conn = HT.connect_h2!(address; secure = false)
@@ -1418,14 +1422,17 @@ end
         @test String(_read_all_h2_body(response.body)) == "ok"
         @test HT.header(response.trailers, "x-trailer") == "done"
         @test HT.header(response.trailers, "x-more") == "split"
+        notify(consumed)
         _wait_task_h2!(server_task)
     finally
+        notify(consumed)
         close(h2_conn)
         HTTP.@try_ignore NC.close(listener)
     end
 
     # A bodiless head whose block starts on a HEADERS frame carrying END_STREAM
     # and ends on a CONTINUATION frame.
+    consumed2 = Base.Event()
     listener2, address2, server_task2 = _h2_serve_scripted_response() do conn, stream_id, enc
         head_block = HT.encode_header_block(enc, HT.HeaderField[
             HT.HeaderField(":status", "204", false),
@@ -1434,6 +1441,7 @@ end
         mid = cld(length(head_block), 2)
         _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, false, head_block[1:mid]))
         _write_frame_to_conn!(conn, HT.ContinuationFrame(stream_id, true, head_block[(mid + 1):end]))
+        wait(consumed2)
         return nothing
     end
     h2_conn2 = HT.connect_h2!(address2; secure = false)
@@ -1443,8 +1451,10 @@ end
         @test response.status == 204
         @test HT.header(response.headers, "x-split") == "head"
         @test isempty(_read_all_h2_body(response.body))
+        notify(consumed2)
         _wait_task_h2!(server_task2)
     finally
+        notify(consumed2)
         close(h2_conn2)
         HTTP.@try_ignore NC.close(listener2)
     end

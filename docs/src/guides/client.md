@@ -549,8 +549,40 @@ as temporary compatibility, not as the preferred API:
 - `retry_delays` and `retry_check` should become `retry_if`, `retries`, and
   `retry_bucket`
 - `sslconfig` and `socket_type_tls` should move to transport/TLS configuration
-- `copyheaders`, `canonicalize_headers`, `detect_content_type`,
+- `canonicalize_headers`, `detect_content_type`,
   `observelayers`, `logerrors`, and `logtag` are accepted for compatibility
   where possible
 
 See the [migration guide](migration-1x.md) for before/after examples.
+
+
+## Buffered transfer ownership
+
+Pass a byte vector or a contiguous byte view to upload existing storage without
+copying it. The request body retains that storage, and retries replay it with
+independent cursors. Keep the bytes unchanged until the call returns. A signer
+may read `body.data` from `body.next_index` through its end without consuming
+the body.
+
+Pass an `HTTP.Headers` collection with `copyheaders=false` to `HTTP.request` or
+`HTTP.open` to skip the initial defensive copy. The call then owns the
+collection: do not access it until the call returns, and do not share it between
+concurrent requests. Its final contents are unspecified. Other header inputs are
+converted into a new collection either way. Each attempt still gets its own
+header copy for signing, cookies, and redirects. On `HTTP.Request`, the same
+keyword transfers both the headers and the trailers.
+
+```julia
+headers = HTTP.Headers(["Content-Type" => "application/octet-stream"])
+response = HTTP.put(url, headers, payload; copyheaders=false, client)
+```
+
+Pass a byte vector or a writable byte view as `response_stream` to receive the
+body into existing storage. Built-in HTTP/1 and HTTP/2 bodies read directly into
+it. The destination must be large enough for the whole body; a larger body
+throws an `ArgumentError`. A `Vector{UInt8}` destination is resized to the body
+length.
+
+HTTP/2 uploads reuse one 16 KiB DATA-frame buffer per request body instead of
+allocating per frame. `bench/buffered_upload_allocations.jl --check` measures
+client allocations for buffered HTTP/1 and HTTP/2 uploads.

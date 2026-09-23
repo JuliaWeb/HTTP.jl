@@ -234,11 +234,11 @@ end
     return conn.tcp
 end
 
-function _write_all_h2!(conn::H2Connection, bytes::Vector{UInt8})
+function _write_all_h2!(conn::H2Connection, bytes::AbstractVector{UInt8})
     stream = _h2_stream(conn)
     total = 0
     while total < length(bytes)
-        n = write(stream, bytes[(total+1):end])
+        n = write(stream, @view bytes[(total+1):end])
         n > 0 || throw(ProtocolError("HTTP/2 write made no progress"))
         total += n
     end
@@ -266,6 +266,18 @@ function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame, w
     lock(conn.write_lock)
     try
         _write_frame_h2!(conn, frame, write_deadline_ns)
+    finally
+        unlock(conn.write_lock)
+    end
+    return nothing
+end
+
+# Writes pre-encoded frame bytes under the connection write lock.
+function _write_bytes_h2_threadsafe!(conn::H2Connection, bytes::AbstractVector{UInt8}, write_deadline_ns::Int64)
+    lock(conn.write_lock)
+    try
+        _set_h2_write_deadline!(conn, write_deadline_ns)
+        _write_all_h2!(conn, bytes)
     finally
         unlock(conn.write_lock)
     end
@@ -377,19 +389,23 @@ end
 
 # Returns `true` when all of `data` was written, `false` when the stream's send
 # side closed mid-body and the remaining payload must be abandoned.
-function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request, data::Vector{UInt8}, end_stream::Bool)::Bool
-    isempty(data) && return true
+# `framebuf` holds one frame header plus payload so both go out in one transport
+# write, as before. Each body writer owns and reuses it across DATA frames instead
+# of allocating a frame per chunk.
+function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request,
+    data::AbstractVector{UInt8}, end_stream::Bool, framebuf::Vector{UInt8})::Bool
     offset = 1
     total_len = length(data)
     while offset <= total_len
-        remaining = total_len - offset + 1
+        remaining = min(total_len - offset + 1, length(framebuf) - 9)
         write_deadline_ns = _request_write_deadline_ns(request)
         chunk_len = _reserve_send_window!(conn, stream_id, remaining, write_deadline_ns)
         chunk_len == 0 && return false
-        chunk = Vector{UInt8}(undef, chunk_len)
-        copyto!(chunk, 1, data, offset, chunk_len)
         final_chunk = (offset + chunk_len - 1) == total_len
-        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, end_stream && final_chunk, chunk), write_deadline_ns)
+        _encode_header_bytes!(framebuf, FrameHeader(chunk_len, FRAME_DATA,
+            end_stream && final_chunk ? FLAG_END_STREAM : UInt8(0), stream_id))
+        copyto!(framebuf, 10, data, offset, chunk_len)
+        _write_bytes_h2_threadsafe!(conn, @view(framebuf[1:(9 + chunk_len)]), write_deadline_ns)
         offset += chunk_len
     end
     return true
@@ -1485,28 +1501,37 @@ end
 # decides how to close out the abandoned stream.
 function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request::Request)::Bool
     request.body isa EmptyBody && return true
-    buf = Vector{UInt8}(undef, 16 * 1024)
-    pending = UInt8[]
-    have_pending = false
     try
-        while true
-            n = body_read!(request.body, buf)
-            if n == 0
-                if have_pending
-                    return _write_data_frames_h2!(conn, stream_id, request, pending, true)
+        if request.body isa BytesBody
+            body = request.body::BytesBody
+            data = body_closed(body) ? view(body.data, 1:0) : view(body.data, body.next_index:length(body.data))
+            if !isempty(data)
+                framebuf = Vector{UInt8}(undef, 9 + min(16 * 1024, length(data)))
+                sent = _with_body_bytes(data) do bytes
+                    _write_data_frames_h2!(conn, stream_id, request, bytes, true, framebuf)
                 end
-                _h2_send_closed(conn, stream_id) && return false
-                _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]), _request_write_deadline_ns(request))
-                return true
+                sent && (body.next_index = length(body.data) + 1)
+                return sent
             end
-            current = Vector{UInt8}(undef, n)
-            copyto!(current, 1, buf, 1, n)
-            if have_pending
-                _write_data_frames_h2!(conn, stream_id, request, pending, false) || return false
+        else
+            # Keep one chunk pending so END_STREAM travels with the last DATA.
+            # Swap buffers after each write rather than allocating per chunk.
+            framebuf = Vector{UInt8}(undef, 9 + 16 * 1024)
+            pending = Vector{UInt8}(undef, 16 * 1024)
+            buf = similar(pending)
+            pending_n = body_read!(request.body, pending)
+            while pending_n > 0
+                n = body_read!(request.body, buf)
+                _write_data_frames_h2!(conn, stream_id, request,
+                    @view(pending[1:pending_n]), n == 0, framebuf) || return false
+                n == 0 && return true
+                pending, buf = buf, pending
+                pending_n = n
             end
-            pending = current
-            have_pending = true
         end
+        _h2_send_closed(conn, stream_id) && return false
+        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]), _request_write_deadline_ns(request))
+        return true
     finally
         @try_ignore body_close!(request.body)
     end
@@ -1747,7 +1772,7 @@ function _wait_h2_body_progress!(state::H2StreamState, deadline_ns::Int64)::Noth
     end
 end
 
-function body_read!(body::H2Body, dst::Vector{UInt8})::Int
+function body_read!(body::H2Body, dst::AbstractVector{UInt8})::Int
     isempty(dst) && return 0
     body_closed(body) && return 0
     while true
