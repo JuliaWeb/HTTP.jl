@@ -1479,8 +1479,8 @@ end
 
 # `copyto!` out of string-backed bytes runs an alias check on every block, and
 # that check hashes the whole backing string because `objectid(::String)` is
-# content-based. Let synchronous consumers copy through a non-owning array while
-# the owner stays rooted, so the copy is linear. The array must not escape `f`.
+# content-based. Copy through a non-owning array while the owner stays rooted,
+# so the copy is linear. The array must not escape `f`.
 _with_body_bytes(f::F, data) where {F} = f(data)
 const _StringBodyBytes = Base.CodeUnits{UInt8,<:Union{String,SubString{String}}}
 function _with_body_bytes(f::F, data::Union{_StringBodyBytes,SubArray{UInt8,1,<:_StringBodyBytes,Tuple{UnitRange{Int}},true}}) where {F}
@@ -1625,7 +1625,10 @@ function body_read!(body::BytesBody, dst::AbstractVector{UInt8})::Int
     available = (length(body.data) - body.next_index) + 1
     available <= 0 && return 0
     n = min(length(dst), available)
-    copyto!(dst, 1, body.data, body.next_index, n)
+    start = body.next_index
+    _with_body_bytes(body.data) do bytes
+        copyto!(dst, 1, bytes, start, n)
+    end
     body.next_index += n
     return n
 end

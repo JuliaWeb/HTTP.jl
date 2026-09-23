@@ -558,48 +558,31 @@ See the [migration guide](migration-1x.md) for before/after examples.
 
 ## Buffered transfer ownership
 
-Pass byte vectors or contiguous byte views to upload existing storage. `BytesBody`
-retains that storage; retries create independent cursors without copying the
-payload. Keep the bytes unchanged until the operation completes. A signer may
-read `body.data` from `body.next_index` through its end without consuming the body.
+Pass a byte vector or a contiguous byte view to upload existing storage without
+copying it. The request body retains that storage, and retries replay it with
+independent cursors. Keep the bytes unchanged until the call returns. A signer
+may read `body.data` from `body.next_index` through its end without consuming
+the body.
 
-Callers that own their headers can pass `HTTP.Headers` with `copyheaders=false`
-to `HTTP.request` or `HTTP.open`. Build headers through the constructor and setters,
-then stop accessing the collection until the call returns. Its final contents are
-unspecified. Each concurrent request needs its own collection. Other header inputs
-become a new collection either way, so the keyword is safe on any call site.
-`HTTP.open` copies the collection into its stream request, so it only saves the
-initial copy there. The same keyword on `HTTP.Request` transfers its headers and
-trailers.
+Pass an `HTTP.Headers` collection with `copyheaders=false` to `HTTP.request` or
+`HTTP.open` to skip the initial defensive copy. The call then owns the
+collection: do not access it until the call returns, and do not share it between
+concurrent requests. Its final contents are unspecified. Other header inputs are
+converted into a new collection either way. Each attempt still gets its own
+header copy for signing, cookies, and redirects. On `HTTP.Request`, the same
+keyword transfers both the headers and the trailers.
 
 ```julia
 headers = HTTP.Headers(["Content-Type" => "application/octet-stream"])
 response = HTTP.put(url, headers, payload; copyheaders=false, client)
 ```
 
-Ownership transfer skips the initial defensive copy. High-level requests also
-reuse their owned state during construction. Each attempt still gets separate
-headers for signing, cookies, and redirects, and wire preparation retains its
-validation and isolation. Copying a `Headers` collection does not normalize its
-keys again. This contract does not promise zero metadata allocations.
+Pass a byte vector or a writable byte view as `response_stream` to receive the
+body into existing storage. Built-in HTTP/1 and HTTP/2 bodies read directly into
+it. The destination must be large enough for the whole body; a larger body
+throws an `ArgumentError`. A `Vector{UInt8}` destination is resized to the body
+length.
 
-Use `response_stream=destination` to fill a byte vector or writable view. Built-in
-HTTP/1 and HTTP/2 bodies copy directly from their protocol buffers into this
-storage; they do not allocate an additional full response or staging buffer.
-The destination must be large enough. A one-byte EOF check detects overflow and
-consumes trailing protocol metadata. Custom bodies that only accept vectors and
-decompression retain a bounded scratch-buffer fallback.
-
-HTTP/2 uploads use a reusable 16 KiB DATA-frame payload buffer. Header and payload
-are coalesced into one transport write to avoid tiny TLS records. Streaming bodies
-also use two reusable look-ahead buffers. TLS encryption, receive flow control,
-and protocol metadata still have their own costs. Reuse an `HTTP.Client` to reuse
-connections. Functional tests cover ownership, replay, and destination views.
-The allocation gate below measures buffered uploads without retries; network
-benchmarks are still needed to establish throughput.
-
-Run `julia --threads=4 --project=. bench/buffered_upload_allocations.jl --check`
-for the local upload allocation gate. Its receiver runs in a separate process.
-CI runs this check on stable Julia/Linux for both HTTP/1 and HTTP/2. The gate
-allows protocol metadata and flow-control costs but rejects payload-sized
-staging allocations.
+HTTP/2 uploads reuse one 16 KiB DATA-frame buffer per request body instead of
+allocating per frame. `bench/buffered_upload_allocations.jl --check` measures
+client allocations for buffered HTTP/1 and HTTP/2 uploads.

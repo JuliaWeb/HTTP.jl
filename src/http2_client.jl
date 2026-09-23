@@ -272,6 +272,18 @@ function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame, w
     return nothing
 end
 
+# Writes pre-encoded frame bytes under the connection write lock.
+function _write_bytes_h2_threadsafe!(conn::H2Connection, bytes::AbstractVector{UInt8}, write_deadline_ns::Int64)
+    lock(conn.write_lock)
+    try
+        _set_h2_write_deadline!(conn, write_deadline_ns)
+        _write_all_h2!(conn, bytes)
+    finally
+        unlock(conn.write_lock)
+    end
+    return nothing
+end
+
 @inline function _h2_max_data_frame_size(conn::H2Connection)::Int
     return conn.peer_max_send_frame_size
 end
@@ -393,13 +405,7 @@ function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::
         _encode_header_bytes!(framebuf, FrameHeader(chunk_len, FRAME_DATA,
             end_stream && final_chunk ? FLAG_END_STREAM : UInt8(0), stream_id))
         copyto!(framebuf, 10, data, offset, chunk_len)
-        lock(conn.write_lock)
-        try
-            _set_h2_write_deadline!(conn, write_deadline_ns)
-            _write_all_h2!(conn, @view framebuf[1:(9 + chunk_len)])
-        finally
-            unlock(conn.write_lock)
-        end
+        _write_bytes_h2_threadsafe!(conn, @view(framebuf[1:(9 + chunk_len)]), write_deadline_ns)
         offset += chunk_len
     end
     return true

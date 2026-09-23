@@ -107,3 +107,21 @@ end
         HTTP.forceclose(server)
     end
 end
+
+@testset "String-backed BytesBody reads" begin
+    text = "!" * repeat("0123456789", 10_000) * "!"
+    expected = Vector{UInt8}(text[2:end-1])
+    for data in (codeunits(text[2:end-1]), view(codeunits(text), 2:length(text)-1),
+                 codeunits(SubString(text, 2, length(text) - 1)))
+        body = HTTP.BytesBody(data)
+        out = UInt8[]
+        buf = Vector{UInt8}(undef, 4096)
+        while (n = HTTP.body_read!(body, buf)) > 0
+            append!(out, @view buf[1:n])
+        end
+        @test out == expected
+        dest = zeros(UInt8, length(expected))
+        @test HTTP._copy_response_bytes!(dest, HTTP.BytesBody(data)) == length(expected)
+        @test dest == expected
+    end
+end
