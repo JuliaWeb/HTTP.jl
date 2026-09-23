@@ -57,7 +57,7 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
     return nothing
 end
 
-function _write_server_stream_head!(stream::Stream)::Nothing
+function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Vector{UInt8}}=nothing)::Nothing
     response = stream.response::Response
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
@@ -114,7 +114,18 @@ function _write_server_stream_head!(stream::Stream)::Nothing
     _append_status_line!(io, response)
     _write_headers!(io, headers)
     write(io, "\r\n")
-    _write_server_stream_bytes!(stream, take!(io), false)
+    body_bytes === nothing || write(io, body_bytes)
+    bytes = take!(io)
+    try
+        _write_server_stream_bytes!(stream, bytes, false)
+    catch
+        # A transport error can follow a partial write, including a complete
+        # head. Neither a replacement response nor a retry is safe.
+        @atomic :release stream.head_committed = true
+        @atomic :release stream.response_started = true
+        @atomic :release stream.write_closed = true
+        rethrow()
+    end
     @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     return nothing
@@ -359,9 +370,14 @@ function _server_closewrite(stream::Stream)::Nothing
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length"))
         end
-        _write_server_stream_head!(stream)
-        body_bytes = take!(stream.request_buffer)
-        _write_server_stream_bytes!(stream, body_bytes, false)
+        # Bound the extra copy: large buffered bodies keep separate writes.
+        if stream.written_bytes <= 4096
+            _write_server_stream_head!(stream, take!(stream.request_buffer))
+        else
+            _write_server_stream_head!(stream)
+            body_bytes = take!(stream.request_buffer)
+            _write_server_stream_bytes!(stream, body_bytes, false)
+        end
     elseif stream.write_mode == _ServerStreamWriteMode.CHUNKED
         io = IOBuffer()
         write(io, "0\r\n")

@@ -1578,3 +1578,84 @@ end
         wait(stream_server)
     end
 end
+
+@testset "HTTP fixed-length stream responses across the coalescing boundary" begin
+    for tls in (false, true)
+        listener = if tls
+            Reseau.TLS.listen("tcp", "127.0.0.1:0", Reseau.TLS.Config(
+                verify_peer = false,
+                cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt"),
+                key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            ))
+        else
+            NC.listen("tcp", "127.0.0.1:0")
+        end
+        peers = Channel{Any}(16)
+        server = HT.listen!(listener) do stream
+            n = parse(Int, HT.startread(stream).target[2:end])
+            HT.setheader(stream, "Content-Length", string(n))
+            # Multiple handler writes must still produce exactly one body.
+            write(stream, fill(UInt8('a'), n ÷ 2))
+            write(stream, fill(UInt8('b'), n - n ÷ 2))
+            HT.closewrite(stream)
+            HT.closewrite(stream)
+            put!(peers, HT.peeraddr(stream))
+        end
+        client = HT.Client(transport = HT.Transport(
+            tls_config = Reseau.TLS.Config(verify_peer = false)), prefer_http2 = false)
+        scheme = tls ? "https" : "http"
+        url = "$scheme://127.0.0.1:$(HT.port(server))"
+        try
+            first_peer = nothing
+            for n in (0, 2, 4095, 4096, 4097, 128 * 1024)
+                response = HT.get("$url/$n"; client = client, retry = false)
+                @test response.status == 200
+                @test HT.header(response, "Content-Length") == string(n)
+                @test String(response.body) == "a"^(n ÷ 2) * "b"^(n - n ÷ 2)
+                peer = take!(peers)
+                first_peer === nothing && (first_peer = peer)
+                @test peer == first_peer
+            end
+            response = HT.request("HEAD", "$url/4096"; client = client, retry = false)
+            @test HT.header(response, "Content-Length") == "4096"
+            @test isempty(String(response.body))
+            @test take!(peers) == first_peer
+        finally
+            close(client)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
+@testset "HTTP failed fixed-length writes cannot send a replacement response" begin
+    states = Channel{Any}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        HT.setheader(stream, "Content-Length", "2")
+        write(stream, "ok")
+        close(stream.tracked.conn)
+        err = try
+            HT.closewrite(stream)
+        catch e
+            e
+        end
+        retry_result = try
+            HT.closewrite(stream)
+        catch e
+            e
+        end
+        put!(states, (err, @atomic(stream.head_committed), @atomic(stream.write_closed), retry_result))
+    end
+    try
+        raw = _raw_http_request_until_close(HT.port(server), "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")[1]
+        @test isempty(raw)
+        err, committed, closed, retry_result = take!(states)
+        @test err isa Exception
+        @test committed
+        @test closed
+        @test retry_result === nothing
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
