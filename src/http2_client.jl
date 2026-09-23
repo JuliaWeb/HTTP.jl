@@ -1655,7 +1655,7 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
         if _is_h2_connection_specific_header(name) || name == "transfer-encoding" || name == "te"
             throw(ProtocolError("forbidden HTTP/2 response header $(repr(name))"))
         end
-        appendheader(out, name, normalized)
+        appendheader(out, canonical_header_key(name), normalized)
     end
     status === nothing && throw(ProtocolError("missing HTTP/2 :status pseudo-header"))
     return status::Int, out
@@ -1671,7 +1671,7 @@ function _decode_h2_trailer_headers(headers::Vector{HeaderField})::Headers
         _valid_trailer_header_name(name) || throw(ProtocolError("invalid HTTP/2 trailer header $(repr(name))"))
         normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 trailer field value for $(repr(name))"))
-        appendheader(out, name, normalized)
+        appendheader(out, canonical_header_key(name), normalized)
     end
     return out
 end

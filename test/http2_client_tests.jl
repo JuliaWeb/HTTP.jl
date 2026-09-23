@@ -189,6 +189,30 @@ end
 
     bad_path_request = HT.Request("GET", "/bad\r\npath"; body = HT.EmptyBody(), content_length = 0)
     @test_throws HT.ProtocolError HT._request_headers_for_h2("example.com:443", bad_path_request, true)
+
+    # Names that differ only in case are one header: each value is sent once,
+    # under the lowercase name HTTP/2 requires.
+    mixed = HT.Headers()
+    push!(mixed, "x-dup" => "1")
+    push!(mixed, "providerId" => "abc-123")
+    push!(mixed, "X-DUP" => "2")
+    push!(mixed, "host" => "ignored.example")
+    mixed_request = HT.Request("GET", "/mixed"; headers = mixed, body = HT.EmptyBody(), content_length = 0)
+    mixed_fields = HT._request_headers_for_h2("example.com:443", mixed_request, true)
+    @test [(field.name, field.value) for field in mixed_fields if !startswith(field.name, ":")] ==
+        [("x-dup", "1"), ("x-dup", "2"), ("providerid", "abc-123")]
+end
+
+@testset "HTTP/2 client stores received header names in canonical form" begin
+    status, headers = HT._decode_response_headers(HT.HeaderField[
+        HT.HeaderField(":status", "200", false),
+        HT.HeaderField("content-type", "text/plain", false),
+        HT.HeaderField("x-request-id", "abc", false),
+    ])
+    @test status == 200
+    @test collect(headers) == ["Content-Type" => "text/plain", "X-Request-Id" => "abc"]
+    trailers = HT._decode_h2_trailer_headers(HT.HeaderField[HT.HeaderField("grpc-status", "0", false)])
+    @test collect(trailers) == ["Grpc-Status" => "0"]
 end
 
 @testset "HTTP/2 client validates response pseudo-headers" begin

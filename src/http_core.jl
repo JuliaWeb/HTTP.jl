@@ -638,14 +638,22 @@ end
 """
     Headers
 
-Ordered, case-canonicalized collection of header pairs.
+Ordered collection of header pairs.
 
 `Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
 written against the long-standing pair-vector header representation can reuse
-the same helper functions. Keys are canonicalized on insertion, but pair order
-is preserved. Constructing from a vector, dictionary, or tuple goes through
-`mkheaders`: the source is left unchanged, keys are canonicalized, and adjacent
-duplicate keys are joined the way `appendheader` joins them.
+the same helper functions. Pair order is preserved.
+
+Header names are case-insensitive (RFC 9110 §5.1). Every lookup and update
+(`header`, `setheader`, `removeheader`, `haskey`, ...) matches a name in any
+case, but a name is stored exactly as it was given. HTTP/1 sends it in that
+spelling; HTTP/2 sends every name in lowercase. Headers read from the network
+are stored in [`canonical_header_key`](@ref) form (`Content-Type`), so a
+response looks the same over HTTP/1 and HTTP/2.
+
+Constructing from a vector, dictionary, or tuple goes through `mkheaders`: the
+source is left unchanged, and adjacent duplicate keys are joined the way
+`appendheader` joins them.
 """
 mutable struct Headers <: AbstractVector{Pair{String,String}}
     entries::Vector{Pair{String,String}}
@@ -653,7 +661,7 @@ mutable struct Headers <: AbstractVector{Pair{String,String}}
     """Create and return an empty `Headers` collection."""
     Headers() = new(Pair{String,String}[])
 
-    """Copy pair storage without re-canonicalizing keys in an existing `Headers`."""
+    """Copy the pair storage of an existing `Headers`."""
     Headers(headers::Headers) = new(copy(headers.entries))
 end
 
@@ -677,7 +685,7 @@ Headers(items::Tuple) = mkheaders(items)
 """
     Headers(items...; kwargs...) -> Headers
 
-Construct a canonicalized Headers from items and/or kwargs
+Construct a Headers from items and/or kwargs.
 """
 Headers(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(items...; kwargs...)
 
@@ -702,7 +710,7 @@ Base.iterate(headers::Headers, state...) = iterate(headers.entries, state...)
 Base.getindex(headers::Headers, i::Int) = headers.entries[i]
 
 @inline function _header_pair(key, value)::Pair{String,String}
-    return canonical_header_key(String(key)) => String(value)
+    return String(key) => String(value)
 end
 
 function Base.setindex!(headers::Headers, item, i::Int)
@@ -716,7 +724,7 @@ end
 
 function Base.merge!(headers::Headers, items)
     for (key, value) in Headers(items)
-        if key == "Set-Cookie"
+        if _ascii_equal_fold(key, "Set-Cookie")
             push!(headers.entries, key => value)
         else
             setheader(headers, key => value)
@@ -796,23 +804,24 @@ mkheaders(items::Tuple{Vararg{Union{Pair,Tuple}}}; kwargs...) =
 
 mkheaders(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(Base.Iterators.flatten((items, kwargs)))
 
-"""Return a newly allocated `Vector{String}` of header keys in insertion order."""
+"""
+Return a newly allocated `Vector{String}` of header keys in insertion order.
+Names that differ only in case are listed once, in their first spelling.
+"""
 function header_keys(headers::Headers)::Vector{String}
     out = String[]
-    seen = Set{String}()
+    # Quadratic in distinct names, the same order as the per-key `headers`
+    # scans its callers run; allocation-free for real header counts.
     for (key, _) in headers
-        key in seen && continue
-        push!(seen, key)
-        push!(out, key)
+        any(seen -> _ascii_equal_fold(seen, key), out) || push!(out, key)
     end
     return out
 end
 
 """Return the first value for `key`, or `default` if the header is absent."""
 function header(headers::Headers, key::AbstractString, default="")
-    canon = canonical_header_key(key)
     for (name, value) in headers
-        name == canon && return value
+        _ascii_equal_fold(name, key) && return value
     end
     return default
 end
@@ -824,10 +833,9 @@ Return a freshly allocated vector containing all values for `key` in stored
 order. Returns `String[]` when the header is absent.
 """
 function headers(headers::Headers, key::AbstractString)::Vector{String}
-    canon = canonical_header_key(key)
     out = String[]
     for (name, value) in headers
-        name == canon && push!(out, value)
+        _ascii_equal_fold(name, key) && push!(out, value)
     end
     return out
 end
@@ -840,10 +848,10 @@ end
 """
     headers[key] -> String
 
-Dict-style indexing on `Headers`. Returns the canonical first value for
-`key`, throwing `KeyError(key)` if the header is absent or has empty value.
-Use [`HTTP.header`](@ref) when you want a string default instead of an
-exception.
+Dict-style indexing on `Headers`. Returns the first value for `key`, matched
+case-insensitively, throwing `KeyError(key)` if the header is absent or has
+empty value. Use [`HTTP.header`](@ref) when you want a string default instead
+of an exception.
 """
 function Base.getindex(headers::Headers, key::AbstractString)::String
     v = header(headers, key)
@@ -867,9 +875,8 @@ Dict-style `haskey` on `Headers`. Returns `true` when `key` is present
 (case-insensitive), regardless of whether its value is empty.
 """
 function Base.haskey(headers::Headers, key::AbstractString)::Bool
-    canon = canonical_header_key(key)
     for (name, _) in headers
-        name == canon && return true
+        _ascii_equal_fold(name, key) && return true
     end
     return false
 end
@@ -884,9 +891,8 @@ Return `true` when any stored header value for `key` matches `value`
 case-insensitively.
 """
 function hasheader(headers::Headers, key::AbstractString, value::AbstractString)::Bool
-    canon = canonical_header_key(key)
     for (name, current) in headers
-        name == canon || continue
+        _ascii_equal_fold(name, key) || continue
         _ascii_equal_fold(current, value) && return true
     end
     return false
@@ -897,7 +903,8 @@ end
     setheader(headers, key, value) -> Headers
 
 Replace all stored values for `key` with `value`, preserving the first matching
-position if the key already exists and appending it otherwise. Returns the
+position if the key already exists and appending it otherwise. Names match in
+any case; the kept entry takes the spelling of `key`. Returns the
 mutated `headers`. [`setheader!`](@ref) is the same function under the
 conventional mutating-name spelling.
 """
@@ -909,7 +916,7 @@ function setheader(headers::Headers, header::Pair)
     write_idx = 1
     @inbounds for read_idx in eachindex(entries)
         entry = entries[read_idx]
-        if first(entry) == key
+        if _ascii_equal_fold(first(entry), key)
             if first_idx == 0
                 first_idx = write_idx
                 entries[write_idx] = item
@@ -940,10 +947,10 @@ end
 
 Append a header value to `headers`.
 
-If the previous stored header has the same name and the key is not
-`Set-Cookie`, the value is merged into the previous entry with a comma
-(no whitespace), as permitted by RFC 9110 §5.3 and required by common
-request-signing canonicalizations.
+If the previous stored header has the same name (in any case) and the key is
+not `Set-Cookie`, the value is merged into the previous entry, which keeps its
+spelling, with a comma (no whitespace), as permitted by RFC 9110 §5.3 and
+required by common request-signing canonicalizations.
 Otherwise a new pair is appended. [`appendheader!`](@ref) is the same
 function under the conventional mutating-name spelling.
 """
@@ -951,7 +958,7 @@ function appendheader(headers::Headers, header::Pair)
     item = _header_pair(header.first, header.second)
     if !isempty(headers.entries)
         last_header = headers.entries[end]
-        if first(item) != "Set-Cookie" && first(last_header) == first(item)
+        if !_ascii_equal_fold(first(item), "Set-Cookie") && _ascii_equal_fold(first(last_header), first(item))
             headers.entries[end] = first(last_header) => string(last(last_header), ",", last(item))
             return headers
         end
@@ -972,12 +979,11 @@ Remove every stored header for `key` and return the mutated `headers`.
 mutating-name spelling.
 """
 function removeheader(headers::Headers, key::AbstractString)
-    canon = canonical_header_key(key)
     entries = headers.entries
     write_idx = 1
     @inbounds for read_idx in eachindex(entries)
         entry = entries[read_idx]
-        if first(entry) == canon
+        if _ascii_equal_fold(first(entry), key)
             continue
         end
         if write_idx != read_idx
@@ -1139,9 +1145,8 @@ tokens rather than one opaque string.
 """
 function headercontains(headers::Headers, key::AbstractString, token::AbstractString)::Bool
     needle = token isa String ? (token::String) : String(token)
-    canon = canonical_header_key(key)
     for (name, value) in headers
-        name == canon || continue
+        _ascii_equal_fold(name, key) || continue
         _header_value_contains_token(value, needle) && return true
     end
     return false

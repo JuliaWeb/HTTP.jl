@@ -52,6 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_line_bytes` may not exceed `max_header_bytes`. ([#1362])
 
 ### Changed
+- `HTTP.Headers` keeps each header name as the caller spelled it and matches
+  names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
+  rewrote every name into `Content-Type` form on insertion, so a request header
+  such as `providerId` went out as `Providerid`. That breaks servers that treat
+  header names as case-sensitive data, such as Azure Service Bus custom
+  message properties. HTTP/1 now sends names as spelled, HTTP/2 still sends
+  them in lowercase, and headers received from the network still use
+  `Content-Type` form. `canonicalize_headers=true` works again: it sends
+  request header names in `Content-Type` form, and no longer logs a
+  "has no effect" warning. ([#1377])
 - Raised the default HTTP/1 per-line limit (request/status lines and single
   header lines) from 8 KiB to 64 KiB, matching Python's `http.client`. Real
   origins send single header lines longer than 8 KiB — a 9,695-byte
@@ -955,3 +965,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1361]: https://github.com/JuliaWeb/HTTP.jl/issues/1361
 [#1362]: https://github.com/JuliaWeb/HTTP.jl/issues/1362
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
+[#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377

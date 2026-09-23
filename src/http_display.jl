@@ -167,7 +167,7 @@ function _write_message_headers!(io::IO, headers::Headers, host::Union{Nothing,S
         wrote_any = true
     end
     for (key, value) in headers
-        key == "Host" && host !== nothing && continue
+        _ascii_equal_fold(key, "Host") && host !== nothing && continue
         wrote_any && write(io, "\r\n")
         print(io, key, ": ", _http_render_header_value(key, value))
         wrote_any = true

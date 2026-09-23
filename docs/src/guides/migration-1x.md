@@ -168,7 +168,12 @@ req = HTTP.Request(
 ## Headers
 
 `HTTP.Headers` is the canonical mutable header container. It preserves pair
-order and canonicalizes header keys on insertion.
+order and each header name as you spell it, as 1.x did. Lookups such as
+`HTTP.header(headers, "Content-Type")` match names in any case. Unlike 1.x,
+headers received from the network use `Content-Type` form. To send every
+request header name in that form, pass `canonicalize_headers=true`, as in 1.x.
+HTTP/2, which 2.0 uses for HTTPS when the server supports it, always sends
+names in lowercase; pass `protocol=:h1` to a server that needs exact spelling.
 
 Before:
 
@@ -676,9 +681,11 @@ abruptly:
 - `retry_delays` and `retry_check`: accepted, but use `retry_if`,
   `retries`, and `retry_bucket`
 - `sslconfig` and `socket_type_tls`: accepted, but configure the transport
-- `canonicalize_headers`, `detect_content_type`,
-  `observelayers`, `logerrors`, and `logtag`: accepted for compatibility, but
-  not the preferred 2.0 observation/configuration surface
+- `detect_content_type`, `observelayers`, `logerrors`, and `logtag`:
+  accepted for compatibility, but not the preferred 2.0
+  observation/configuration surface
+- `canonicalize_headers`: supported with its 1.x meaning. `true` sends request
+  header names in `Content-Type` form. The default sends them as spelled.
 
 Treat these as temporary migration aids. New code should use the documented
 2.0 API names.
