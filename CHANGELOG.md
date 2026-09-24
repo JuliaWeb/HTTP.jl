@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- `show` and `print` on a `Request` now show the `Host` line the HTTP/1
+  writer sends: one line, first, with the same value. A request with both a
+  caller `Host` header and `request.host` showed no `Host` line although the
+  caller's value was sent, and a stored `Host` was shown in its stored
+  position instead of first. `verbose = 2` output uses this display.
 - The HTTP/2 client now returns connection-level flow-control credit for
   response bytes it received but never read: when a body is closed unread
   (including every attempt the built-in retry loop gives up on), when the
