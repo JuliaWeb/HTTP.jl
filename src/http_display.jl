@@ -160,14 +160,9 @@ function _render_message_body(
     return string(rendered, truncated && previewed ? _render_truncation_suffix(length(bytes), total) : "")
 end
 
-function _write_message_headers!(io::IO, headers::Headers, host::Union{Nothing,String}=nothing)::Nothing
+function _write_message_headers!(io::IO, headers::Headers)::Nothing
     wrote_any = false
-    if host !== nothing && !hasheader(headers, "Host")
-        print(io, "Host: ", _http_render_header_value("Host", host::String))
-        wrote_any = true
-    end
     for (key, value) in headers
-        _ascii_equal_fold(key, "Host") && host !== nothing && continue
         wrote_any && write(io, "\r\n")
         print(io, key, ": ", _http_render_header_value(key, value))
         wrote_any = true
@@ -249,7 +244,11 @@ end
 
 function _show_request_message(io::IO, request::Request, body_limit::Int)::Nothing
     print(io, request.method, " ", request.target, " ", _http_proto_string(request.proto_major, request.proto_minor), "\r\n")
-    _write_message_headers!(io, request.headers, request.host)
+    # Show the Host line the HTTP/1 writer sends: one line, first, with the
+    # value `_hoist_host_header!` picks from the headers and `request.host`.
+    headers = copy(request.headers)
+    _hoist_host_header!(headers, request.host)
+    _write_message_headers!(io, headers)
     body = _render_message_body(request.body, request.content_length, request.headers; body_limit=body_limit)
     if !isempty(body) || !isempty(request.trailers)
         write(io, "\r\n\r\n")

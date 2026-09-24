@@ -588,6 +588,40 @@ end
     @test !endswith(empty_response_plain, "\n")
 end
 
+@testset "HTTP request display shows the Host line the HTTP/1 writer sends" begin
+    # The display used to drop Host when the caller set a non-empty Host header
+    # and `request.host` was also set, and it never moved a stored Host first.
+    # It must match the writer: one Host line, first, with the same value.
+    head_lines(text) = split(first(split(text, "\r\n\r\n")), "\r\n")[2:end]
+    cases = [
+        (["Host" => "override.example", "X-A" => "1"], "dial.example"),
+        (["X-A" => "1", "Host" => "late.example"], "dial.example"),
+        (["X-A" => "1", "Host" => "late.example"], nothing),
+        (["x-a" => "1", "hOsT" => "mixed.example"], "dial.example"),
+        (["Host" => "one.example", "X-A" => "1", "Host" => "two.example"], "dial.example"),
+        (["Host" => "", "X-A" => "1"], "dial.example"),
+        (["Host" => "", "X-A" => "1"], nothing),
+        (["X-A" => "1"], "dial.example"),
+        (["X-A" => "1"], nothing),
+    ]
+    for (headers, host) in cases
+        request = HT.Request("GET", "/"; headers = headers, host = host, body = HT.EmptyBody(), content_length = 0)
+        io = IOBuffer()
+        HT.write_request!(io, request)
+        wire = head_lines(String(take!(io)))
+        # The writer also adds `Content-Length: 0`; everything else must match.
+        expected = filter(!startswith("Content-Length:"), wire)
+        @test head_lines(sprint(io -> show(io, MIME"text/plain"(), request))) == expected
+        @test head_lines(sprint(print, request)) == expected
+    end
+    request = HT.Request("GET", "/"; headers = ["Host" => "override.example", "X-A" => "1"], host = "dial.example")
+    @test startswith(sprint(io -> show(io, MIME"text/plain"(), request)), "GET / HTTP/1.1\r\nHost: override.example\r\nX-A: 1")
+    # Display works on a copy; the caller's headers keep their order.
+    late = HT.Request("GET", "/"; headers = ["X-A" => "1", "Host" => "late.example"], host = "dial.example")
+    @test head_lines(sprint(io -> show(io, MIME"text/plain"(), late))) == ["Host: late.example", "X-A: 1"]
+    @test collect(late.headers) == ["X-A" => "1", "Host" => "late.example"]
+end
+
 @testset "Mutating-name header aliases (#1277)" begin
     @test HT.setheader! === HT.setheader
     @test HT.appendheader! === HT.appendheader
