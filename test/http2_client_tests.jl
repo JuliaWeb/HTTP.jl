@@ -1460,6 +1460,47 @@ end
     end
 end
 
+@testset "HTTP/2 client keeps many response trailers in wire order" begin
+    # A server picks how many trailer fields it sends, up to the client's
+    # 10 MiB header list limit, so the client copies them in one pass. A
+    # per-name copy would rescan the block for every name (quadratic) and
+    # would join the repeated name below; one pass keeps wire order and keeps
+    # the repeat as its own entry, as over HTTP/1.
+    n = 60_000
+    fields = [HT.HeaderField("x-t$(i)", string(i), false) for i in 1:n]
+    push!(fields, HT.HeaderField("x-t1", "again", false))
+    consumed = Base.Event()
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        head = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, head))
+        chunks = [collect(chunk) for chunk in Iterators.partition(HT.encode_header_block(enc, fields), 16_384)]
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, true, length(chunks) == 1, chunks[1]))
+        for i in 2:length(chunks)
+            _write_frame_to_conn!(conn, HT.ContinuationFrame(stream_id, i == length(chunks), chunks[i]))
+        end
+        wait(consumed)
+        return nothing
+    end
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/many-trailers"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test isempty(_read_all_h2_body(response.body))
+        @test response.status == 200
+        @test length(response.trailers) == n + 1
+        @test response.trailers[1] == ("X-T1" => "1")
+        @test response.trailers[n] == ("X-T$(n)" => string(n))
+        @test response.trailers[end] == ("X-T1" => "again")
+        @test HT.headers(response.trailers, "x-t1") == ["1", "again"]
+        notify(consumed)
+        _wait_task_h2!(server_task)
+    finally
+        notify(consumed)
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 client strips padded DATA payload bytes" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

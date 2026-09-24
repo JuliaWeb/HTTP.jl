@@ -603,6 +603,51 @@ end
     end
 end
 
+@testset "HTTP/2 server receives many request trailers split across CONTINUATION frames" begin
+    # A client picks how many trailer fields it sends, up to the server's
+    # `max_header_bytes`, so the server copies them in one pass: wire order,
+    # and the repeated name below stays its own entry, as over HTTP/1. The
+    # block spans many CONTINUATION frames, and END_STREAM on its HEADERS
+    # frame must not end the body before the block is decoded, or the handler
+    # sees no trailers.
+    n = 60_000
+    fields = [HT.HeaderField("x-t$(i)", string(i), false) for i in 1:n]
+    push!(fields, HT.HeaderField("x-t1", "again", false))
+    received = Channel{Vector{Pair{String,String}}}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_header_bytes = 16 * 1024 * 1024) do request
+            buf = Vector{UInt8}(undef, 8)
+            while HT.body_read!(request.body, buf) > 0
+            end
+            put!(received, collect(request.trailers))
+            return HT.Response(200, HT.BytesBody(UInt8[]); content_length = 0, proto_major = 2, proto_minor = 0)
+        end
+    address = HT.server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/many-trailers"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), false, collect(codeunits("ok"))))
+        chunks = [collect(chunk) for chunk in Iterators.partition(HT.encode_header_block(encoder, fields), 16_384)]
+        @test length(chunks) > 1
+        _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, false, chunks[1]))
+        for i in 2:length(chunks)
+            _write_frame_h2_server_raw!(conn, HT.ContinuationFrame(UInt32(1), i == length(chunks), chunks[i]))
+        end
+        trailers = take!(received)
+        @test length(trailers) == n + 1
+        @test trailers[1] == ("X-T1" => "1")
+        @test trailers[n] == ("X-T$(n)" => string(n))
+        @test trailers[end] == ("X-T1" => "again")
+        _, header_block, _ = _read_h2_server_header_block!(conn, reader)
+        @test any(field -> field.name == ":status" && field.value == "200", HT.decode_header_block(decoder, header_block))
+    finally
+        HTTP.@try_ignore NC.close(conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server rejects invalid request trailer pseudo-headers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
@@ -1518,6 +1563,51 @@ end
             end
         end
     finally
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+@testset "HTTP/2 server checks Content-Length when a split trailer block completes" begin
+    # END_STREAM arrives on the trailer HEADERS frame and the block ends on a
+    # CONTINUATION frame. The body is shorter than its Content-Length, so the
+    # server resets the stream once the block is complete and keeps serving
+    # the connection.
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = String(_read_all_h2_server(request.body))
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(
+            conn::NC.Conn,
+            encoder,
+            UInt32(1),
+            address,
+            "/short";
+            method = "POST",
+            headers = HT.HeaderField[HT.HeaderField("content-length", "5", false)],
+            end_stream = false,
+        )
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), false, collect(codeunits("ok"))))
+        trailer_block = HT.encode_header_block(encoder, HT.HeaderField[
+            HT.HeaderField("x-trailer", "done", false),
+            HT.HeaderField("x-more", "split", false),
+        ])
+        mid = cld(length(trailer_block), 2)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, false, trailer_block[1:mid]))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.ContinuationFrame(UInt32(1), true, trailer_block[(mid + 1):end]))
+        reset_frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, frame -> frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == UInt32(1))
+        @test (reset_frame::HT.RSTStreamFrame).error_code == UInt32(0x1)
+
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
+        @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         HTTP.@try_ignore wait(server.serve_task::Task)
     end

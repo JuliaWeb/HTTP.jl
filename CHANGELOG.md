@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- The HTTP/2 client and server copy received trailers in one pass. They
+  copied them name by name and rescanned the whole trailer block for each
+  name, so a peer could cost seconds to minutes of CPU per stream by sending
+  many distinct trailer names (16k names took about 0.9 s). A repeated
+  trailer name that is not adjacent now stays a separate entry, as over
+  HTTP/1, instead of being joined with commas.
+- The HTTP/2 server now ends a request only after a trailer block that spans
+  CONTINUATION frames is complete. It ended the request at the HEADERS frame
+  carrying END_STREAM, so the handler could run and see no trailers.
 - `show` and `print` on a `Request` now show the `Host` line the HTTP/1
   writer sends: one line, first, with the same value. A request with both a
   caller `Host` header and `request.host` showed no `Host` line although the
