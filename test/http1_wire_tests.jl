@@ -527,13 +527,13 @@ end
     # The caller's stored order is left alone.
     @test collect(request.headers) == ["User-Agent" => "example", "Accept" => "*/*", "Host" => "override.example", "X-Test" => "1"]
 
-    # Header keys are canonicalized on storage, so a lower-case caller key is
-    # still recognized and hoisted.
+    # Header names match in any case, so a lower-case caller Host is still
+    # recognized and hoisted; other names keep the caller's spelling.
     headers = HT.Headers()
     push!(headers, "x-first" => "a")
     push!(headers, "host" => "lower.example")
     request = HT.Request("GET", "/"; headers = headers, body = HT.EmptyBody(), content_length = 0)
-    @test header_lines(write_wire(request)) == ["Host: lower.example", "X-First: a", "Content-Length: 0"]
+    @test header_lines(write_wire(request)) == ["Host: lower.example", "x-first: a", "Content-Length: 0"]
 
     # Duplicate stored Host entries collapse to the first one.
     headers = HT.Headers()

@@ -17,11 +17,11 @@ const HT = HTTP
     @test HT.header(headers, "content-type") == "application/json"
     @test eltype(typeof(headers)) == Pair{String, String}
     @test length(headers) == 2
-    @test headers[1] == ("Content-Type" => "application/json")
-    @test headers[2] == ("X-Forwarded-For" => "127.0.0.1,127.0.0.2")
+    @test headers[1] == ("content-type" => "application/json")
+    @test headers[2] == ("x-forwarded-for" => "127.0.0.1,127.0.0.2")
     @test collect(headers) == [
-        "Content-Type" => "application/json",
-        "X-Forwarded-For" => "127.0.0.1,127.0.0.2",
+        "content-type" => "application/json",
+        "x-forwarded-for" => "127.0.0.1,127.0.0.2",
     ]
     @test HT.headers(headers, "x-forwarded-for") == ["127.0.0.1,127.0.0.2"]
     copied = HT.headers(headers, "x-forwarded-for")
@@ -39,7 +39,7 @@ const HT = HTTP
     push!(duplicates, "X-Other" => "keep")
     push!(duplicates, "X-Test" => "two")
     HT.setheader(duplicates, "x-test", "zero")
-    @test collect(duplicates) == ["X-Test" => "zero", "X-Other" => "keep"]
+    @test collect(duplicates) == ["x-test" => "zero", "X-Other" => "keep"]
 
     remove_all = HT.Headers()
     push!(remove_all, "X-Test" => "one")
@@ -61,15 +61,15 @@ const HT = HTTP
 
 
     headers = HT.Headers(var"content-type" = "application/json")
-    @test headers == HTTP.Headers(["Content-Type" => "application/json"])
+    @test headers == HTTP.Headers(["content-type" => "application/json"])
     headers["content-type"] = "replaced"
     @test headers["Content-Type"] == "replaced"
 
     headers2 = HT.Headers(:a => "a", b = "b")
-    @test headers2 == HT.Headers(["A" => "a", "B" => "b"])
+    @test headers2 == HT.Headers(["a" => "a", "b" => "b"])
 
     merge!(headers, headers2)
-    @test headers == HTTP.Headers(["Content-Type" => "replaced", "A" => "a", "B" => "b"])
+    @test headers == HTTP.Headers(["content-type" => "replaced", "a" => "a", "b" => "b"])
 
     # overlapping key: append! uses replace semantics — no duplicate entries
     headers3 = HT.Headers(["Content-Type" => "text/plain", "X-Keep" => "yes"])
@@ -104,11 +104,12 @@ const HT = HTTP
     @test length([v for (k, v) in collect(headers6) if k == "Set-Cookie"]) == 2
 end
 
-@testset "Headers vector constructor canonicalizes keys" begin
+@testset "Headers keep each name's spelling and match names in any case" begin
     source = ["content-type" => "text/plain", "x-test" => "one", "X-TEST" => "two"]
     headers = HT.Headers(source)
-    # Same normalization as `mkheaders` and `Request`: adjacent duplicates join.
-    @test collect(headers) == ["Content-Type" => "text/plain", "X-Test" => "one,two"]
+    # Same normalization as `mkheaders` and `Request`: adjacent duplicates join,
+    # and the joined entry keeps its first spelling.
+    @test collect(headers) == ["content-type" => "text/plain", "x-test" => "one,two"]
     @test collect(headers) == collect(HT.Request("GET", "/", source).headers)
     @test collect(headers) == collect(HT.Headers(Pair{String,Any}[k => v for (k, v) in source]))
     @test source == ["content-type" => "text/plain", "x-test" => "one", "X-TEST" => "two"]
@@ -118,9 +119,11 @@ end
     for message in (HT.Request("GET", "/", headers), HT.Response(200, headers))
         @test HT.header(message, "content-type") == "text/plain"
     end
-    @test collect(HT.Headers(["set-cookie" => "a=1", "Set-Cookie" => "b=2"])) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
+    # Set-Cookie is never joined, whatever its spelling.
+    @test collect(HT.Headers(["set-cookie" => "a=1", "Set-Cookie" => "b=2"])) == ["set-cookie" => "a=1", "Set-Cookie" => "b=2"]
     HT.setheader(headers, "X-TEST", "replacement")
     @test HT.headers(headers, "x-test") == ["replacement"]
+    @test collect(headers) == ["content-type" => "text/plain", "X-TEST" => "replacement"]
     @test source[2] == ("x-test" => "one")
     copied = copy(headers)
     HT.removeheader(copied, "CONTENT-TYPE")
@@ -130,6 +133,23 @@ end
     @test isempty(hinted)
     push!(hinted, "x-test" => "value")
     @test HT.header(hinted, "X-Test") == "value"
+
+    # Some servers treat header names as case-sensitive data (#1377), so every
+    # input form keeps the caller's spelling.
+    for input in (Dict("providerId" => "abc-123"), ["providerId" => "abc-123"], ("providerId" => "abc-123",))
+        @test collect(HT.Headers(input)) == ["providerId" => "abc-123"]
+    end
+    mixed = HT.Headers(["x-a" => "1", "X-B" => "2", "X-A" => "3", "Connection" => "keep-alive, Upgrade"])
+    @test HT.header_keys(mixed) == ["x-a", "X-B", "Connection"]
+    many = HT.Headers(["x-$(i)" => "value" for i in 1:10_000])
+    append!(many, ["X-$(i)" => "again" for i in 1:10_000])
+    @test HT.header_keys(many) == ["x-$(i)" for i in 1:10_000]
+    @test HT.headers(mixed, "X-a") == ["1", "3"]
+    @test HT.headercontains(mixed, "connection", "upgrade")
+    HT.removeheader(mixed, "X-A")
+    @test collect(mixed) == ["X-B" => "2", "Connection" => "keep-alive, Upgrade"]
+    cookies = merge!(HT.Headers(["Set-Cookie" => "a=1"]), ["set-cookie" => "b=2"])
+    @test collect(cookies) == ["Set-Cookie" => "a=1", "set-cookie" => "b=2"]
 end
 
 @testset "appendheader joins duplicates with a bare comma (RFC 9110 §5.3)" begin
@@ -577,6 +597,7 @@ end
         (["Host" => "override.example", "X-A" => "1"], "dial.example"),
         (["X-A" => "1", "Host" => "late.example"], "dial.example"),
         (["X-A" => "1", "Host" => "late.example"], nothing),
+        (["x-a" => "1", "hOsT" => "mixed.example"], "dial.example"),
         (["Host" => "one.example", "X-A" => "1", "Host" => "two.example"], "dial.example"),
         (["Host" => "", "X-A" => "1"], "dial.example"),
         (["Host" => "", "X-A" => "1"], nothing),

@@ -830,6 +830,9 @@ end
     push!(headers, "Proxy-Authorization" => "Basic xyz")
     push!(headers, "Cookie" => "session=def")
 
+    push!(headers, "authorization" => "Bearer three")
+    push!(headers, "COOKIE" => "session=ghi")
+
     HT._strip_sensitive_redirect_headers!(headers)
 
     @test collect(headers) == ["X-Test" => "keep"]
@@ -3047,6 +3050,62 @@ end
         @test supplied_lines[2] == "Host: override.example"
         @test count(startswith("Host:"), supplied_lines) == 1
         @test "X-Test: 2" in supplied_lines
+    finally
+        close(client.transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/1 client sends header names as the caller spelled them (#1377)" begin
+    # Some servers treat header names as case-sensitive data (Azure Service Bus
+    # custom properties, for example), so HTTP/1 sends each name as spelled.
+    # `canonicalize_headers=true` keeps the HTTP.jl 1.x opt-in to `Content-Type`
+    # form. Lookups ignore case, so a lower-case caller header still replaces
+    # the client's default instead of being sent twice.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    captured = Vector{Vector{String}}()
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:3
+            conn = NC.accept(listener)
+            try
+                reader = HT._ConnReader(conn)
+                lines = String[]
+                while true
+                    line = HT._readline_crlf(reader, 8192)
+                    isempty(line) && break
+                    push!(lines, line)
+                end
+                push!(captured, lines)
+                req = HT.read_request(IOBuffer(codeunits(join(lines, "\r\n") * "\r\n\r\n")))
+                _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), cookiejar = nothing)
+    try
+        url = "http://$(address)/"
+        headers = Dict("providerId" => "abc-123")
+        # `false` was the 1.x default; it is honored now, so nothing is logged.
+        spelled = @test_logs HT.request("GET", url, headers; client = client, retry = false, canonicalize_headers = false)
+        @test spelled.status == 200
+        @test HT.request("GET", url, headers; client = client, retry = false, canonicalize_headers = true).status == 200
+        lower = ["user-agent" => "custom", "accept-encoding" => "identity", "x-trace" => "1"]
+        @test HT.request("GET", url, lower; client = client, retry = false).status == 200
+        _wait_task_client!(server_task)
+        @test length(captured) == 3
+        spelled_lines, canonical_lines, lower_lines = captured
+        @test "providerId: abc-123" in spelled_lines
+        @test "Providerid: abc-123" in canonical_lines
+        @test "user-agent: custom" in lower_lines
+        @test "accept-encoding: identity" in lower_lines
+        @test "x-trace: 1" in lower_lines
+        @test count(line -> startswith(lowercase(line), "user-agent:"), lower_lines) == 1
+        @test count(line -> startswith(lowercase(line), "accept-encoding:"), lower_lines) == 1
     finally
         close(client.transport)
         HTTP.@try_ignore NC.close(listener)

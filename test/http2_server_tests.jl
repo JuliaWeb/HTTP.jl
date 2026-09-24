@@ -1418,6 +1418,19 @@ end
     @test HT.header(headers, "Cookie") == "a=1; b=2"
 end
 
+@testset "HTTP/2 server stores request header names in canonical form" begin
+    fields = HT.HeaderField[
+        HT.HeaderField(":method", "GET", false),
+        HT.HeaderField(":scheme", "http", false),
+        HT.HeaderField(":authority", "example.test", false),
+        HT.HeaderField(":path", "/", false),
+        HT.HeaderField("x-request-id", "abc", false),
+        HT.HeaderField("accept", "*/*", false),
+    ]
+    _, _, _, _, headers = HT._validate_h2_request_headers!(fields)
+    @test collect(headers) == ["X-Request-Id" => "abc", "Accept" => "*/*"]
+end
+
 @testset "HTTP/2 server validates CONNECT request pseudo-headers" begin
     connect_fields = HT.HeaderField[
         HT.HeaderField(":method", "CONNECT", false),

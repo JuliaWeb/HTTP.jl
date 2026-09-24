@@ -982,7 +982,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
             end
             continue
         end
-        appendheader(out_headers, name, normalized)
+        appendheader(out_headers, canonical_header_key(name), normalized)
     end
     method === nothing && throw(ProtocolError("missing HTTP/2 :method pseudo-header"))
     # RFC 9113 8.3.1: "If the :authority pseudo-header field is present, the
@@ -998,7 +998,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     # directly rather than calling the `headers(::Headers, key)` accessor.)
     if authority !== nothing
         for (entry_name, entry_value) in out_headers.entries
-            entry_name == "Host" || continue
+            _ascii_equal_fold(entry_name, "Host") || continue
             entry_value == authority || throw(ProtocolError("HTTP/2 Host header does not match :authority"))
         end
     end

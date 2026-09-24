@@ -480,7 +480,6 @@ function open(
     _handle_client_compat_kwargs(
         copyheaders=copyheaders,
         pool=pool,
-        canonicalize_headers=canonicalize_headers,
         detect_content_type=detect_content_type,
         observelayers=observelayers,
         retry_delays=retry_delays,
@@ -503,6 +502,7 @@ function open(
     parsed = _parse_http_url(url, merged_query)
     req_headers = _normalize_headers_input(headers, copyheaders)
     _apply_client_default_headers!(req_headers, client)
+    canonicalize_headers === true && _canonicalize_header_names!(req_headers)
     normalized_cookies = _normalize_cookies_input(cookies)
     _apply_default_accept_encoding!(req_headers, decompress)
     _apply_default_user_agent!(req_headers)

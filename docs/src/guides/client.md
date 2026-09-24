@@ -549,9 +549,10 @@ as temporary compatibility, not as the preferred API:
 - `retry_delays` and `retry_check` should become `retry_if`, `retries`, and
   `retry_bucket`
 - `sslconfig` and `socket_type_tls` should move to transport/TLS configuration
-- `canonicalize_headers`, `detect_content_type`,
-  `observelayers`, `logerrors`, and `logtag` are accepted for compatibility
-  where possible
+- `detect_content_type`, `observelayers`, `logerrors`, and `logtag` are
+  accepted for compatibility where possible
+- `canonicalize_headers=true` sends request header names in `Content-Type`
+  form, as in 1.x; by default names are sent as spelled
 
 See the [migration guide](migration-1x.md) for before/after examples.
 

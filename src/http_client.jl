@@ -224,7 +224,6 @@ end
 function _handle_client_compat_kwargs(;
     copyheaders=nothing,
     pool=nothing,
-    canonicalize_headers=nothing,
     detect_content_type=nothing,
     observelayers=nothing,
     retry_delays=nothing,
@@ -235,7 +234,6 @@ function _handle_client_compat_kwargs(;
     logtag=nothing,
 )::Nothing
     pool === nothing || _warn_ignored_client_compat_kw("pool")
-    canonicalize_headers === nothing || _warn_ignored_client_compat_kw("canonicalize_headers")
     detect_content_type === nothing || _warn_ignored_client_compat_kw("detect_content_type")
     observelayers === nothing || _warn_ignored_client_compat_kw("observelayers")
     retry_delays === nothing || _warn_ignored_client_compat_kw("retry_delays")
@@ -1855,9 +1853,20 @@ function _normalize_headers_input(headers_input, copyheaders::Bool=true)::Header
     throw(ArgumentError("unsupported headers input type $(typeof(headers_input))"))
 end
 
+# `canonicalize_headers=true`: rewrite caller-spelled names in place, e.g.
+# `x-request-id` becomes `X-Request-Id`.
+function _canonicalize_header_names!(headers::Headers)::Nothing
+    entries = headers.entries
+    @inbounds for i in eachindex(entries)
+        key, value = entries[i]
+        entries[i] = canonical_header_key(key) => value
+    end
+    return nothing
+end
+
 function _apply_default_accept_encoding!(headers::Headers, decompress::Union{Nothing,Bool})::Nothing
     decompress === false && return nothing
-    any(h -> h[1] == "Accept-Encoding", headers.entries) && return nothing
+    haskey(headers, "Accept-Encoding") && return nothing
     setheader(headers, "Accept-Encoding", "gzip, deflate")
     return nothing
 end
@@ -2152,7 +2161,6 @@ function request(
         _handle_client_compat_kwargs(
             copyheaders=copyheaders,
             pool=pool,
-            canonicalize_headers=canonicalize_headers,
             detect_content_type=detect_content_type,
             observelayers=observelayers,
             retry_delays=retry_delays,
@@ -2188,6 +2196,7 @@ function request(
         request_url = parsed.url
         req_headers = _normalize_headers_input(headers, copyheaders)
         _apply_client_default_headers!(req_headers, client)
+        canonicalize_headers === true && _canonicalize_header_names!(req_headers)
         normalized_cookies = _normalize_cookies_input(cookies)
         sink = _resolve_response_sink(response_stream)
         sse_callback === nothing || sink === nothing || throw(ArgumentError("sse_callback cannot be combined with response_stream"))
@@ -2323,6 +2332,9 @@ Keyword arguments:
   mutate it until the call completes; final contents are unspecified. Other
   header inputs become a new collection either way. Retry attempts still
   receive isolated headers.
+- `canonicalize_headers`: header names are sent as the caller spelled them
+  (HTTP/2 sends them in lowercase). `true` rewrites every request header name
+  into [`canonical_header_key`](@ref) form first, as in HTTP.jl 1.x
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
@@ -2354,7 +2366,7 @@ Keyword arguments:
 HTTP.jl 2.0 accepts several HTTP.jl 1.x keywords as migration shims:
 `readtimeout` maps to `read_idle_timeout`; `pool`, `retry_delays`,
 `retry_check`, `sslconfig`, `socket_type_tls`,
-`canonicalize_headers`, `detect_content_type`, `logerrors`, `logtag`, and
+`detect_content_type`, `logerrors`, `logtag`, and
 `observelayers` are accepted so older call sites fail less abruptly. Prefer the
 2.0 forms listed above for new code: `client` / `transport` for pooling,
 `retry_if` / `retry_bucket` for retries, Reseau `Transport` TLS configuration
