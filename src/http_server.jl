@@ -206,9 +206,9 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     @atomic read_closed::Bool
     @atomic response_started::Bool
     # `response_started` flips at `startwrite` even when the response head is
-    # deferred (h1 FIXED mode); `head_committed` flips only when head bytes have
-    # actually been written to the transport, so error paths can tell whether a
-    # raw error response is still possible (#1303).
+    # deferred (h1 FIXED mode). `head_committed` means head bytes were sent or
+    # a failed transport write may have sent them; a replacement response is
+    # then unsafe.
     @atomic head_committed::Bool
     @atomic continue_sent::Bool
     ignore_writes::Bool

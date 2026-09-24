@@ -46,18 +46,29 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
         )
         return nothing
     end
-    _set_write_deadline!(stream.server, stream.tracked.conn)
-    total = 0
-    while total < length(data)
-        chunk = total == 0 ? data : data[(total+1):end]
-        n = write(stream.tracked.conn, chunk)
-        n > 0 || throw(ProtocolError("server stream write made no progress"))
-        total += n
+    try
+        _set_write_deadline!(stream.server, stream.tracked.conn)
+        total = 0
+        while total < length(data)
+            chunk = total == 0 ? data : data[(total+1):end]
+            n = write(stream.tracked.conn, chunk)
+            n > 0 || throw(ProtocolError("server stream write made no progress"))
+            total += n
+        end
+    catch
+        # A transport error can follow a partial write, including a complete
+        # head. A replacement response, a retry, and connection reuse are all
+        # unsafe, even when the handler catches this error.
+        stream.response.close = true
+        @atomic :release stream.head_committed = true
+        @atomic :release stream.response_started = true
+        @atomic :release stream.write_closed = true
+        rethrow()
     end
     return nothing
 end
 
-function _write_server_stream_head!(stream::Stream)::Nothing
+function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Vector{UInt8}}=nothing)::Nothing
     response = stream.response::Response
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
@@ -114,7 +125,9 @@ function _write_server_stream_head!(stream::Stream)::Nothing
     _append_status_line!(io, response)
     _write_headers!(io, headers)
     write(io, "\r\n")
-    _write_server_stream_bytes!(stream, take!(io), false)
+    bytes = take!(io)
+    body_bytes === nothing || append!(bytes, body_bytes)
+    _write_server_stream_bytes!(stream, bytes, false)
     @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     return nothing
@@ -359,9 +372,14 @@ function _server_closewrite(stream::Stream)::Nothing
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length"))
         end
-        _write_server_stream_head!(stream)
         body_bytes = take!(stream.request_buffer)
-        _write_server_stream_bytes!(stream, body_bytes, false)
+        # Bound the extra copy: large buffered bodies keep separate writes.
+        if length(body_bytes) <= 4096
+            _write_server_stream_head!(stream, body_bytes)
+        else
+            _write_server_stream_head!(stream)
+            _write_server_stream_bytes!(stream, body_bytes, false)
+        end
     elseif stream.write_mode == _ServerStreamWriteMode.CHUNKED
         io = IOBuffer()
         write(io, "0\r\n")
