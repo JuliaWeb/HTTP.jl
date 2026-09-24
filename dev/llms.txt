@@ -2,7 +2,7 @@
 
 > HTTP client and server library for Julia: HTTP/1.1 and HTTP/2 requests and servers, streaming request and response bodies, cookies, forms, proxies, retries, timeouts, WebSockets, and server-sent events, built on Reseau's transport, resolver, and TLS stack.
 
-This index covers HTTP.jl v2.8.0. The documentation site is https://juliaweb.github.io/HTTP.jl/stable/ and the source code is at https://github.com/JuliaWeb/HTTP.jl. The guide pages explain how the pieces fit together; the API reference pages hold the docstrings.
+This index covers HTTP.jl v2.7.1. The documentation site is https://juliaweb.github.io/HTTP.jl/stable/ and the source code is at https://github.com/JuliaWeb/HTTP.jl. The guide pages explain how the pieces fit together; the API reference pages hold the docstrings.
 
 ## Docs
 
