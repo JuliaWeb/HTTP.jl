@@ -1,0 +1,4105 @@
+# HTTP.jl documentation
+
+> Complete documentation for HTTP.jl v2.7.1 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/ -->
+
+# HTTP.jl
+
+`HTTP.jl` provides HTTP client/server functionality, HTTP/2 support, SSE, and
+WebSockets on top of [`Reseau`](https://github.com/JuliaServices/Reseau.jl)'s
+transport, resolver, and TLS stack. The high-level surface stays familiar while
+keeping request, response, body, transport, and stream types explicit.
+
+## Quick Start
+
+This example starts a local server, sends a request through the client API, and
+reads the response body:
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+    payload = "hello from HTTP.jl docs"
+    return HTTP.Response(
+        200;
+        headers = ["Content-Type" => "text/plain"],
+        body = payload,
+    )
+end
+
+url = "http://127.0.0.1:$(HTTP.port(server))/hello"
+resp = HTTP.get(url; proxy = HTTP.ProxyConfig())
+HTTP.forceclose(server)
+String(resp.body)
+```
+
+## What You Get
+
+- Familiar top-level request helpers: `HTTP.get`, `HTTP.post`, `HTTP.request`, `HTTP.open`
+- Explicit client controls: `HTTP.Client`, `HTTP.Transport`, `HTTP.RetryBucket`, `HTTP.ProxyConfig`, `HTTP.HTTP2Settings`
+- Rich client timeout controls: `connect_timeout`, `request_timeout`, `response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`
+- Server entrypoints for request/response and stream-level handlers: `HTTP.serve!`, `HTTP.listen!`, `HTTP.streamhandler`
+- Built-in HTTP/2 support in the normal client and server workflows
+- Protocol-specific APIs for WebSockets
+
+## Documentation Map
+
+- The [Client guide](https://juliaweb.github.io/HTTP.jl/stable/guides/client/) covers request construction, streaming, reusable clients, request bodies, and operational knobs.
+- The [Server guide](https://juliaweb.github.io/HTTP.jl/stable/guides/server/) covers request handlers, stream handlers, lifecycle management, and SSE-oriented server patterns.
+- The [Protocols guide](https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/) covers WebSockets and where HTTP/2 fits into the normal client/server APIs.
+- The [Migration guide](https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/) calls out the major 1.x to 2.0 shifts.
+- The [API reference](https://juliaweb.github.io/HTTP.jl/stable/api/reference/) is the canonical home for exported and documented submodule APIs.
+
+## Docs for LLMs
+
+The documentation is also published as plain markdown for LLM tooling, following
+the [llms.txt](https://llmstxt.org/) convention:
+
+- [llms.txt](https://juliaweb.github.io/HTTP.jl/stable/llms.txt): a short index of the documentation pages.
+- [llms-full.txt](https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt): every page, with all docstrings expanded, in a single file.
+
+Give either file to an assistant when you ask it about HTTP.jl.
+
+## Design Direction
+
+- `HTTP.jl` owns the HTTP protocol stack; `Reseau` owns the transport/runtime/TLS substrate.
+- Request and response bodies have explicit internal representations while
+  ordinary user-facing calls accept familiar strings, byte vectors, forms, and
+  streams.
+- Client/server internals follow a more explicit state-machine design, which makes retries, proxying, streaming, and HTTP/2 behavior easier to reason about.
+- Most wire-level HTTP/2 and HPACK details are implementation details rather than part of the documented public API.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/client/ -->
+
+# Client Guide
+
+The top-level request helpers are intentionally familiar, but in 2.0 the
+underlying pieces are explicit and reusable.
+
+The short version:
+
+- use `HTTP.request` or verb helpers for eager responses
+- use `HTTP.open` or `response_stream` for streaming
+- use `HTTP.Client` when you want one reusable bundle of transport, retry,
+  cookie, proxy, and HTTP/2 preferences
+- use phase-specific timeout keywords instead of the old `readtimeout`
+
+## High-Level Requests
+
+`HTTP.request` is the main entrypoint. The verb helpers such as `HTTP.get` and
+`HTTP.post` are convenience wrappers around it.
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+    payload = if req.target == "/stream"
+        "streaming response body"
+    else
+        "$(req.method) $(req.target)"
+    end
+    return HTTP.Response(
+        200;
+        headers = ["Content-Type" => "text/plain"],
+        body = payload,
+    )
+end
+
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
+resp = HTTP.request("GET", base_url * "/requests"; proxy = HTTP.ProxyConfig())
+HTTP.forceclose(server)
+(status = resp.status, body = String(resp.body))
+```
+
+Useful top-level request helpers:
+
+- `HTTP.get`, `HTTP.head`, `HTTP.query`, `HTTP.post`, `HTTP.put`, `HTTP.patch`, `HTTP.delete`, `HTTP.options`
+- `HTTP.request` for the fully general call shape
+- `HTTP.open` when you want streaming control instead of an eagerly consumed body
+
+## Streaming Responses
+
+`HTTP.open` gives you pull-based control over the response stream while still
+using the normal redirect/decompression machinery.
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+    payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
+    return HTTP.Response(
+        200;
+        headers = ["Content-Type" => "text/plain"],
+        body = payload,
+    )
+end
+
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
+response = HTTP.open(:GET, base_url * "/stream"; proxy = HTTP.ProxyConfig()) do stream
+    response_text = String(read(stream))
+    @info "got body" response_text
+end
+HTTP.forceclose(server)
+response
+```
+
+The `do`-block form returns the final `HTTP.Response`, not the value
+returned by the `do` block. Capture anything you want to keep from inside the
+block in an outer variable.
+
+If you only need to stream into an `IO`, use the `response_stream` keyword:
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+    payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
+    return HTTP.Response(
+        200;
+        headers = ["Content-Type" => "text/plain"],
+        body = payload,
+    )
+end
+
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
+buffer = IOBuffer()
+response = HTTP.get(base_url * "/buffered"; response_stream = buffer, proxy = HTTP.ProxyConfig())
+seekstart(buffer)
+HTTP.forceclose(server)
+(status = response.status, body = String(take!(buffer)))
+```
+
+## Reusing a `Client`
+
+Construct a `Client` when a set of options should travel together across many
+requests. Top-level calls already reuse default connection and cookie machinery;
+a `Client` gives you an explicit owner for a particular transport, cookie jar,
+retry bucket, proxy policy, and HTTP/2 preference.
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+    payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
+    return HTTP.Response(
+        200;
+        headers = ["Content-Type" => "text/plain"],
+        body = payload,
+    )
+end
+
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
+retry_bucket = HTTP.RetryBucket(capacity = 100)
+transport = HTTP.Transport(
+    max_idle_per_host = 2,
+    max_idle_total = 4,
+    proxy = HTTP.ProxyConfig(),
+)
+client = HTTP.Client(
+    transport = transport,
+    cookiejar = HTTP.CookieJar(),
+    retry_bucket = retry_bucket,
+)
+client_response = HTTP.request("GET", base_url * "/reused"; client = client)
+close(client)
+HTTP.forceclose(server)
+(status = client_response.status, body = String(client_response.body))
+```
+
+Important `Client` and `Transport` knobs:
+
+- `prefer_http2 = true` to prefer ALPN-negotiated HTTP/2 for secure traffic
+- connection-pool sizing via `max_idle_per_host` and `max_idle_total`
+- HTTP/1 response header limits via `max_line_bytes` (one status or header
+  line, default 64 KiB) and `max_header_bytes` (the whole header block,
+  default 1 MiB); raise `max_line_bytes` for origins that send very long
+  header lines such as large `Content-Security-Policy` values
+- shared `CookieJar` state across related requests
+- explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`;
+  proxy URLs may use `http://`, `socks5://`, or `socks5h://`
+- coordinated retries through a shared `RetryBucket`
+- binding outbound connections to a specific source address/interface with `local_addr`
+
+### Binding to a local address
+
+Like Go's `net.Dialer.LocalAddr` (and `curl --interface`), `local_addr` selects the
+source IP — and therefore the outgoing interface — for a client's connections. This
+is useful on multi-homed hosts or to separate traffic by interface. Pass an IP-literal
+string (the kernel chooses an ephemeral source port) or a `Reseau.TCP.SocketAddrV4` /
+`SocketAddrV6` for full control including a fixed source port:
+
+```julia
+# All requests from this client leave via 192.0.2.10.
+client = HTTP.Client(local_addr = "192.0.2.10")
+HTTP.get("http://example.com"; client = client)
+
+# Equivalent, set on the transport (the canonical home — local_addr is a
+# connection-pool property, so each bound client keeps its own pool):
+client = HTTP.Client(transport = HTTP.Transport(local_addr = "192.0.2.10"))
+```
+
+The address must be an IP assigned to a local interface; binding to an unassigned
+address fails fast. Interface *names* are not accepted — resolve them to an IP first.
+
+### Per-`Client` defaults
+
+`Client` can also act as a configuration container, just like
+`requests.Session()` or `axios.create()` in other ecosystems. Defaults set on
+the client apply to every request issued through it; per-call keywords always
+win when both are provided.
+
+```julia
+client = HTTP.Client(
+    default_headers = ["User-Agent" => "MyApp/1.0", "X-API-Version" => "v2"],
+    default_query = Dict("api_key" => "secret"),
+    default_basicauth = "alice" => "password",
+    request_timeout = 30,
+    connect_timeout = 5,
+    read_idle_timeout = 10,
+)
+
+# Defaults applied automatically.
+HTTP.get(client, "https://api.example.com/users")
+
+# Per-call values override defaults for this call only.
+HTTP.get(client, "https://api.example.com/users";
+    headers = ["X-API-Version" => "v1"],
+    request_timeout = 60,
+)
+```
+
+Recognized client defaults:
+
+- `default_headers`: vector or dict of headers added when not present per-call
+- `default_query`: dict, named-tuple, or vector-of-pairs of query parameters; per-call keys override matching defaults
+- `default_basicauth`: applied unless the call passes `basicauth` or an explicit `Authorization` header
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: applied when the call does not pass the
+  matching keyword. When neither the call nor the client sets it the timeouts are disabled
+  (i.e. set to `0`) except `connect_timeout` which defaults to `30`
+
+### Positional `Client` calls
+
+The verb helpers also accept the `Client` positionally — `HTTP.get(client, url)`
+is equivalent to `HTTP.get(url; client = client)`. This works for `get`, `head`,
+`post`, `put`, `patch`, `delete`, `options`, `request`, and `open`.
+
+### Closed clients are poisoned
+
+After `close(client)`, subsequent calls that use it raise `ArgumentError`:
+
+```julia
+client = HTTP.Client()
+HTTP.get(client, "https://example.com")
+close(client)
+HTTP.get(client, "https://example.com")  # throws ArgumentError("HTTP.Client is closed")
+```
+
+Use `isopen(client)` to check the live state.
+
+## Cancelling an in-flight request
+
+Pass an `HTTP.RequestContext` via the `context` keyword to give an external
+task control over an outstanding request. Calling `HTTP.cancel!(ctx)` from
+another task aborts the in-flight read/write and the spawning task observes an
+`HTTP.CanceledError`. HTTP/1 cancellation closes the active connection, while
+HTTP/2 cancellation resets the active stream:
+
+```julia
+ctx = HTTP.RequestContext()
+task = Threads.@spawn HTTP.get("https://slow.example.com/long"; context = ctx)
+sleep(0.5)
+HTTP.cancel!(ctx; message = "user pressed Ctrl-C")
+try
+    fetch(task)
+catch e
+    inner = e isa Base.TaskFailedException ? e.task.exception : e
+    @assert inner isa HTTP.CanceledError
+end
+```
+
+The same `context` keyword works on `HTTP.request`, `HTTP.get`/`head`/`post`/
+`put`/`patch`/`delete`/`options`, `HTTP.open`, and the lower-level `HTTP.do!`.
+Combined with a deadline (`HTTP.RequestContext(deadline_ns = ...)` or
+`HTTP.set_deadline!(ctx, ...)`) the same `context` value can drive both
+absolute deadlines and external cancellation.
+
+## Request and Response Bodies
+
+The top-level request helpers buffer response bodies into `Vector{UInt8}` by
+default. For request and server-response bodies, ordinary strings, byte vectors,
+forms, and `IO` objects cover the common user-facing cases. Lower-level body
+wrappers exist for the protocol implementation and custom streaming extensions,
+but most application code should not need to construct them directly.
+
+### Reading the response body
+
+Convert the raw bytes to a `String` when you want text:
+
+```julia
+using HTTP
+
+response = HTTP.get("http://example.com")
+text = String(response.body)
+```
+
+!!! warning "`String(response.body)` consumes the bytes"
+    `String(::Vector{UInt8})` aliases the underlying buffer rather than
+    copying it, so `response.body` is left empty (`length == 0`) once the
+    `String` has been constructed. If you want to keep the bytes around for a
+    second read, use `String(copy(response.body))` (or `copy(response.body)`
+    if you want raw bytes), or stream into a sink you own with
+    `response_stream = IOBuffer()`.
+
+### Sending JSON
+
+HTTP.jl ships without a JSON dependency, so the request body is yours to
+serialize. The recommended JSON library is
+[JSON.jl](https://github.com/JuliaIO/JSON.jl) — pair it with an explicit
+`Content-Type: application/json` header:
+
+```julia
+using HTTP, JSON
+
+payload = Dict("name" => "alice", "age" => 30)
+response = HTTP.post(
+    "https://api.example.com/users";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(payload),
+)
+
+returned = JSON.parse(String(response.body))
+```
+
+The verb helpers accept the body either positionally
+(`HTTP.post(url, headers, body)`) or via the `body=` keyword as shown above.
+
+### Sending form data
+
+`HTTP.post(url, [], dict)` (or `NamedTuple`) auto-serializes to
+`application/x-www-form-urlencoded` and sets the matching `Content-Type` header
+for you:
+
+```julia
+HTTP.post("http://example.com/login", [], Dict("user" => "alice", "pw" => "s3cret"))
+```
+
+For `multipart/form-data` (file uploads), use `HTTP.Form`:
+
+```julia
+form = HTTP.Form(Dict("file" => open("upload.bin", "r"), "kind" => "binary"))
+HTTP.post("http://example.com/upload", [], form)
+```
+
+### Sending QUERY requests
+
+RFC 10008 defines `QUERY` for safe, idempotent requests with content. Use
+`HTTP.query` when a request needs a body but has GET-like semantics:
+
+```julia
+HTTP.query(
+    "https://api.example.com/search";
+    headers = ["Content-Type" => "application/json"],
+    body = """{"select":["name","email"],"limit":10}""",
+)
+```
+
+`Dict` and `NamedTuple` bodies are encoded the same way as `HTTP.post` form
+bodies, with `Content-Type: application/x-www-form-urlencoded` set
+automatically:
+
+```julia
+HTTP.query("https://api.example.com/search"; body = (select = "name", limit = 10))
+```
+
+Servers that support `QUERY` can advertise accepted query content media types
+with the `Accept-Query` response header.
+
+### Query parameters
+
+The `query` keyword URL-encodes a `Dict` or vector of pairs and appends them
+to the URL's query string. Use it instead of building the query string by hand.
+
+```julia
+HTTP.get("http://example.com/search"; query = Dict("page" => 2, "limit" => 10))
+# GET /search?limit=10&page=2
+```
+
+A `Dict` is convenient but does not preserve order. Pass a vector of pairs
+when ordering matters:
+
+```julia
+HTTP.get("http://example.com/search"; query = ["page" => 2, "tag" => "hot"])
+# GET /search?page=2&tag=hot
+```
+
+Repeat a key in the vector form to send the same parameter multiple times:
+
+```julia
+HTTP.get("http://example.com/search"; query = ["tag" => "a", "tag" => "b"])
+# GET /search?tag=a&tag=b
+```
+
+`query` is *appended* to any existing query string in the URL — it does not
+replace it:
+
+```julia
+HTTP.get("http://example.com/search?type=user"; query = ["page" => 2])
+# GET /search?type=user&page=2
+```
+
+#### Reading query parameters on the server
+
+Server-side, `req.target` holds the request path plus its query string. Use
+`HTTP.URI` to split the two and `HTTP.queryparams` (returns a `Dict`) or
+`HTTP.queryparampairs` (preserves order and repeated keys) to decode them:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    uri = HTTP.URI(req.target)
+    params = HTTP.queryparams(uri.query)            # Dict{String,String}
+    pairs  = HTTP.queryparampairs(uri.query)        # Vector{Pair{String,String}}
+    return HTTP.Response(200; body = "got $(length(params)) params")
+end
+```
+
+#### Reading POST form parameters on the server
+
+A request body sent as `application/x-www-form-urlencoded` — the default for HTML
+form posts, and what `HTTP.post(url, [], dict)` produces — uses the same encoding
+as a URL query string, except that a space is written as `+`. `HTTP.queryparams`
+decodes both `+` and `%20` to a space, so you can decode a form body by passing it
+straight to `queryparams` (or `queryparampairs` to preserve order and repeated
+keys):
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    params = HTTP.queryparams(String(req.body))     # Dict{String,String}
+    user = get(params, "user", "anonymous")
+    return HTTP.Response(200; body = "hello $user")
+end
+```
+
+This decodes the client-side `Dict`/`NamedTuple` form encoding shown under
+"Sending form data" above — for example a posted `user=a b` decodes back to
+`Dict("user" => "a b")`.
+
+## Retries and Timeouts
+
+The retry path is explicit and conservative. For predictable behavior, prefer a
+long-lived `Client` over relying solely on default top-level behavior.
+
+```julia
+using HTTP
+
+bucket = HTTP.RetryBucket(capacity = 100)
+
+function retry_if(attempt, err, req, resp)
+    if err !== nothing
+        return attempt <= 2
+    end
+    return resp !== nothing && resp.status in (429, 503) && attempt <= 3
+end
+
+url = "https://example.com"
+response = HTTP.get(
+    url;
+    retry = true,
+    retries = 3,
+    retry_bucket = bucket,
+    retry_if = retry_if,
+    respect_retry_after = true,
+)
+```
+
+### Timeout Model
+
+The client APIs now expose timeout controls by phase instead of only a single
+read timeout:
+
+- `connect_timeout` bounds DNS, TCP connect, HTTP proxy `CONNECT` or SOCKS5
+  handshakes, TLS handshake, and HTTP/2 session setup
+- `request_timeout` is the overall deadline for the whole exchange
+- `response_header_timeout` bounds the wait from "request sent" to "response
+  headers available"
+- `read_idle_timeout` bounds inactivity between inbound read-progress events,
+  including response-header waits when `response_header_timeout` is unset
+- `write_idle_timeout` bounds inactivity between outbound write-progress events
+- `expect_continue_timeout` controls how long HTTP/1 uploads wait on
+  `100-continue` before sending the body anyway
+
+`connect_timeout` defaults to 30 seconds when neither the call nor a `Client`
+sets it; the other timeouts are disabled by default.
+
+`readtimeout` is still accepted for compatibility, but it is deprecated and now
+behaves like `read_idle_timeout`.
+
+For example:
+
+```julia
+using HTTP
+
+resp = HTTP.get(
+    url;
+    connect_timeout = 2.0,
+    response_header_timeout = 5.0,
+    read_idle_timeout = 30.0,
+)
+```
+
+`HTTP.open` uses the same timeout model, and `HTTP.WebSockets.open` uses the
+handshake-relevant subset (`connect_timeout`, `request_timeout`,
+`response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`).
+
+### Debugging Requests
+
+When a request misbehaves, `verbose` prints what the client is doing on the
+wire. `verbose = 1` shows one-line attempt/response/done summaries;
+`verbose = 2` adds the request and response head text:
+
+```julia
+HTTP.get("http://example.com"; verbose = 2)
+```
+
+Sample output:
+
+```
+[http] request attempt 1 GET http://example.com/ via h1
+[http] request
+GET / HTTP/1.1
+Host: example.com
+Accept-Encoding: gzip, deflate
+User-Agent: HTTP.jl/2.0.0
+[http] response attempt 1 200 for http://example.com/
+[http] response
+HTTP/1.1 200 OK
+Content-Length: 1256
+[http] done 200 for http://example.com/
+```
+
+For programmatic introspection — for example, to push events into your own
+logger — pass a `trace` callback. The callback receives subtypes of
+`HTTP.ClientEvent`:
+
+- `HTTP.RequestEvent` — request being sent
+- `HTTP.ResponseHeadEvent` — response headers received
+- `HTTP.RetryEvent` — retry scheduled
+- `HTTP.RetrySkippedEvent` — retry denied by the budget or deadline
+- `HTTP.RedirectEvent` — redirect followed
+- `HTTP.DoneEvent` — request finished (with response or error)
+
+Reach for these APIs when you need more control:
+
+- `RetryBucket` for coordinated retry throttling
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`, and `expect_continue_timeout`
+  on `request`
+- `retry_if`, `retry_non_idempotent`, and `respect_retry_after` for custom retry policy
+
+The full custom retry callback signature is:
+
+```julia
+retry_if(attempt::Integer, err, req::HTTP.Request, resp) -> Union{Bool,Nothing}
+```
+
+When it runs for a request-path failure, `err` is a `RequestRetryError`; inspect
+`err.err` to see the underlying transport or protocol exception. Response-based
+retry decisions keep `err = nothing` and pass the response through `resp`.
+Returning `true` requests another attempt when the request body can be replayed,
+`false` suppresses a retry, and `nothing` defers to the built-in retry rules.
+
+### 1.x Compatibility Keywords
+
+HTTP.jl 2.0 accepts several 1.x client keywords as migration aids. Treat them
+as temporary compatibility, not as the preferred API:
+
+- `readtimeout` maps to `read_idle_timeout`
+- `pool` should become a long-lived `Client` or `Transport`
+- `retry_delays` and `retry_check` should become `retry_if`, `retries`, and
+  `retry_bucket`
+- `sslconfig` and `socket_type_tls` should move to transport/TLS configuration
+- `canonicalize_headers`, `detect_content_type`,
+  `observelayers`, `logerrors`, and `logtag` are accepted for compatibility
+  where possible
+
+See the [migration guide](https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/) for before/after examples.
+
+## Buffered transfer ownership
+
+Pass a byte vector or a contiguous byte view to upload existing storage without
+copying it. The request body retains that storage, and retries replay it with
+independent cursors. Keep the bytes unchanged until the call returns. A signer
+may read `body.data` from `body.next_index` through its end without consuming
+the body.
+
+Pass an `HTTP.Headers` collection with `copyheaders=false` to `HTTP.request` or
+`HTTP.open` to skip the initial defensive copy. The call then owns the
+collection: do not access it until the call returns, and do not share it between
+concurrent requests. Its final contents are unspecified. Other header inputs are
+converted into a new collection either way. Each attempt still gets its own
+header copy for signing, cookies, and redirects. On `HTTP.Request`, the same
+keyword transfers both the headers and the trailers.
+
+```julia
+headers = HTTP.Headers(["Content-Type" => "application/octet-stream"])
+response = HTTP.put(url, headers, payload; copyheaders=false, client)
+```
+
+Pass a byte vector or a writable byte view as `response_stream` to receive the
+body into existing storage. Built-in HTTP/1 and HTTP/2 bodies read directly into
+it. The destination must be large enough for the whole body; a larger body
+throws an `ArgumentError`. A `Vector{UInt8}` destination is resized to the body
+length.
+
+HTTP/2 uploads reuse one 16 KiB DATA-frame buffer per request body instead of
+allocating per frame. `bench/buffered_upload_allocations.jl --check` measures
+client allocations for buffered HTTP/1 and HTTP/2 uploads.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/server/ -->
+
+# Server Guide
+
+`HTTP.jl` 2.0 supports both high-level request handlers and lower-level stream
+handlers. The right choice depends on how much control you need over read/write
+sequencing.
+
+## Interactive Thread Pool
+
+HTTP.jl schedules its server tasks on Julia's `:interactive` thread pool. This
+includes listener, connection, request-handler, HTTP/2 stream, server-side SSE,
+and WebSocket server tasks. Keeping this work separate from the `:default` pool
+allows the server to accept and handle requests, including health checks, while
+the default pool runs compute-intensive tasks that may not yield.
+
+Configure at least one interactive thread when starting a production server.
+For example, this command creates four default worker threads and one
+interactive thread:
+
+```sh
+julia --threads=4,1 --project=. server.jl
+```
+
+The equivalent environment setting is `JULIA_NUM_THREADS=4,1`. Check the live
+configuration with `Threads.nthreads(:interactive)`, which should return at
+least `1`.
+
+If no interactive thread exists, Julia runs tasks requested for `:interactive`
+on the default pool. The server still starts, but it loses isolation from
+default-pool work. Non-yielding compute tasks can then delay all HTTP work and
+make health checks appear unresponsive.
+
+Interactive tasks should remain responsive. Do not run long, non-yielding
+compute kernels directly in a server handler. Move that work to the default
+pool and wait for it from the handler so the interactive task can yield:
+
+```julia
+result = fetch(Threads.@spawn :default expensive_work())
+```
+
+A non-yielding handler can still monopolize the interactive pool. The separate
+pool protects HTTP work from compute tasks assigned to `:default`; it cannot
+make non-yielding handler code cooperative.
+
+## Request Handlers
+
+Use `HTTP.serve!` or `HTTP.serve` when your application naturally maps
+`Request -> Response`.
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+    payload = "handled " * req.target
+    return HTTP.Response(
+        200;
+        headers = ["X-Handler" => "request"],
+        body = payload,
+    )
+end
+
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
+resp = HTTP.get(base_url * "/health"; proxy = HTTP.ProxyConfig())
+HTTP.forceclose(server)
+(status = resp.status, header = HTTP.header(resp, "X-Handler"), body = String(resp.body))
+```
+
+This is the simplest server path and the best default for ordinary APIs.
+
+### Reusing Responses
+
+A `Response` built from a `String` or a `Vector{UInt8}` body keeps that value
+as-is, so one response object can be returned for many requests ("baked"
+responses), on both the request-handler and stream-handler paths:
+
+```julia
+const HEALTH = HTTP.Response(200; headers = ["Content-Type" => "text/plain"], body = "ok")
+handler(req) = HEALTH
+```
+
+Streaming bodies (`HTTP.BytesBody`, `HTTP.CallbackBody`, and the bodies of
+incoming messages) are single-use. Use a new streaming body for each response.
+HTTP checks `BytesBody` and `CallbackBody` before sending the response head;
+do not rely on this check for other `AbstractBody` implementations.
+
+## Stream Handlers
+
+Use `HTTP.listen!` when you need lower-level ownership of the connection
+lifecycle. `HTTP.streamhandler` is the bridge when you want stream server
+mechanics with a request-style handler body.
+
+```julia
+using HTTP
+
+stream_server = HTTP.listen!(
+    HTTP.streamhandler() do req
+        return HTTP.Response(201; body = "stream handler")
+    end,
+    "127.0.0.1",
+    0;
+    listenany = true,
+)
+
+stream_url = "http://127.0.0.1:$(HTTP.port(stream_server))"
+stream_resp = HTTP.get(stream_url * "/echo"; status_exception = false, proxy = HTTP.ProxyConfig())
+HTTP.forceclose(stream_server)
+(status = stream_resp.status, body = String(stream_resp.body))
+```
+
+Stream handlers are the right tool when you need:
+
+- pull-based request body reads
+- push-based or incremental response writing
+- trailers or custom sequencing
+- long-lived handlers that cannot be expressed as a single eager `Response`
+
+## Server Lifecycle
+
+The returned `Server` handle is operationally important. Hold onto it so you
+can:
+
+- inspect the bound port with `HTTP.port(server)`
+- block on completion with `wait(server)`
+- close or force-close the server explicitly during shutdown
+
+`HTTP.forceclose(server)` is the fast shutdown path when you need to stop
+accepting and serving immediately.
+
+Every server timeout has both a seconds-valued keyword and a nanosecond-valued
+`_ns` keyword:
+
+```julia
+using HTTP
+
+handler = req -> HTTP.Response(200; body = "ok")
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_header_timeout_ns = 5_000_000_000,
+    read_timeout_ns = 30_000_000_000,
+    write_timeout_ns = 30_000_000_000,
+    idle_timeout_ns = 120_000_000_000,
+)
+```
+
+```julia
+using HTTP
+
+handler = req -> HTTP.Response(200; body = "ok")
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_timeout = 30,
+    read_header_timeout = 5,
+    write_timeout = 30,
+    idle_timeout = 120,
+)
+```
+
+The older `readtimeout` keyword is accepted as a seconds-valued migration alias
+for `read_timeout`.
+
+Ordinary `serve!` request handlers receive a buffered `HTTP.Request` body. That
+buffering is capped by `max_body_bytes`, which defaults to 64 MiB. Raise the
+limit for larger in-memory uploads, pass `max_body_bytes = 0` to restore legacy
+unbounded buffering, or use `listen!`/stream handlers when the application
+should manage large request bodies incrementally.
+
+## Routing and Middleware
+
+Use `HTTP.Router` when you want route matching without bringing in a
+larger web framework:
+
+```julia
+using HTTP
+
+router = HTTP.Router()
+
+HTTP.register!(router, "GET", "/users/{id}") do req
+    id = HTTP.getparam(req, "id")
+    return HTTP.Response(200; body = "user " * id)
+end
+
+server = HTTP.serve!(router, "127.0.0.1", 8080)
+```
+
+Middleware is just function composition around handlers. For example, apply a
+handler timeout to every registered route:
+
+```julia
+using HTTP
+
+timeout = HTTP.Handlers.handlertimeout(5.0; status = 503)
+router = HTTP.Router(
+    req -> HTTP.Response(404),
+    req -> HTTP.Response(405),
+    timeout,
+)
+```
+
+The router stores route metadata on the request context. Read it with
+`HTTP.getroute`, `HTTP.getparams`, and `HTTP.getparam`.
+
+### Request Logging
+
+`HTTP.Handlers.logging_middleware` is an opt-in access log. It wraps a handler
+and emits one log record per request through Julia's logging system:
+
+```julia
+using HTTP, Logging
+
+server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
+```
+
+With the default `ConsoleLogger`, each request prints a record like:
+
+```
+┌ Info: GET /users/42 200 0.412ms
+│   method = "GET"
+│   target = "/users/42"
+│   status = 200
+│   elapsed_ms = 0.412
+└   length = 7
+```
+
+The record carries the method, the target, the response status, the handler
+time in milliseconds, and the response body length when it is known without
+reading the body. A handler that throws is logged at `Logging.Error` with the
+exception, and the exception is rethrown so the server still answers with an
+error status. Pass `level` to log successful requests at another level, and
+`logger` to send the records to a specific logger instead of the current one:
+
+```julia
+access_log = HTTP.Handlers.logging_middleware(router; level = Logging.Debug)
+```
+
+The same wrapper works for `HTTP.listen!` stream handlers, where the record
+also carries the client `peer` address. All records use the `:access` log
+group, so they are easy to filter or route with a package such as
+LoggingExtras.jl.
+
+## Static Files
+
+`HTTP.fileserver(root)` returns a normal request handler rooted at a directory.
+It serves static files, normalizes directory redirects, can fall back to a
+single-page-app entrypoint, and emits conditional and range-aware responses.
+
+```julia
+using HTTP
+
+handler = HTTP.fileserver("public"; spa_fallback = "index.html")
+server = HTTP.serve!(handler, "127.0.0.1", 8080)
+```
+
+For lower-level control, use `HTTP.servefile(request, path)` when you already
+resolved a filesystem path, or `HTTP.servecontent(request, source)` when the
+bytes/string/seekable `IO` content is already in hand. These helpers populate
+content type, `Last-Modified`, `ETag`, `Accept-Ranges`, and `Content-Range`
+headers as appropriate, and honor conditional and range request headers before
+returning a `Response`.
+
+## SSE and Long-Lived Responses
+
+`HTTP.jl` exposes `SSEEvent`, `SSEStream`, and `sse_stream` for server-sent
+events. Use these when you want a proper `text/event-stream` response instead
+of hand-assembling event lines.
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.sse_stream(200) do stream
+        write(stream, HTTP.SSEEvent("ready"; event = "status", id = "1"))
+    end
+end
+```
+
+## HTTP/2 Servers
+
+The same server entrypoints can serve HTTP/2. For browser and most production
+clients, configure TLS so ALPN can select `h2`; for cleartext prior-knowledge
+clients, HTTP.jl accepts the HTTP/2 connection preface on the normal listener.
+Most applications do not need a separate server API for HTTP/2; use the normal
+`serve!`, `listen!`, and `streamhandler` surfaces.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/ -->
+
+# Protocols Guide
+
+Most applications should stay on the higher-level client/server APIs. This
+guide covers the protocol-specific APIs meant to be used directly, plus where
+HTTP/2 fits into normal `HTTP.jl` usage.
+
+## WebSockets
+
+The WebSocket entrypoints live in the `HTTP.WebSockets` submodule. (The bare
+`WebSockets` name is also exported when you `using HTTP`, but the docs always
+use the fully-qualified `HTTP.WebSockets.*` form to avoid being shadowed by
+other packages.)
+
+Use `HTTP.WebSockets.open` for `ws://` and `wss://` URLs. Top-level
+`HTTP.open` is the ordinary HTTP request/response streaming API and expects an
+HTTP method such as `:GET`.
+
+```julia
+using HTTP
+
+server = HTTP.WebSockets.listen!("127.0.0.1", 0; listenany = true) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, uppercase(String(msg)))
+    end
+end
+
+url = "ws://" * HTTP.WebSockets.server_addr(server) * "/echo"
+reply = HTTP.WebSockets.open(url; proxy = HTTP.ProxyConfig()) do ws
+    HTTP.WebSockets.send(ws, "hello")
+    HTTP.WebSockets.receive(ws)
+end
+HTTP.WebSockets.forceclose(server)
+reply
+```
+
+Main WebSocket entrypoints:
+
+- `HTTP.WebSockets.open`
+- `HTTP.WebSockets.listen!`
+- `HTTP.WebSockets.send`
+- `HTTP.WebSockets.receive`
+- `HTTP.WebSockets.forceclose`
+
+The WebSocket layer covers close/ping/pong framing, server helpers, and
+proxy-aware clients without forcing you through internal parser state. The
+[WebSockets API reference](https://juliaweb.github.io/HTTP.jl/stable/api/websockets/) is the canonical home for the
+public docstrings.
+
+`HTTP.WebSockets.open` can also handshake over an already-connected `IO` instead
+of a URL. Pass any byte stream (a raw `TCPSocket`, a TLS stream, etc.) as the
+first argument, and optionally override the request-line `target`/`Host` header.
+This is handy when the transport is established out-of-band or for tunnelling
+WebSockets over a custom stream. The caller retains ownership of the `IO`, `open`
+never closes it.
+
+```julia
+ws = HTTP.WebSockets.open(io; target = "/echo", host = "example.com:80")
+```
+
+`HTTP.WebSockets.open` also accepts the client-side handshake timeout controls:
+
+- `connect_timeout`
+- `request_timeout`
+- `response_header_timeout`
+- `read_idle_timeout`
+- `write_idle_timeout`
+
+### Message compression (permessage-deflate)
+
+HTTP.jl supports the WebSocket permessage-deflate extension ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)),
+which DEFLATE-compresses each message. It is **opt-in on both ends** via
+`compress = true` and is negotiated during the handshake — if either side
+declines, the connection transparently falls back to uncompressed frames.
+
+```julia
+# server advertises permessage-deflate; clients may negotiate it
+server = HTTP.WebSockets.listen!("127.0.0.1", 0; listenany = true, compress = true) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, msg)
+    end
+end
+
+# client offers compression
+HTTP.WebSockets.open("ws://" * HTTP.WebSockets.server_addr(server); compress = true) do ws
+    HTTP.WebSockets.send(ws, repeat("compress me ", 1000))  # sent compressed
+    HTTP.WebSockets.receive(ws)
+end
+```
+
+`compress` is also accepted by `HTTP.WebSockets.upgrade` for servers that mix
+HTTP and WebSocket routes. Compression is most beneficial for larger, repetitive
+text/JSON payloads; tiny or already-compressed (binary/media) messages gain
+little. Decompressed message size is bounded by `maxframesize`, guarding against
+decompression bombs. `maxframesize` defaults to 16 MiB for high-level
+WebSocket clients and servers; pass a larger value explicitly if your protocol
+requires larger messages.
+
+## HTTP/2 Support
+
+`HTTP.jl` supports HTTP/2 through the normal client and server APIs.
+
+On the client side, `prefer_http2 = true` is the default, so secure connections
+try to negotiate HTTP/2 with ALPN when the server supports it. Set
+`prefer_http2 = false` on `Transport` or `Client` to force HTTP/1.1 for those
+connections.
+
+```julia
+using HTTP
+
+h1_only = HTTP.Client(transport = HTTP.Transport(prefer_http2 = false))
+resp = HTTP.get("https://example.com"; client = h1_only)
+close(h1_only)
+```
+
+On the server side, use the same `serve!` and `listen!` entrypoints. For browser
+and most production HTTP/2 traffic, run the server with TLS configured so ALPN
+can select `h2`. Cleartext HTTP/2 is accepted when the peer starts the
+connection with the HTTP/2 prior-knowledge preface; ordinary HTTP/1.1 upgrade
+requests are not a separate public server API.
+
+### Tuning flow-control windows
+
+HTTP/2 flow control caps the in-flight unacknowledged bytes, so single-stream
+throughput is bounded by roughly `window / RTT`. The protocol default window of
+65535 bytes is fine for small requests but throttles large uploads or downloads
+on links with non-trivial latency. Pass an `HTTP.HTTP2Settings` through the
+`http2_settings` keyword on either side to raise the per-stream and
+connection-level receive windows. Uploads depend on the server's receive window
+and downloads on the client's.
+
+```julia
+using HTTP
+
+settings = HTTP.HTTP2Settings(
+    initial_window_size = 1 << 20,     # 1 MiB per-stream receive window
+    connection_window_size = 1 << 21,  # 2 MiB connection-level receive window
+)
+
+client = HTTP.Client(http2_settings = settings)
+server = HTTP.serve!("127.0.0.1", 8080; http2_settings = settings) do request
+    HTTP.Response(200, "ok")
+end
+```
+
+Both windows default to the protocol default of 65535, so omitting
+`http2_settings` leaves behavior unchanged.
+
+Use these higher-level APIs for ordinary HTTP/2 traffic:
+
+- `HTTP.request`, `HTTP.get`, and the other top-level request helpers
+- `HTTP.open` for client-side streaming
+- `HTTP.Client` and `HTTP.Transport` for reusable client configuration
+- `HTTP.serve!`, `HTTP.listen!`, and `HTTP.streamhandler` for servers
+
+HPACK tables, HTTP/2 frame structs, and direct connection/session types are
+internal implementation details rather than part of the documented public API.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/ -->
+
+# Migration From HTTP.jl 1.x
+
+HTTP.jl 2.0 is a breaking release. Code that stayed on the common
+`HTTP.get`, `HTTP.post`, `HTTP.request`, and basic `HTTP.serve!` workflows
+should usually migrate with small edits. Code that reached into parser,
+connection-pool, layer-stack, HPACK, or HTTP/2 internals should move to the
+documented 2.0 API instead of chasing renamed internals.
+
+The Before/After snippets below are intentionally minimal — they show the API
+shape change, not full runnable programs. Each runnable snippet assumes the
+caller has already issued `using HTTP`, plus any extra `using` statements
+shown in-line (for example `using JSON` for JSON examples or `using Downloads`
+for the [`HTTP.download`](#httpdownload) discussion).
+
+The most important 2.0 changes are:
+
+- Julia 1.10 is the minimum supported Julia version.
+- HTTP.jl now delegates transport, resolver, and TLS substrate work to Reseau.
+- `HTTP.Headers` is now a standalone mutable header struct rather than an alias
+  for a vector of substring pairs.
+- `Request`, `Response`, `Headers`, `RequestContext`, bodies, `Client`,
+  `Transport`, `Server`, and `Stream` are the core public building blocks.
+- Top-level request helpers buffer `Response.body::Vector{UInt8}` by default.
+- `RequestContext` is typed request state, not a plain `Dict`.
+- Client pooling, retries, TLS, proxying, and timeouts use more explicit
+  `Client` / `Transport` / keyword configuration.
+- WebSocket entrypoints live under `HTTP.WebSockets`.
+
+## Recommended Upgrade Order
+
+1. Upgrade Julia and dependency compat so HTTP.jl 2.0 can be resolved.
+2. Update high-level client calls and response field access.
+3. Update explicit `Request` / `Response` constructors.
+4. Replace direct connection-pool, layer, parser, HPACK, or HTTP/2 internals
+   with documented `Client`, `Transport`, `Stream`, server, or WebSocket APIs.
+5. Re-test timeout, retry, proxy, cookie, streaming, WebSocket, SSE, and HTTP/2
+   paths explicitly.
+
+## High-Level Requests
+
+Most simple request calls still look the same.
+
+Before:
+
+```julia
+resp = HTTP.get(url)
+text = String(resp.body)
+```
+
+After:
+
+```julia
+resp = HTTP.get(url)
+text = String(resp.body)
+```
+
+By default, `HTTP.request` and verb helpers return a fully materialized
+`Vector{UInt8}` in `resp.body`. For streaming, use `response_stream` or
+`HTTP.open`.
+
+Before:
+
+```julia
+open("payload.bin", "w") do io
+    HTTP.get(url; response_stream = io)
+end
+```
+
+After:
+
+```julia
+open("payload.bin", "w") do io
+    resp = HTTP.get(url; response_stream = io)
+    @assert resp.body === nothing
+end
+```
+
+In 1.x, the supplied `response_stream` object could also appear as
+`resp.body`. In 2.0, the sink remains owned by the caller; read the data back
+from the original `IO` or byte buffer you passed as `response_stream`.
+
+## `HTTP.download`
+
+The dedicated 1.x `HTTP.download` helper has been removed in HTTP.jl 2.0.
+
+!!! warning "`HTTP.download` still resolves — but it is no longer HTTP.jl's"
+    Because `HTTP` re-exports `Base.download`, calls like
+    `HTTP.download(url, path)` continue to work. Those calls now go through
+    `Base.download` (which is itself backed by the `Downloads` standard
+    library), **not** through HTTP.jl's request stack. The 1.x keyword
+    arguments (`proxy`, `retry`, `headers`, `client`, `transport`, TLS
+    configuration, etc.) are not recognized by `Base.download` — passing them
+    raises `MethodError` rather than silently being applied. Update such call
+    sites to use one of the patterns below.
+
+For the closest direct replacement, use the `Downloads.download` function from
+Julia's standard library:
+
+```julia
+using Downloads
+
+Downloads.download(url, "payload.bin")
+```
+
+If you want to keep all request handling inside HTTP.jl, stream the response
+body into an `IOStream` that you own:
+
+```julia
+using HTTP
+
+open("payload.bin", "w") do io
+    resp = HTTP.request("GET", url; response_stream = io)
+    @assert 200 <= resp.status < 300
+    @assert resp.body === nothing
+end
+```
+
+Use this pattern when you need HTTP.jl client configuration such as custom
+headers, retries, proxy settings, TLS configuration, or a reusable
+`HTTP.Client`. Use `Downloads.download` when you just need a URL copied to a
+file.
+
+For pull-based streaming:
+
+```julia
+using HTTP
+
+HTTP.open(:GET, url) do stream
+    response = HTTP.startread(stream)
+    @info "status" response.status
+    output = IOBuffer()
+    buf = Vector{UInt8}(undef, 8192)
+    while true
+        n = readbytes!(stream, buf)
+        n == 0 && break
+        write(output, @view buf[1:n])
+    end
+    @info "captured bytes" length(take!(output))
+end
+```
+
+Like all `HTTP.open` `do`-block calls, the form above returns the final
+`HTTP.Response` — capture data you want to keep in an outer variable
+rather than as the value of the `do` block.
+
+## Request and Response Constructors
+
+Common 1.x positional constructors remain accepted as migration shims, including
+string and byte-vector request or response bodies:
+
+```julia
+req = HTTP.Request("POST", "/widgets", ["Content-Type" => "text/plain"], "hello")
+resp = HTTP.Response(201, ["Location" => "/widgets/1"], "created")
+```
+
+New code may use the keyword forms when it needs explicit headers, trailers,
+protocol metadata, or context ownership:
+
+```julia
+req = HTTP.Request(
+    "POST",
+    "/widgets";
+    headers = ["Content-Type" => "text/plain"],
+    body = "hello",
+)
+```
+
+## Headers
+
+`HTTP.Headers` is the canonical mutable header container. It preserves pair
+order and canonicalizes header keys on insertion.
+
+Before:
+
+```julia
+headers = ["content-type" => "application/json"]
+```
+
+After:
+
+```julia
+headers = HTTP.Headers(["content-type" => "application/json"])
+HTTP.setheader(headers, "x-request-id", request_id)
+```
+
+Useful helpers include `HTTP.header`, `HTTP.headers`, `HTTP.hasheader`,
+`HTTP.headercontains`, `HTTP.setheader`, `HTTP.appendheader`, and
+`HTTP.removeheader`.
+
+## Request Context
+
+In 1.x, middleware often treated request context as a plain dictionary. In 2.0,
+`RequestContext` is typed request state with deadline, cancellation, metadata,
+and timeout fields. Dict-like symbol-key metadata access still works for
+migration.
+
+Before:
+
+```julia
+req.context[:request_id] = request_id
+```
+
+After:
+
+```julia
+ctx = HTTP.get_request_context(req)
+ctx[:request_id] = request_id
+```
+
+Reading application metadata remains familiar:
+
+```julia
+request_id = get(HTTP.get_request_context(req), :request_id, nothing)
+```
+
+Use the typed helpers for control flow:
+
+```julia
+ctx = HTTP.get_request_context(req)
+HTTP.set_deadline!(ctx, time_ns() + 5_000_000_000)
+HTTP.cancel!(ctx; message = "caller disconnected")
+HTTP.canceled(ctx) && throw(HTTP.CanceledError("request canceled"))
+```
+
+For compatibility, `req.context` returns the metadata view. Use
+`HTTP.get_request_context(req)` whenever you need cancellation, deadlines, or
+timeout state.
+
+## Reusable Clients and Pooling
+
+The 1.x `pool` keyword and old connection-pool internals are replaced by
+`Client` and `Transport`.
+
+Before:
+
+```julia
+resp = HTTP.get(url; pool = pool)
+```
+
+After:
+
+```julia
+transport = HTTP.Transport(max_idle_per_host = 4, max_idle_total = 32)
+client = HTTP.Client(transport = transport, cookiejar = HTTP.CookieJar())
+
+try
+    resp = HTTP.get(url; client = client)
+finally
+    close(client)
+end
+```
+
+Use a long-lived `Client` when you want connection reuse, shared cookies, proxy
+configuration, retry buckets, and HTTP/2 preference to be consistent across
+many requests.
+
+## `HTTP.@client`
+
+In 1.x, `HTTP.@client` composed one request middleware chain plus, optionally, a
+stream middleware chain. In 2.0, each position may be a single middleware or a
+tuple of middlewares:
+
+```julia
+HTTP.@client request_middleware
+HTTP.@client request_middleware stream_middleware
+HTTP.@client (outer_request, inner_request) (outer_stream, inner_stream)
+```
+
+Request middlewares wrap high-level `request(...)` calls. Stream middlewares
+wrap `HTTP.open(...)` calls. Tuple entries are applied in order, so the first
+middleware listed is the outermost wrapper.
+
+## Retries
+
+HTTP.jl 2.0 retries are explicit and conservative. The old `retry_delays` and
+`retry_check` keywords are accepted as compatibility shims, but new code should
+use `retry`, `retries`, `retry_if`, `respect_retry_after`, and
+`HTTP.RetryBucket`.
+
+Before:
+
+```julia
+resp = HTTP.get(url; retry = true, retry_delays = [0.1, 0.5, 1.0])
+```
+
+After:
+
+```julia
+bucket = HTTP.RetryBucket()
+resp = HTTP.get(
+    url;
+    retry = true,
+    retries = 3,
+    retry_bucket = bucket,
+    respect_retry_after = true,
+)
+```
+
+Custom retry decisions move to `retry_if`.
+
+```julia
+function retry_if(attempt, err, req, resp)
+    if err !== nothing
+        return attempt <= 2
+    end
+    return resp !== nothing && resp.status == 503 && attempt <= 3
+end
+
+resp = HTTP.get(url; retry_if = retry_if)
+```
+
+The full callback signature is:
+
+```julia
+retry_if(attempt::Integer, err, req::HTTP.Request, resp) -> Union{Bool,Nothing}
+```
+
+`attempt` is the current one-based attempt number. `err` is a
+`HTTP.RequestRetryError` for request-path failures; inspect `err.err` for the
+underlying transport or protocol exception. Response-based decisions pass
+`err = nothing` and the response in `resp`. Returning `true` requests another
+attempt when the body can be replayed, `false` suppresses a retry, and `nothing`
+uses the built-in retry rules.
+
+## Timeouts
+
+The 1.x `readtimeout` keyword is deprecated. It is still accepted, but now maps
+to `read_idle_timeout`.
+
+Before:
+
+```julia
+resp = HTTP.get(url; connect_timeout = 5, readtimeout = 30)
+```
+
+After:
+
+```julia
+resp = HTTP.get(
+    url;
+    connect_timeout = 5,
+    request_timeout = 60,
+    response_header_timeout = 10,
+    read_idle_timeout = 30,
+)
+```
+
+Use the timeout that matches your intent:
+
+- `connect_timeout` bounds DNS, TCP connect, HTTP proxy `CONNECT` or SOCKS5
+  handshakes, TLS handshake, and HTTP/2 session setup.
+- `request_timeout` is the whole exchange deadline.
+- `response_header_timeout` bounds the wait for response headers.
+- `read_idle_timeout` bounds inactivity between inbound read progress events.
+- `write_idle_timeout` bounds inactivity between outbound write progress
+  events.
+- `expect_continue_timeout` controls HTTP/1 `100-continue` upload waits.
+
+Timeout failures are reported as `HTTP.HTTPTimeoutError`, an alias for
+`HTTP.TimeoutError`.
+
+## Exceptions
+
+In 1.x the client exception types lived in the `HTTP.Exceptions` submodule and were
+re-exported to the top level. 2.x keeps the types at the top level — `HTTP.StatusError`,
+`HTTP.ConnectError`, `HTTP.TimeoutError`, and their `HTTP.HTTPError` supertype — and
+`HTTP.Exceptions` is now a thin deprecated shim. Prefer the top-level names.
+
+Before:
+
+```julia
+catch e
+    e isa HTTP.Exceptions.StatusError && @info "status" e.status
+end
+```
+
+After:
+
+```julia
+catch e
+    e isa HTTP.StatusError && @info "status" e.status
+end
+```
+
+`HTTP.Exceptions.StatusError`, `ConnectError`, `TimeoutError`, and `HTTPError` still
+resolve — forwarding to the top-level names, with a deprecation warning under
+`--depwarn=yes`. The 1.x `@try` macro and `current_exceptions_to_string` helper were
+internal and are removed with no replacement.
+
+`HTTP.RequestError` is also gone. 1.x wrapped request-path failures in a `RequestError`
+(fields `.request`/`.error`); 2.x lets the underlying transport or protocol exception
+propagate directly, and exposes `HTTP.isrecoverable` to classify whether a failure is a
+transient one that is safe to retry.
+
+Before:
+
+```julia
+catch e
+    e isa HTTP.Exceptions.RequestError && @warn "request failed" e.error
+end
+```
+
+After:
+
+```julia
+catch e
+    HTTP.isrecoverable(e) || rethrow()   # otherwise it is a transient transport failure
+end
+```
+
+## TLS, Sockets, and Proxies
+
+The old `sslconfig` and `socket_type_tls` extension points are retained for
+backwards compatibility only; they are no longer functional extension points
+for the 2.0 transport architecture. Configure TLS and socket behavior through
+the Reseau-backed `Transport` layer.
+
+Before:
+
+```julia
+resp = HTTP.get(url; sslconfig = sslconfig)
+```
+
+After:
+
+```julia
+transport = HTTP.Transport(tls_config = tls_config)
+client = HTTP.Client(transport = transport)
+resp = HTTP.get(url; client = client)
+```
+
+Proxy configuration is more flexible and can be more explicit. As before, it can
+come from the environment, but callers can also pass a direct/no-proxy policy or
+a fixed proxy URL per request, client, or transport:
+
+```julia
+direct = HTTP.ProxyConfig()
+from_env = HTTP.ProxyFromEnvironment()
+fixed = HTTP.ProxyURL("http://proxy.internal:8080"; no_proxy = "localhost,127.0.0.1")
+socks = HTTP.ProxyURL("socks5h://proxy.internal:1080")
+
+HTTP.get(url; proxy = from_env)
+HTTP.get("http://127.0.0.1:8080"; proxy = direct)
+```
+
+SOCKS5 proxies are configured with `socks5://` or `socks5h://` URLs. Both
+schemes follow Go's HTTP transport behavior and pass domain targets to the
+proxy for resolution.
+
+Peer (client) addresses are read through the transport layer rather than
+`Sockets`. In 1.x, `Sockets.getpeername(::HTTP.Stream)` returned the client
+IP and port from a server stream; in 2.0, use `HTTP.peeraddr(stream)`, which
+returns a `SocketAddr` (or `nothing` when unavailable) for both plain-TCP and
+TLS connections.
+
+Before:
+
+```julia
+HTTP.listen("127.0.0.1", 8080) do stream
+    ip, port = Sockets.getpeername(stream)
+    @info "client" ip port
+end
+```
+
+After:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    addr = HTTP.peeraddr(stream)
+    if addr !== nothing
+        # `addr.ip` is an NTuple of octets (not a `Sockets.IPAddr`);
+        # `string(addr)` renders it as "ip:port".
+        @info "client" ip = addr.ip port = addr.port
+    end
+end
+```
+
+## Servers
+
+Request/response servers still use `HTTP.serve!`:
+
+Before:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.Response(200, "ok")
+end
+```
+
+After:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.Response(200; body = "ok")
+end
+```
+
+Use `HTTP.listen!` for stream handlers:
+
+```julia
+server = HTTP.listen!("127.0.0.1", 8080) do stream
+    req = HTTP.startread(stream)
+    HTTP.setstatus(stream, 200)
+    HTTP.setheader(stream, "Content-Type", "text/plain")
+    write(stream, "streamed response for $(req.target)")
+    closewrite(stream)
+    HTTP.closeread(stream)
+end
+```
+
+Every server timeout has a seconds-valued keyword and a nanosecond-valued
+`_ns` keyword. The old server `readtimeout` keyword is accepted as a
+seconds-valued migration alias for `read_timeout`.
+
+```julia
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_timeout_ns = 30_000_000_000,
+    read_header_timeout_ns = 5_000_000_000,
+    write_timeout_ns = 30_000_000_000,
+    idle_timeout_ns = 120_000_000_000,
+)
+
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_timeout = 30,
+    read_header_timeout = 5,
+    write_timeout = 30,
+    idle_timeout = 120,
+)
+```
+
+Useful server helpers in 2.0 include:
+
+- `HTTP.fileserver(root)` builds a ready-to-use static-file handler rooted at
+  `root`. It serves ordinary files, normalizes directory redirects, can serve a
+  configured SPA fallback, and uses the same conditional/range-aware response
+  helpers as the lower-level APIs.
+- `HTTP.servefile(request, path)` serves one filesystem path for a request,
+  including `If-Modified-Since`, `If-None-Match`, `Range`, content type,
+  `Last-Modified`, `ETag`, and `Accept-Ranges` handling.
+- `HTTP.servecontent(request, source)` applies the same conditional and range
+  response logic to bytes, strings, or seekable `IO` content you already own.
+- `HTTP.Router` for route matching.
+- `HTTP.forceclose(server)` for immediate shutdown.
+
+## Routing and Middleware
+
+`HTTP.Router` and `HTTP.register!` are the top-level public router names; the
+underlying implementation lives in `HTTP.Handlers` and remains available as
+`HTTP.Handlers.Router` / `HTTP.Handlers.register!` if you prefer the explicit
+path.
+
+```julia
+router = HTTP.Router()
+
+HTTP.register!(router, "GET", "/users/{id}") do req
+    id = HTTP.getparam(req, "id")
+    return HTTP.Response(200; body = id)
+end
+
+server = HTTP.serve!(router, "127.0.0.1", 8080)
+```
+
+When a route matches, the route string and path parameters are stored in the
+request context. Retrieve them with `HTTP.getroute`, `HTTP.getparams`, or
+`HTTP.getparam`.
+
+## WebSockets
+
+Use `HTTP.WebSockets` for WebSocket-specific client and server behavior.
+Top-level `HTTP.open` is for ordinary HTTP request/response streaming, not
+`ws://` or `wss://` URLs.
+
+Before:
+
+```julia
+# Any code relying on top-level HTTP.open or internal upgrade helpers for
+# WebSocket traffic should move to HTTP.WebSockets.
+```
+
+After:
+
+```julia
+HTTP.WebSockets.open("ws://127.0.0.1:8080/socket") do ws
+    HTTP.WebSockets.send(ws, "ping")
+    msg = HTTP.WebSockets.receive(ws)
+end
+```
+
+Server side:
+
+```julia
+server = HTTP.WebSockets.listen!("127.0.0.1", 8080) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, msg)
+    end
+end
+```
+
+To mix ordinary HTTP routes and WebSocket routes on a single server, upgrade an
+in-flight server stream by hand with `HTTP.WebSockets.upgrade`, the 2.0
+counterpart to the 1.x `WebSockets.upgrade(http)` helper. Guard the call with
+`HTTP.WebSockets.isupgrade` and upgrade before writing any response:
+
+```julia
+server = HTTP.listen!("127.0.0.1", 8080) do stream
+    if HTTP.WebSockets.isupgrade(stream.message)
+        HTTP.WebSockets.upgrade(stream) do ws
+            for msg in ws
+                HTTP.WebSockets.send(ws, msg)
+            end
+        end
+    else
+        HTTP.setstatus(stream, 200)
+        HTTP.startwrite(stream)
+        write(stream, "ok")
+    end
+end
+```
+
+`upgrade` runs its handler synchronously and closes the connection when the
+handler returns. It accepts the same `subprotocols`, `check_origin`,
+`maxframesize`, and `maxfragmentation` keywords as `listen!`. WebSocket upgrades
+over HTTP/2 are not supported.
+
+The WebSocket client accepts the handshake timeout controls
+`connect_timeout`, `request_timeout`, `response_header_timeout`,
+`read_idle_timeout`, and `write_idle_timeout`.
+
+## Server-Sent Events
+
+Client-side SSE uses the `sse_callback` keyword on `HTTP.request`:
+
+```julia
+events = HTTP.SSEEvent[]
+
+HTTP.request("GET", url; sse_callback = event -> push!(events, event))
+```
+
+Server-side SSE uses `HTTP.sse_stream`:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.sse_stream(200) do stream
+        write(stream, HTTP.SSEEvent("ready"; event = "status", id = "1"))
+    end
+end
+```
+
+## Internal APIs
+
+These 1.x internals are not migration targets for 2.0:
+
+- layer-stack internals
+- connection-pool internals
+- parser internals
+- undocumented socket/TLS extension points
+
+Move those call sites to documented `Client`, `Transport`, `Stream`, server,
+router, WebSocket, or SSE APIs. If a 1.x internal use case cannot be expressed
+through the 2.0 public surface, open an issue with the use case rather than
+depending on the new internals.
+
+## Compatibility Keywords
+
+HTTP.jl 2.0 accepts several old client keywords so existing code fails less
+abruptly:
+
+- `readtimeout`: maps to `read_idle_timeout`
+- `pool`: accepted, but use `client` / `transport`
+- `retry_delays` and `retry_check`: accepted, but use `retry_if`,
+  `retries`, and `retry_bucket`
+- `sslconfig` and `socket_type_tls`: accepted, but configure the transport
+- `canonicalize_headers`, `detect_content_type`,
+  `observelayers`, `logerrors`, and `logtag`: accepted for compatibility, but
+  not the preferred 2.0 observation/configuration surface
+
+Treat these as temporary migration aids. New code should use the documented
+2.0 API names.
+
+## Final Checklist
+
+- Prefer `resp.status`; `resp.status_code` remains available as a compatibility alias.
+- Use `HTTP.get_request_context(req)` for cancellation/deadline state.
+- Prefer keyword constructors for `Request` and `Response`.
+- Replace `pool` usage with a long-lived `HTTP.Client`.
+- Replace `readtimeout` with the precise timeout keyword you need.
+- Replace `HTTP.Exceptions.StatusError` & friends with the top-level `HTTP.StatusError`; `HTTP.RequestError` is gone — catch the underlying exception or use `HTTP.isrecoverable`.
+- Replace `HTTP.download` with `Downloads.download` or an explicit
+  `HTTP.request(...; response_stream = io)` file stream.
+- Move WebSocket code to `HTTP.WebSockets`.
+- Replace `Sockets.getpeername(stream)` with `HTTP.peeraddr(stream)`.
+- Replace internal parser/connection/HPACK/HTTP2 usage with documented APIs.
+- Run integration tests for redirects, retries, proxy configuration, cookies,
+  streaming, WebSockets, SSE, and HTTP/2 after upgrading.
+
+### Explicit header ownership
+
+`copyheaders=false` is supported by `request`, `open`, and `Request`. With an
+`HTTP.Headers` input it transfers ownership of the collection; do not access it
+while the request is active. Any other header input, such as the pair vectors
+1.x call sites pass, becomes a new collection either way. HTTP 2.7.1 and earlier
+HTTP 2 releases ignored this keyword. Retries still isolate mutable headers.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/reference/ -->
+
+# API Reference
+
+This section is the canonical placement for exported `HTTP.jl` docstrings and
+the documented submodule APIs that make up the supported 2.0 surface. The
+guides explain how the pieces fit together; these pages are where the concrete
+names live.
+
+## Module
+
+### `HTTP` — Module
+
+    HTTP
+
+Client, server, streaming, WebSocket, and Server-Sent Events APIs for HTTP.jl.
+
+The 2.0 API is built around explicit `Request`, `Response`, `Headers`,
+`RequestContext`, body, `Client`, `Transport`, `Server`, and `Stream` values.
+HTTP.jl owns HTTP message semantics and high-level client/server behavior,
+while `Reseau` provides the transport, resolver, and TLS substrate.
+
+Common entrypoints:
+
+- `request`, `get`, `post`, `put`, `patch`, `delete`, `head`, `options`, and `query`
+  for high-level client requests.
+- `open` for client-side request/response streaming.
+- `serve!` / `serve` for `Request -> Response` servers.
+- `listen!` / `listen` and `streamhandler` for stream-oriented servers.
+- `WebSockets` for WebSocket client and server helpers.
+- `SSEEvent` and `sse_stream` for Server-Sent Events.
+
+See the migration guide for the most important 1.x to 2.0 API changes.
+
+## Reference Map
+
+- [Core API](https://juliaweb.github.io/HTTP.jl/stable/api/core/): request/response types, headers, bodies, cookies, forms, and proxy configuration.
+- [Client API](https://juliaweb.github.io/HTTP.jl/stable/api/client/): `Client`, `Transport`, top-level requests, streaming, and connection reuse helpers.
+- [Server API](https://juliaweb.github.io/HTTP.jl/stable/api/server/): `Server`, `Stream`, routing, middleware, static files, and SSE.
+- [WebSockets API](https://juliaweb.github.io/HTTP.jl/stable/api/websockets/): WebSocket client/server types, messaging helpers, and server lifecycle operations.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/core/ -->
+
+# Core API
+
+## Core Messages and Errors
+
+### `HTTP.Request` — Type
+
+    Request(method, target; headers=Headers(), trailers=Headers(), body=EmptyBody(), host=nothing,
+            content_length=-1, proto_major=1, proto_minor=1, close=false,
+            context=RequestContext(), copyheaders=true)
+
+HTTP request object shared by the client and server stacks.
+
+Keyword arguments:
+- `headers`, `trailers`: copied into the request by default.
+- `copyheaders=false`: take ownership of existing `Headers` collections for both
+  headers and trailers. The caller must stop accessing or mutating them while
+  the request is in use. Their final contents are unspecified. Other input
+  types are converted into new collections, as with the default.
+- `body`: any `AbstractBody`; ownership stays with the request.
+- `host`: optional authority used for HTTP/1 `Host` and HTTP/2 `:authority`.
+- `content_length`: exact byte length, or `-1` when unknown.
+- `proto_major`, `proto_minor`: protocol version metadata.
+- `close`: request/connection-close hint.
+- `context`: cancellation/deadline metadata consulted by higher layers.
+
+Returns a new `Request{B}` where `B` is the concrete body type. Throws
+`ArgumentError` for invalid protocol numbers, empty method/target, or
+`content_length < -1`.
+
+For migration from HTTP.jl 1.x, common positional forms such as
+`Request(method, target, headers)` and `Request(method, target, headers, body)`
+are still accepted. New code should use the keyword form above so body,
+trailers, protocol metadata, and context ownership are explicit.
+
+### `HTTP.Response` — Type
+
+    Response(status, body=EmptyBody(); reason="", headers=Headers(), trailers=Headers(),
+             content_length=-1, proto_major=1, proto_minor=1, close=false,
+             request=nothing)
+
+HTTP response object shared by the client and server stacks.
+
+Keyword arguments mirror `Request` closely. `request` optionally links the
+response back to the originating request, which is especially useful in client
+redirect flows and server handler pipelines.
+
+Returns a new `Response{B}` where `B` is the stored body field type. Byte-vector
+response bodies are retained as vectors so test fixtures can inspect
+`response.body` directly; pass a `BytesBody` when cursor-based body reads are
+desired. `request_url` is optional client metadata used by high-level request
+helpers.
+
+Throws `ArgumentError` for invalid status or protocol metadata.
+
+For migration from HTTP.jl 1.x, common forms such as
+`Response(status, headers, body)` and `Response(status, headers; body=...)`
+are still accepted. New code should prefer `Response(status; headers=...,
+body=..., content_length=...)`.
+
+### `HTTP.Headers` — Type
+
+    Headers
+
+Ordered, case-canonicalized collection of header pairs.
+
+`Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
+written against the long-standing pair-vector header representation can reuse
+the same helper functions. Keys are canonicalized on insertion, but pair order
+is preserved. Constructing from a vector, dictionary, or tuple goes through
+`mkheaders`: the source is left unchanged, keys are canonicalized, and adjacent
+duplicate keys are joined the way `appendheader` joins them.
+
+    Headers(hint)
+
+Create an empty `Headers` collection and use `hint` as a preallocation hint for
+the backing pair storage. Throws `ArgumentError` when `hint < 0`.
+
+    Headers(items...; kwargs...) -> Headers
+
+Construct a canonicalized Headers from items and/or kwargs
+
+### `HTTP.RequestContext` — Type
+
+    RequestContext(; deadline_ns=0)
+
+Per-request cancellation, deadline, timeout, and metadata state shared across
+client, server, middleware, and transport code.
+
+Arguments:
+- `deadline_ns`: absolute monotonic deadline in nanoseconds, or `0` to disable
+  deadline tracking.
+
+The context itself does not schedule timers; it is a passive state container
+that HTTP.jl consults before or during blocking operations. For migration from
+HTTP.jl 1.x, `RequestContext` also supports dict-like metadata access with
+symbol keys:
+
+```julia
+ctx = HTTP.RequestContext()
+ctx[:request_id] = "abc"
+get(ctx, :request_id, nothing)
+```
+
+New code should prefer typed fields and helper functions for cancellation and
+deadlines, and reserve dict-like access for application metadata.
+
+Construct a `RequestContext`; throws `ArgumentError` when `deadline_ns < 0`.
+
+### `HTTP.HTTPError` — Type
+
+    HTTPError
+
+Abstract supertype for HTTP-specific exceptions raised by HTTP.jl.
+
+### `HTTP.ParseError` — Type
+
+    ParseError
+
+Raised when byte-level HTTP syntax cannot be parsed. This is used for malformed
+request/status lines, invalid header syntax, truncated framed bodies, and other
+wire-format failures where the peer did not send valid HTTP.
+
+### `HTTP.ProtocolError` — Type
+
+    ProtocolError
+
+Raised when the bytes are syntactically valid but violate higher-level HTTP
+rules. Examples include mismatched `Content-Length` values, impossible frame
+ordering, or unsupported control-flow states in the client/server stacks.
+
+### `HTTP.CanceledError` — Type
+
+    CanceledError
+
+Raised when request processing is canceled explicitly through `RequestContext`.
+Unlike `ParseError` and `ProtocolError`, this usually reflects local control
+flow rather than a bad peer.
+
+### `HTTP.TimeoutError` — Type
+
+    TimeoutError
+
+Raised when an HTTP-layer deadline expires. This is intentionally separate from
+lower-level socket timeout exceptions so higher layers can distinguish "request
+context expired" from transport-specific readiness or handshake failures.
+
+Fields:
+
+- `operation::String` — short label identifying which deadline fired. Common
+  values are `"connect"`, `"tls_handshake"`, `"request"`, `"response_header"`,
+  `"read_idle"`, `"write_idle"`, and `"expect_continue"`.
+- `timeout_ns::Int64` — the budget that fired, in nanoseconds. `0` means the
+  budget was unknown at the wrap site.
+- `elapsed_ns::Int64` — best-effort elapsed time when the deadline fired, in
+  nanoseconds. `0` means the elapsed time is unknown at the wrap site.
+
+### `HTTP.HTTPTimeoutError` — Type
+
+    HTTPTimeoutError
+
+Public alias for `TimeoutError`, kept so code can catch timeout
+failures through the long-form HTTP-specific name.
+
+### `HTTP.StatusError` — Type
+
+    StatusError
+
+Raised when `status_exception=true` and the response status indicates failure.
+
+Fields:
+
+- `status::Int16` — the response status code (mirrors `response.status` for
+  convenience so catch sites can write `err.status` instead of
+  `err.response.status`).
+- `response::Response` — the full response that triggered the error.
+
+### `HTTP.TooManyRedirectsError` — Type
+
+    TooManyRedirectsError
+
+Raised when redirect following is enabled and the client exceeds the configured
+redirect limit. The final redirect response is attached for inspection.
+
+### `HTTP.ConnectError` — Type
+
+    ConnectError(address, cause)
+
+Raised when a low-level connect attempt fails before any HTTP exchange begins.
+`address` records the target the client tried to reach (host:port) and `cause`
+is the underlying transport exception. This wraps Reseau-internal types like
+`HostResolvers.OpError` so callers can pattern-match on `HTTP.ConnectError`
+without depending on Reseau internals.
+
+### `HTTP.DNSError` — Type
+
+    DNSError(hostname, cause)
+
+Raised when host resolution fails before any connect attempt. `hostname` is the
+name that could not be resolved and `cause` is the underlying transport
+exception (typically `Reseau.HostResolvers.LookupError`).
+
+### `HTTP.TLSHandshakeError` — Type
+
+    TLSHandshakeError(cause)
+
+Raised when a TLS handshake fails (other than a handshake timeout, which
+surfaces as `TimeoutError` with `operation = "tls_handshake"`). TLS
+failures after connection setup surface as `TLSTransportError` instead.
+
+### `HTTP.TLSTransportError` — Type
+
+    TLSTransportError(cause)
+
+Raised when TLS-level I/O fails on an established connection during a request
+— for example a connection reset or a truncated TLS stream while writing the
+request or reading the response. `cause` is the underlying
+`Reseau.TLS.TLSError`. TLS failures during connection setup surface as
+`TLSHandshakeError` (or `TimeoutError` for handshake timeouts)
+instead.
+
+### `HTTP.AddressInUseError` — Type
+
+    AddressInUseError(address)
+
+Raised when a server cannot bind because the requested address is already in
+use. `address` records the bind target (host:port).
+
+## Header and Context Helpers
+
+### `HTTP.canonical_header_key` — Function
+
+    canonical_header_key(key) -> String
+
+Canonicalize a header field name into standard MIME-style form: the first
+character and every character after `-` is uppercased; other ASCII letters are
+lowercased.
+
+Returns a newly owned `String` unless `key` is already in canonical form, in
+which case a cached common-header string may be reused. This function does not
+validate that `key` is a legal HTTP token; callers are still responsible for
+protocol validation where needed.
+
+### `HTTP.header` — Function
+
+Return the first value for `key`, or `default` if the header is absent.
+
+### `HTTP.headers` — Function
+
+    headers(headers, key) -> Vector{String}
+
+Return a freshly allocated vector containing all values for `key` in stored
+order. Returns `String[]` when the header is absent.
+
+### `HTTP.hasheader` — Function
+
+Return `true` when the first value for `key` is non-empty.
+
+    hasheader(headers, key, value) -> Bool
+
+Return `true` when any stored header value for `key` matches `value`
+case-insensitively.
+
+### `HTTP.headercontains` — Function
+
+    headercontains(headers, key, token) -> Bool
+
+Return `true` when a comma-separated header field contains `token`
+case-insensitively after trimming optional whitespace.
+
+This is the helper used for semantics like `Connection: close` and
+`Transfer-Encoding: chunked`, where RFCs define one header line as a list of
+tokens rather than one opaque string.
+
+### `HTTP.setheader` — Function
+
+    setheader(headers, key => value) -> Headers
+    setheader(headers, key, value) -> Headers
+
+Replace all stored values for `key` with `value`, preserving the first matching
+position if the key already exists and appending it otherwise. Returns the
+mutated `headers`. `setheader!` is the same function under the
+conventional mutating-name spelling.
+
+    setheader(stream, key, value) -> nothing
+    setheader(stream, key => value) -> nothing
+
+Set a response header for a server-side `Stream` before response writing
+starts.
+
+### `HTTP.setheader!` — Function
+
+    setheader!(headers, key => value) -> Headers
+    setheader!(headers, key, value) -> Headers
+    setheader!(message, key => value) -> Headers
+    setheader!(message, key, value) -> Headers
+
+Replace all stored values for `key` with `value` and return the mutated
+`headers`, or the mutated `message` for the `Request`/`Response` forms. This
+is the same function as `setheader` under the conventional
+mutating-name spelling.
+
+### `HTTP.defaultheader!` — Function
+
+    defaultheader!(headers, key => value) -> Headers
+    defaultheader!(message, key => value) -> typeof(message)
+
+Append `key => value` only when `key` is not already present.
+
+This is useful for applying defaults like `User-Agent` or `Accept-Encoding`
+without overwriting caller-specified headers.
+
+### `HTTP.appendheader` — Function
+
+    appendheader(headers, key => value) -> Headers
+    appendheader(headers, key, value) -> Headers
+
+Append a header value to `headers`.
+
+If the previous stored header has the same name and the key is not
+`Set-Cookie`, the value is merged into the previous entry with a comma
+(no whitespace), as permitted by RFC 9110 §5.3 and required by common
+request-signing canonicalizations.
+Otherwise a new pair is appended. `appendheader!` is the same
+function under the conventional mutating-name spelling.
+
+### `HTTP.appendheader!` — Function
+
+    appendheader!(headers, key => value) -> Headers
+    appendheader!(headers, key, value) -> Headers
+    appendheader!(message, key => value) -> Headers
+    appendheader!(message, key, value) -> Headers
+
+Append a value for `key` without removing existing values and return the
+mutated `headers`, or the mutated `message` for the `Request`/`Response`
+forms. This is the same function as `appendheader` under the
+conventional mutating-name spelling.
+
+### `HTTP.removeheader` — Function
+
+    removeheader(headers, key) -> Headers
+
+Remove every stored header for `key` and return the mutated `headers`.
+`removeheader!` is the same function under the conventional
+mutating-name spelling.
+
+### `HTTP.removeheader!` — Function
+
+    removeheader!(headers, key) -> Headers
+    removeheader!(message, key) -> Headers
+
+Remove every stored header for `key` and return the mutated `headers`, or the
+mutated `message` for the `Request`/`Response` forms. This is the same
+function as `removeheader` under the conventional mutating-name
+spelling.
+
+### `HTTP.mkheaders` — Function
+
+    mkheaders(headers_input) -> Headers
+
+Normalize a header-like input into a mutable `Headers` collection.
+
+`headers_input` may be `nothing`, a pair or 2-tuple, an existing `Headers`, a dictionary, or an
+iterable of `Pair`s/2-tuples. Vector-valued entries are expanded into repeated
+header values using the same merge rules as `appendheader`.
+
+### `HTTP.get_request_context` — Function
+
+    get_request_context(request) -> RequestContext
+
+Return the typed request context stored on `request`.
+
+Use this helper when middleware or low-level code needs cancellation,
+deadline, or timeout state. The legacy `request.context` property returns the
+dict-like metadata view for compatibility with HTTP.jl 1.x code.
+
+### `HTTP.set_deadline!` — Function
+
+    set_deadline!(ctx, deadline_ns) -> RequestContext
+
+Set an absolute monotonic deadline in nanoseconds. Passing `0` clears any
+deadline. Throws `ArgumentError` when `deadline_ns < 0`.
+
+### `HTTP.cancel!` — Function
+
+    cancel!(ctx; message="request canceled") -> RequestContext
+
+Mark `ctx` canceled and store a human-readable message for higher layers. This
+does not throw on its own; callers typically check `canceled(ctx)` or turn the
+state into a `CanceledError`.
+
+### `HTTP.canceled` — Function
+
+Return `true` once `cancel!` has been called for `ctx`.
+
+### `HTTP.expired` — Function
+
+    expired(ctx, now_ns=time_ns()) -> Bool
+
+Return `true` when `ctx.deadline_ns` is non-zero and less than or equal to
+`now_ns`. `now_ns` is injectable so tests and higher-level schedulers can reuse
+an already-sampled monotonic timestamp.
+
+## Body Types and Streamed Payloads
+
+### `HTTP.AbstractBody` — Type
+
+    AbstractBody
+
+Abstract streaming body interface used throughout the HTTP stack.
+
+Concrete subtypes are expected to implement:
+- `body_read!(body, dst)::Int`
+- `body_close!(body)`
+- `body_closed(body)::Bool`
+
+`body_read!` must return the number of bytes written into `dst`, with `0`
+signaling EOF. Implementations may throw transport-specific exceptions.
+
+### `HTTP.CallbackBody` — Type
+
+    CallbackBody(read_cb, close_cb)
+
+Callback-driven streaming body. `read_cb(dst)` must return the number of bytes
+written into `dst`, and `close_cb()` is invoked once when the body is closed.
+This is the escape hatch for non-buffered request or response bodies.
+
+Construct a `CallbackBody` from read and close callbacks.
+
+### `HTTP.nobody` — Constant
+
+Shared empty byte-vector payload used for responses with no buffered body.
+
+### `HTTP.body_read!` — Function
+
+    body_read!(body, dst) -> Int
+
+Read up to `length(dst)` bytes into `dst`. Returns `0` on EOF.
+
+Concrete body types may throw `ProtocolError`, transport errors, or body-
+specific exceptions if the stream is malformed or the backing connection fails.
+
+### `HTTP.body_close!` — Function
+
+    body_close!(body)
+
+Release any resources held by `body`. Implementations should be idempotent so
+callers can safely close in `finally` blocks.
+
+### `HTTP.body_closed` — Function
+
+    body_closed(body) -> Bool
+
+Return `true` once `body` has been fully consumed or explicitly closed.
+
+For immutable in-memory bodies this tracks whether the read cursor reached EOF;
+for streaming bodies it reports whether the underlying producer has been closed.
+
+### `HTTP.read_request` — Function
+
+    read_request(io; max_line_bytes=..., max_header_bytes=...)
+
+Parse one HTTP/1 request from `io`.
+
+Returns a `Request` whose body is one of `EmptyBody`, `FixedLengthBody`, or
+`ChunkedBody` depending on the incoming framing headers.
+
+Throws:
+- `ArgumentError` for invalid parser limits
+- `ParseError` for malformed syntax or truncated framed bodies
+- `ProtocolError` for invalid semantic combinations such as conflicting length
+  metadata
+- any exception propagated by the underlying `IO`
+
+### `HTTP.write_request!` — Function
+
+    write_request!(io, request)
+
+Serialize an HTTP/1 request to `io`, including body framing.
+
+Behavior:
+- writes exactly one `Host` line as the first header field (RFC 9112 §3.2),
+  taking the value from a caller-supplied `Host` header when present and from
+  `request.host` otherwise
+- normalizes connection-close signaling
+- chooses between `Content-Length` and chunked transfer-coding
+- serializes trailers only for chunked bodies
+
+Returns `nothing`. May throw `ProtocolError` for inconsistent framing or
+propagate exceptions from `io` and the request body.
+
+### `HTTP.write_response!` — Function
+
+    write_response!(io, response)
+
+Serialize an HTTP/1 response to `io`, including body framing.
+
+Body suppression rules for status codes like `1xx`, `204`, and `304` are
+enforced here so callers can hand the function a regular `Response` object and
+let the serializer apply wire-level HTTP/1 rules.
+
+### `HTTP.trailers` — Function
+
+    trailers(body)
+
+Return parsed trailer headers for a chunked body; empty headers for other body
+types.
+
+The returned `Headers` object is copied so callers can inspect or mutate it
+without racing the body reader.
+
+## Cookies, Forms, and Request Bodies
+
+### `HTTP.Cookie` — Type
+
+    Cookie
+
+HTTP cookie model used for both request `Cookie` headers and response
+`Set-Cookie` headers.
+
+Construct a cookie with `Cookie(name, value; kwargs...)` and mutate additional
+fields such as `path`, `domain`, `secure`, or `httponly` when needed.
+
+### `HTTP.CookieJar` — Type
+
+    CookieJar()
+    CookieJar(entries::Dict{String, Dict{String, Cookie}})
+
+Create an in-memory cookie jar suitable for attaching to `Client`.
+
+The jar applies standard domain/path/expiry rules when storing cookies from
+responses and when selecting cookies for future requests.
+
+Pass `entries` to start from previously saved cookies: `jar.entries` is the
+jar's storage (keyed by canonical host), so persisting a jar amounts to saving
+`jar.entries` and restoring it is `CookieJar(entries)`. The jar takes ownership
+of the passed dict; it is not copied.
+
+### `HTTP.cookies` — Function
+
+    cookies(request_or_response) -> Vector{Cookie}
+
+Parse cookies from a request `Cookie` header or response `Set-Cookie` headers.
+
+### `HTTP.stringify` — Function
+
+    stringify(cookie, isrequest=true) -> String
+    stringify(prefix, cookies, isrequest=true) -> String
+
+Serialize cookies back to HTTP header text.
+
+When `isrequest=true`, the output matches a request `Cookie` header. When
+`false`, response-only attributes such as `Path`, `Domain`, and `HttpOnly` are
+included for `Set-Cookie` serialization.
+
+### `HTTP.getcookies!` — Function
+
+    getcookies!(jar, scheme, host, path[, now]) -> Vector{Cookie}
+
+Return the cookies from `jar` that should be attached to a request for
+`scheme://host/path`.
+
+### `HTTP.setcookies!` — Function
+
+    setcookies!(jar, scheme, host, path, headers) -> Nothing
+
+Update `jar` from response headers received for `scheme://host/path`.
+
+### `HTTP.addcookie!` — Function
+
+    addcookie!(message, cookie) -> typeof(message)
+
+Append `cookie` to a request or response message in the appropriate header
+slot.
+
+### `HTTP.Form` — Type
+
+    Form(parts; boundary=_default_form_boundary()) <: IO
+
+Streaming multipart/form-data request body assembled from `name => value`
+pairs.
+
+Values may be ordinary data or `IO` objects. Use `content_type` to
+populate the corresponding `Content-Type` request header.
+
+    Form(parts::Vector{<:Multipart}; boundary=_default_form_boundary())
+
+Create a multipart/mixed Form from a vector of Multipart objects.
+
+### `HTTP.Multipart` — Type
+
+    Multipart(filename, data, contenttype="", contenttransferencoding="", name="") <: IO
+
+One parsed or programmatically constructed multipart body part.
+
+### `HTTP.Batch` — Function
+
+    Batch(parts::Vector{<:Multipart}; boundary=_default_form_boundary()) -> Form
+    Batch(parts; boundary=_default_form_boundary()) -> Form
+
+Create a multipart/mixed batch request body. This is a convenience constructor
+for creating a Form with `type=:mixed`, commonly used for batch API requests
+(e.g., SharePoint batch operations, GraphQL batch queries).
+
+#### Arguments
+- `parts`: Either a `Vector{<:Multipart}` or key-value pairs
+- `boundary`: Optional custom boundary string (auto-generated by default)
+
+#### Returns
+A `Form` object with `type=:mixed` that can be used as a request body.
+
+#### Examples
+```julia
+# Create batch from Multipart objects
+parts = [
+    Multipart(nothing, IOBuffer("request1"), "application/http"),
+    Multipart(nothing, IOBuffer("request2"), "application/http"),
+]
+batch = Batch(parts)
+
+# Use with HTTP request
+response = HTTP.post(url, ["Content-Type" => content_type(batch)], batch)
+
+# Create batch with explicit key-value pairs
+batch = Batch(Dict("req1" => data1, "req2" => data2))
+```
+
+See also: `Form`, `Multipart`, `content_type`
+
+### `HTTP.content_type` — Function
+
+    content_type(form) -> String
+
+Return the multipart content type header for `form`, including its
+generated boundary. The type will be `multipart/form-data` for `:formdata` type
+and `multipart/mixed` for `:mixed` type.
+
+### `HTTP.parse_multipart_form` — Function
+
+    parse_multipart_form(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_form(message) -> Union{Vector{Multipart}, Nothing}
+
+Parse a `multipart/form-data` payload using the boundary from
+`content_type_header`.
+
+The `message` overload accepts either a `Request` or `Response` and reads the
+`Content-Type` header and body bytes automatically — use it from inside an
+`HTTP.serve!` handler to inspect file uploads and form fields, or when
+processing multipart responses from external APIs.
+
+Returns `nothing` when either input is missing or the content type is not a
+multipart form body. Each returned `Multipart` exposes the part's `name`,
+optional `filename`, `contenttype`, and a readable `data` stream.
+
+#### Examples
+```jldoctest
+julia> body = Vector{UInt8}(
+           "--boundary\r\n" *
+           "Content-Disposition: form-data; name=\"greeting\"\r\n\r\n" *
+           "hello\r\n" *
+           "--boundary\r\n" *
+           "Content-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n" *
+           "Content-Type: text/plain\r\n\r\n" *
+           "file contents\r\n" *
+           "--boundary--\r\n");
+
+julia> parts = HTTP.parse_multipart_form("multipart/form-data; boundary=boundary", body);
+
+julia> length(parts)
+2
+
+julia> parts[1].name, String(read(parts[1].data))
+("greeting", "hello")
+
+julia> parts[2].name, parts[2].filename, parts[2].contenttype
+("file", "a.txt", "text/plain")
+
+julia> String(read(parts[2].data))
+"file contents"
+```
+
+Inside a server handler, pass the request directly:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do request
+    parts = HTTP.parse_multipart_form(request)
+    parts === nothing && return HTTP.Response(415, "expected multipart/form-data")
+    return HTTP.Response(200, "received $(length(parts)) part(s)")
+end
+```
+
+### `HTTP.parse_multipart` — Function
+
+    parse_multipart(content_type_header, body, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart(message, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
+
+Parse a multipart payload (either `multipart/form-data` or `multipart/mixed`) using the
+boundary from `content_type_header`.
+
+The `message` overload accepts either a `Request` or `Response` and automatically extracts
+the Content-Type header and body bytes.
+
+If `required_type` is specified (e.g., `:formdata` or `:mixed`), only that type will be parsed.
+If `required_type` is `nothing`, any multipart type will be parsed.
+
+Returns `nothing` when either input is missing, the content type is not a multipart type,
+or the type doesn't match `required_type` if specified.
+
+### `HTTP.parse_multipart_mixed` — Function
+
+    parse_multipart_mixed(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_mixed(message) -> Union{Vector{Multipart}, Nothing}
+
+Parse a `multipart/mixed` payload using the boundary from `content_type_header`.
+
+The `message` overload accepts either a `Request` or `Response` and automatically extracts
+the Content-Type header and body bytes.
+
+Returns `nothing` when either input is missing or the content type is not `multipart/mixed`.
+
+## Proxy Configuration
+
+### `HTTP.ProxyConfig` — Type
+
+    ProxyConfig(url; no_proxy=nothing)
+    ProxyConfig(; http=nothing, https=nothing, all=nothing, no_proxy=nothing, env=false)
+
+HTTP client proxy configuration.
+
+Use this to route plain HTTP, HTTPS, or all traffic through explicit proxy
+targets, optionally with `NoProxy` exclusions or environment-driven defaults.
+Proxy URLs support `http://`, `https://` parsing for future compatibility
+(`https://` proxy transport is not implemented yet), and SOCKS5 proxy
+transport with `socks5://` or `socks5h://`. As in Go's `net/http`
+transport, `socks5://` and `socks5h://` both send domain targets to the SOCKS
+proxy instead of resolving them locally.
+
+### `HTTP.ProxyURL` — Function
+
+    ProxyURL(url; no_proxy=nothing) -> ProxyConfig
+
+Convenience constructor for a single proxy URL applied to all outbound
+requests. Supported proxy URL schemes are `http://`, `https://` (parsed but
+not yet dialed as a TLS proxy), `socks5://`, and `socks5h://`.
+
+### `HTTP.ProxyFromEnvironment` — Function
+
+    ProxyFromEnvironment() -> ProxyConfig
+
+Load proxy configuration from the standard `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`, and `NO_PROXY` environment variables. Proxy values may use the
+same schemes accepted by `ProxyURL`, including `socks5://` and `socks5h://`.
+
+### `HTTP.NoProxy` — Type
+
+    NoProxy(spec)
+    NoProxy()
+
+Matcher for `NO_PROXY`-style bypass rules.
+
+`spec` may be a comma-separated string or vector-like collection containing
+hostnames, domain suffixes, IP literals, CIDR ranges, or `host:port` entries.
+
+## HTTP/2 Configuration
+
+### `HTTP.HTTP2Settings` — Type
+
+    HTTP2Settings(; initial_window_size=65535, connection_window_size=65535)
+
+HTTP/2 flow-control configuration shared by `Server`, `Client`,
+and `connect_h2!`.
+
+- `initial_window_size`: the per-stream receive window advertised via
+  `SETTINGS_INITIAL_WINDOW_SIZE` (RFC 7540 §6.5.2).
+- `connection_window_size`: the connection-level receive window. Values above the
+  protocol default of 65535 are applied with an initial `WINDOW_UPDATE`.
+
+Both default to the protocol default of 65535, leaving existing behavior
+unchanged. Raising them improves single-stream throughput on links with
+non-trivial latency, where the default 64 KiB window would otherwise cap a
+transfer at roughly `window / RTT`. The per-stream receive buffer cap is derived
+from `initial_window_size`, so it does not need to be configured separately.
+
+`initial_window_size` may be set below the default to apply tighter per-stream
+backpressure. `connection_window_size` must be at least the protocol default of
+65535: the connection-level window starts at that value and can only be enlarged
+with a `WINDOW_UPDATE`, so a smaller value cannot be advertised.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/client/ -->
+
+# Client API
+
+## Client Types and Operations
+
+### `HTTP.Transport` — Type
+
+    Transport(; ...)
+
+Connection-pooling transport for HTTP/1 requests.
+
+It owns dial/TLS policy and decides when an idle connection can be reused
+versus closed.
+
+`max_conns_per_host = 0` leaves per-host concurrency unlimited. Positive values
+bound the total live HTTP/1 connections (idle, in-flight, and dialing) for one
+pool key and cause additional acquires to wait for direct handoff or a freed
+dial slot.
+
+`idle_timeout_ns` (default 90s, `0` disables) bounds how long an idle pooled
+connection may be handed out again; it also governs the owning `Client`'s
+pooled HTTP/2 connections. Keep it under the network's silent idle-drop window
+(NAT/load-balancer idle timeouts are commonly a few minutes) so a request is
+never written onto a connection whose peer has silently vanished.
+
+A server that advertises its own idle window on a response
+(`Keep-Alive: timeout=<seconds>`) additionally bounds that HTTP/1 connection's
+reuse to the advertised time less a one-second safety margin; the tighter of
+the two limits applies. A hint that leaves no headroom (`timeout=1` or less)
+makes the connection non-reusable.
+
+`max_line_bytes` (default 64 KiB) bounds one HTTP/1 response status line or
+header line, counted with its CRLF terminator; `max_header_bytes` (default
+1 MiB) bounds a response's whole header block (and any chunked trailers). A
+longer line fails the request with `ProtocolError("HTTP/1 line exceeds
+configured max_line_bytes")` and a larger header block with
+`ProtocolError("HTTP/1 headers exceed configured max_header_bytes")`. Both
+must be positive, and `max_line_bytes` may not exceed `max_header_bytes`; when
+only `max_header_bytes` is given and it is below 64 KiB, `max_line_bytes`
+defaults to it. Raise `max_line_bytes` for origins that send very long header
+lines (large `Content-Security-Policy` values are a common case).
+
+### `HTTP.Client` — Type
+
+    Client(; ...)
+
+High-level HTTP client with transport pooling, redirect policy, cookies, and
+optional HTTP/2. Also acts as a configuration container so that defaults set
+once on the client (headers, query parameters, timeouts, basic auth) apply
+to every request issued through it unless the per-call `request`/`get`/`post`
+keywords override them.
+
+Keyword arguments:
+- `transport`: reusable lower-level HTTP/1 transport/pool implementation
+- `check_redirect`: optional callback deciding whether a redirect should be
+  followed
+- `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
+- `max_redirects`: maximum redirect hops before failing
+- `prefer_http2`: whether secure requests should try HTTP/2 when available.
+  When automatic negotiation (`protocol = :auto`) learns an origin only
+  speaks HTTP/1.1, that result is cached and later automatic requests skip
+  the HTTP/2 attempt; `close_idle_connections!` clears the cache.
+  An explicit `protocol = :h2` always attempts HTTP/2.
+- `http2_settings`: an `HTTP2Settings` configuring HTTP/2 receive
+  flow-control windows for connections this client opens
+- `default_headers`: headers applied to every request issued through this
+  client; per-call `headers` are appended on top, and per-call values for the
+  same name take precedence
+- `default_query`: query parameters appended to every request URL; per-call
+  `query` overrides any keys it shares with the default
+- `default_basicauth`: default basic-auth credentials applied unless the call
+  passes `basicauth` or an explicit `Authorization` header
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: defaults applied to every request
+  unless the call passes the matching keyword. `0` disables.
+- `local_addr`: bind this client's outbound connections to a source IP/interface
+  (Go's `net.Dialer.LocalAddr` model). Accepts an IP-literal `String` (ephemeral
+  source port) or a `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`. Cannot be combined
+  with an explicit `transport`; set it on the `Transport` in that case.
+
+Pass a `Client` with the `client` keyword to `request`, `get`, `open`, or the
+other verb helpers when you want connection reuse and shared cookies across
+many calls. The verb helpers also accept the client positionally
+(`HTTP.get(client, url; ...)`). Close the client when you are finished; once
+closed, subsequent calls that use it raise `ArgumentError`.
+
+### `HTTP.RetryBucket` — Type
+
+    RetryBucket(; backoff_scale_factor_ms=25, max_backoff_secs=20, capacity=500)
+
+Shared retry-budget bucket keyed by caller-supplied partitions.
+
+Each partition tracks its own remaining capacity. `acquire(bucket, partition)`
+reserves retry capacity for one retry attempt, and
+`release(bucket, token, failure_cost)` returns all or part of that reserved
+capacity. Use `failure_cost = 0` for a full refund, or a positive cost to keep
+some or all of the reserved retry capacity consumed.
+
+The built-in client retry flow refunds a reservation in full when the retried
+attempt reaches a non-retryable response (the retry did its job), keeps part of
+the cost when the built-in or custom policy still classifies the response as a
+failure, keeps a conservative partial cost for a non-success terminal response
+after a retry explicitly requested by `retry_if`, keeps the full cost when the
+retried attempt fails with an exception,
+and slowly restores consumed capacity by crediting one unit per successful
+non-retried response — so a burst of real failures can drain a partition, but
+healthy traffic always heals it.
+
+### `HTTP.RequestRetryError` — Type
+
+    RequestRetryError(err)
+
+Wrapper passed to `retry_if` for request-path failures. Inspect `err.err` to
+check the underlying transport or protocol exception.
+
+### `HTTP.retry_attempts` — Function
+
+    retry_attempts(x) -> Int
+
+Number of automatic retries the client performed for a request, `0` when the
+first attempt was the only one. Accepts the `Request` or a client `Response`
+(which consults its originating request).
+
+The count lives in the request's context under the `:retryattempt` key — the
+same location HTTP.jl 1.x used — so `get(req.context, :retryattempt, 0)`
+continues to work for migrated code.
+
+### `HTTP.isrecoverable` — Function
+
+    isrecoverable(err::Exception) -> Bool
+
+Return `true` when `err` represents a transient transport or protocol failure
+that is safe to retry — the same classification HTTP.jl's built-in retry policy
+applies to request-path exceptions. Recoverable cases include connection resets
+and EOFs (`EOFError`, `IOPoll.NetClosingError`), socket errors (`SystemError`),
+malformed responses (`ParseError`), and dial/handshake timeouts
+(`HostResolvers.DialTimeoutError`, `TLS.TLSHandshakeTimeoutError`), including the
+underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions,
+HTTP/2 `ProtocolError` connection wrappers, and the public
+`TLSHandshakeError`/`TLSTransportError` wrappers.
+A request *deadline* being exceeded (`IOPoll.DeadlineExceededError`) is treated
+as non-recoverable, as is anything else.
+
+Accepts either the underlying exception or the `RequestRetryError`
+wrapper passed to a `retry_if` callback. This is the public replacement for
+HTTP.jl 1.x's `HTTP.RetryRequest.isrecoverable`, intended for downstream
+packages that implement their own retry/backoff logic.
+
+### `HTTP.roundtrip!` — Function
+
+    roundtrip!(transport, address, request; secure=false, server_name=nothing) -> Response
+
+Execute a single request through `transport` without the higher-level redirect,
+cookie, or retry orchestration provided by `Client`.
+
+### `HTTP.request` — Function
+
+    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; trace=nothing, kwargs...)
+    request(trace, method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
+
+High-level one-shot HTTP request API.
+
+When `trace` is provided, it must be callable on any emitted client event.
+Current events are `RequestEvent`, `ResponseHeadEvent`,
+`RetryEvent`, `RetrySkippedEvent`, `RedirectEvent`, and
+`DoneEvent`.
+
+Keyword arguments:
+- `basicauth`: optional basic-auth credentials supplied as
+  `(username, password)` or `username => password`; explicit
+  `Authorization` headers take precedence, and URL `userinfo` is only used as a
+  fallback when neither is provided
+- `retry`: overall toggle for high-level request retries; lower-level reused-connection transport retries still happen independently
+- `retries`: maximum number of retry attempts after the initial request attempt
+- `retry_non_idempotent`: allow automatic retries for methods like `POST`/`PATCH`; `QUERY`, `PUT`, and `DELETE` are already treated as idempotent
+- `retry_if`: optional callback `(attempt, err, req, resp) -> Bool | nothing`; request-path failures are passed as `RequestRetryError` so implementations can inspect `err.err`, while response-based retry checks pass `err = nothing` and `resp = response`; `true` forces a retry when the request body is replayable, `false` suppresses retry, and `nothing` defers to built-in retry rules
+- `respect_retry_after`: honor server `Retry-After` on retryable `429`/`503` responses
+- `retry_bucket`: `true` uses the request transport's default `RetryBucket`, `false` disables bucket coordination, and a custom `RetryBucket` overrides the transport default
+- automatic retries only occur for replayable request bodies; built-in policy retries idempotent methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `QUERY`, `PUT`, `DELETE`) plus requests carrying `Idempotency-Key`/`X-Idempotency-Key`
+- `status_exception`: throw `StatusError` for non-success responses
+- `redirect`: follow redirects through `do!`
+- `redirect_limit`: maximum number of redirects to follow for this call;
+  `0` disables redirect following while still returning the redirect response
+- `redirect_method`: override the method used for `301`/`302` redirects; pass
+  `:same` to preserve the original method
+- `forwardheaders`: whether original request headers are copied onto redirect
+  follow-up requests
+- request bodies may be passed positionally or, for convenience helpers like
+  `post(url; body=...)`, via the `body` keyword; supported inputs include
+  strings, byte vectors, `IO`, `Dict`/`NamedTuple` form fields, `HTTP.Form`,
+  iterable chunks, and existing `HTTP.AbstractBody` values
+- `proxy`: explicit proxy override for this call; pass a proxy URL string, a
+  `ProxyConfig`, or `nothing` to force direct connections
+- `cookies`: `true` (default) to use the effective cookie jar, `false` to disable
+  cookie send/store for this call, or a dictionary of extra cookie name/value pairs
+  to add. When the jar is active, it is merged with any manually-set `Cookie` header,
+  de-duplicated by name (jar / `cookies=` entries win); with `false` a manually-set
+  `Cookie` header is sent verbatim
+- `cookiejar`: optional cookie jar override for this call; explicit clients
+  default to `client.cookiejar`, while implicit convenience calls default to the
+  shared `HTTP.COOKIEJAR`
+- `query`: optional query string or key/value collection appended to the URL
+- `response_stream`: optional sink `IO` or byte buffer written with the final response body
+- `copyheaders`: `true` copies caller headers (the default). `false` transfers
+  an existing `HTTP.Headers` collection to the operation. Do not access or
+  mutate it until the call completes; final contents are unspecified. Other
+  header inputs become a new collection either way. Retry attempts still
+  receive isolated headers.
+- `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
+- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
+- `sse_callback`: callback receiving `(event)` or `(stream, event)` for
+  successful SSE responses
+- `max_sse_line_bytes`: cap, in bytes, on one SSE response line. Defaults to 1 MiB; `0` disables the line limit
+- `max_sse_event_bytes`: cap, in bytes, on one accumulated SSE event before a blank-line dispatch. Defaults to 16 MiB; `0` disables the event limit
+- `trace`: optional callback receiving request lifecycle events
+- `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
+  request lifecycle lines to `stdout`; `2` also prints request and response
+  heads. When combined with `trace`, verbose output is emitted before the user
+  trace is called.
+- `client`: optional explicit `Client`; otherwise a default or ephemeral client
+  is created
+- `connect_timeout`: connection establishment timeout in seconds, covering DNS,
+  TCP connect, HTTP proxy `CONNECT` or SOCKS5 handshakes, TLS handshake, and
+  HTTP/2 session setup in the high-level client paths. When not passed, the
+  `client`'s `connect_timeout` default applies if set, else 30; `0` disables
+- `request_timeout`: overall request deadline in seconds
+- `response_header_timeout`: maximum time to wait for response headers after
+  the request has been sent
+- `read_idle_timeout`: maximum time between inbound read progress events
+- `write_idle_timeout`: maximum time between outbound write progress events
+- `expect_continue_timeout`: how long to wait for a `100 Continue` response
+  before sending the request body anyway; pass `0` to disable the wait
+- `readtimeout`: deprecated alias for `read_idle_timeout`
+- `require_ssl_verification`: disable certificate verification only for testing
+- `protocol`: `:auto`, `:h1`, or `:h2`
+
+HTTP.jl 2.0 accepts several HTTP.jl 1.x keywords as migration shims:
+`readtimeout` maps to `read_idle_timeout`; `pool`, `retry_delays`,
+`retry_check`, `sslconfig`, `socket_type_tls`,
+`canonicalize_headers`, `detect_content_type`, `logerrors`, `logtag`, and
+`observelayers` are accepted so older call sites fail less abruptly. Prefer the
+2.0 forms listed above for new code: `client` / `transport` for pooling,
+`retry_if` / `retry_bucket` for retries, Reseau `Transport` TLS configuration
+for TLS/socket behavior, and `verbose` / `trace` for request observation.
+
+The built-in retry policy is intentionally conservative: it retries transient
+transport errors plus retryable `408`/`429`/`5xx` responses for replayable
+requests, but does not automatically retry request read-timeout/deadline
+failures.
+
+Returns a high-level `Response`. When no response body sink is provided,
+`response.body` is a fully materialized `Vector{UInt8}`. When `response_stream`
+is provided, the final `Response` contains either the filled buffer/view or
+`nothing` for `IO` sinks.
+
+#### Working with the response body
+
+By default the buffered body is a `Vector{UInt8}`:
+
+```julia
+using HTTP
+
+response = HTTP.get("http://example.com")
+@assert response.body isa Vector{UInt8}
+```
+
+Convert it to a `String` with `String(response.body)`:
+
+```julia
+text = String(response.body)
+```
+
+!!! warning "`String(response.body)` consumes the bytes"
+    `String(::Vector{UInt8})` is the standard Julia conversion and it
+    *aliases* the underlying byte buffer rather than copying it. After
+    `String(response.body)` runs, `response.body` is left empty (`length == 0`).
+    If you want to keep the bytes around, take a copy first
+    (`copy(response.body)` or `String(copy(response.body))`), or use the
+    `response_stream` keyword to write the body somewhere you own.
+
+#### Sending JSON
+
+There is no `json=` keyword. Serialize the payload yourself with the JSON
+library of your choice — [JSON.jl](https://github.com/JuliaIO/JSON.jl) is the
+recommended option — and set the `Content-Type` header explicitly:
+
+```julia
+using HTTP, JSON
+
+payload = Dict("name" => "alice", "age" => 30)
+response = HTTP.post(
+    "https://api.example.com/users";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(payload),
+)
+
+returned = JSON.parse(String(response.body))
+```
+
+Form-encoded payloads (`application/x-www-form-urlencoded`) are auto-derived
+from `Dict`/`NamedTuple` bodies, so `HTTP.post(url, [], Dict("a" => "1"))`
+sends `a=1` with the matching `Content-Type` header for you.
+
+#### Default headers
+
+If the caller does not supply them, HTTP.jl fills in:
+
+- `User-Agent: HTTP.jl/<version>` — override by passing your own `User-Agent`
+  header.
+- `Accept-Encoding: gzip, deflate` — disable by passing `decompress=false` or
+  by setting your own `Accept-Encoding`.
+
+Throws `ArgumentError` for unsupported inputs or invalid sink combinations,
+`StatusError` (with `.status` and `.response` fields) when
+`status_exception=true` and the response status is considered failing,
+`HTTP.TimeoutError` (alias `HTTP.HTTPTimeoutError`) for timeout failures, plus
+any lower-level transport or protocol exception raised during the request.
+Automatic retries only occur for replayable request bodies.
+
+### `HTTP.get` — Function
+
+    get(f::Union{Function, Type}, collection, key)
+
+Return the value stored for the given key, or if no mapping for the key is present, return
+`f()`.  Use `get!` to also store the default value in the dictionary.
+
+This is intended to be called using `do` block syntax
+
+```julia
+get(dict, key) do
+    # default value calculated here
+    time()
+end
+```
+
+    get(collection, key, default)
+
+Return the value stored for the given key, or the given default value if no mapping for the
+key is present.
+
+!!! compat "Julia 1.7"
+    For tuples and numbers, this function requires at least Julia 1.7.
+
+#### Examples
+```jldoctest
+julia> d = Dict("a"=>1, "b"=>2);
+
+julia> get(d, "a", 3)
+1
+
+julia> get(d, "c", 3)
+3
+```
+
+    get(headers, key, default)
+
+Dict-style `get` on `Headers`. Returns the first value for `key`, including
+an empty value, or `default` if the header is absent.
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.head` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.query` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.post` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.put` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.patch` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.delete` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.options` — Function
+
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    query(url, [headers], [body]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request` — see the `request` docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see `request` for the
+full warning and the safe-copy idioms.
+
+### `HTTP.open` — Function
+
+    open(method, url, headers=Pair{String,String}[]; kwargs...) -> Stream
+    open(f, method, url, headers=Pair{String,String}[]; kwargs...)
+
+Create a streaming HTTP client request/response exchange.
+
+The returned `Stream` buffers request writes locally until `startread(stream)`
+or the end of the `do` block. Once reading starts, `stream` behaves like a
+readable `IO` for the response body. `kwargs` largely mirror `request(...)`,
+including `redirect`, `redirect_limit`, `redirect_method`,
+`forwardheaders`, `cookies`, `cookiejar`, `decompress`, `basicauth`, `retry`,
+`retries`, `retry_non_idempotent`, `retry_if`, `respect_retry_after`,
+`retry_bucket`, `client`, `connect_timeout`, `request_timeout`,
+`response_header_timeout`, `read_idle_timeout`, `write_idle_timeout`,
+`expect_continue_timeout`, `readtimeout`, `require_ssl_verification`, and
+`protocol`. `basicauth` accepts
+`(username, password)` credentials; explicit `Authorization` headers take
+precedence, and URL `userinfo` is only used as a fallback when neither is
+provided. As with `request(...)`, automatic retries only occur for replayable
+request bodies, `retry_bucket=true` uses the transport's default `RetryBucket`,
+and the built-in policy does not automatically retry request
+read-timeout/deadline failures. `request_timeout` applies an overall deadline,
+`read_idle_timeout` and `write_idle_timeout` bound inactivity between response
+and request I/O progress, `response_header_timeout` bounds the wait for
+response headers after the request is sent, and deprecated `readtimeout`
+behaves like `read_idle_timeout`.
+
+As with `request(...)`, `retry_if` sees request-path failures as
+`RequestRetryError` and can inspect the underlying exception via `err.err`.
+
+#### Return values
+
+The plain form `open(method, url, ...)` returns the underlying `Stream`
+so the caller can drive request writes and response reads explicitly.
+
+The `do`-block form `open(f, method, url, ...)` runs the user-provided function
+`f(stream)` against that same stream, automatically closes the writable and
+readable sides on exit, and **returns the final `Response` — not the
+value returned by `f`.** Any data the caller wants to keep from inside `f`
+should be captured in an outer variable rather than relied upon as the
+function's return value:
+
+```julia
+using HTTP
+
+response_text = ""
+response = HTTP.open(:GET, "http://example.com") do stream
+    response_text = String(read(stream))
+end
+
+@assert response isa HTTP.Response
+@assert response.status == 200
+```
+
+If the response indicates failure and `status_exception` is left at its default
+of `true`, an `HTTP.StatusError` is thrown after `f` runs.
+
+### `HTTP.do!` — Function
+
+    do!(client, address, request; ...) -> Response
+
+Execute a prepared `Request` through an existing `Client`.
+
+This is the low-level companion to `request` for callers that already
+own the address/target split and want to reuse client state directly.
+
+### `HTTP.get!` — Function
+
+    get!(f::Union{Function, Type}, collection, key)
+
+Return the value stored for the given key, or if no mapping for the key is present, store
+`key => f()`, and return `f()`.
+
+This is intended to be called using `do` block syntax.
+
+#### Examples
+```jldoctest
+julia> squares = Dict{Int, Int}();
+
+julia> function get_square!(d, i)
+           get!(d, i) do
+               i^2
+           end
+       end
+get_square! (generic function with 1 method)
+
+julia> get_square!(squares, 2)
+4
+
+julia> squares
+Dict{Int64, Int64} with 1 entry:
+  2 => 4
+```
+
+    get!(collection, key, default)
+
+Return the value stored for the given key, or if no mapping for the key is present, store
+`key => default`, and return `default`.
+
+#### Examples
+```jldoctest; filter = r"^\s+\S+\s+=>\s+\d$"m
+julia> d = Dict("a"=>1, "b"=>2, "c"=>3);
+
+julia> get!(d, "a", 5)
+1
+
+julia> get!(d, "d", 4)
+4
+
+julia> d
+Dict{String, Int64} with 4 entries:
+  "c" => 3
+  "b" => 2
+  "a" => 1
+  "d" => 4
+```
+
+    get!(client, address, target; secure=false, protocol=:auto)
+
+Convenience GET request using an existing `Client`.
+
+Returns the same low-level `Response` shape as `do!`.
+
+### `HTTP.@client` — Macro
+
+    HTTP.@client request_middleware
+    HTTP.@client request_middleware stream_middleware
+
+Define module-local `request`, verb helpers, and `open` methods that wrap the
+public HTTP client APIs with custom client-side middleware.
+
+Each middleware must be a callable of the form `mw(next) -> wrapped`, where
+`wrapped` matches either:
+- `request(method, url, headers, body; kwargs...)` for one-shot requests
+- `open(method, url, headers; kwargs...)` for streaming requests
+
+Pass either a single middleware or a tuple of middlewares for each position.
+Tuple middlewares are applied from left to right, so `(outer, inner)` runs
+`outer(inner(HTTP.request))`.
+
+### `HTTP.close_idle_connections!` — Function
+
+    close_idle_connections!()
+    close_idle_connections!(client::HTTP.Client)
+    close_idle_connections!(transport::HTTP.Transport)
+
+Close all currently idle pooled connections, returning `nothing`. Active
+in-flight requests are unaffected.
+
+The no-argument form closes idle connections held by the default client used by
+`HTTP.get`, `HTTP.post`, `HTTP.request`, and friends (a no-op if no request has
+been made yet). Pass an `HTTP.Client` or `HTTP.Transport` to target a specific
+connection pool.
+
+The `Client` and no-argument forms also close the client's pooled HTTP/2
+connections that have no in-flight streams; the `Transport` form covers only
+the HTTP/1 pool it owns. They additionally clear the client's cache of origins
+that negotiated HTTP/1.1 under `protocol = :auto`, so subsequent automatic
+requests re-attempt HTTP/2 against origins that may have enabled it since.
+
+### `HTTP.idle_connection_count` — Function
+
+    idle_connection_count(transport; key=nothing)
+
+Return idle pooled connection count globally or for one host key.
+
+When `key === nothing`, returns the transport-wide count. Otherwise `key`
+should match the transport's internal pool key such as `https://example.com:443`.
+
+### `HTTP.isaborted` — Function
+
+    isaborted(stream) -> Bool
+
+Return `true` when the streamed response terminated in an aborted/error state
+that should not be reused as a keep-alive connection.
+
+## Request Trace Events
+
+### `HTTP.RequestEvent` — Type
+
+    RequestEvent
+
+Trace event emitted immediately before a high-level request attempt is sent.
+
+Fields:
+- `request`: request head/body metadata for the attempt
+- `url`: absolute request URL for the attempt
+- `attempt`: 1-based request attempt number
+- `redirect_count`: number of redirects already followed before this attempt
+- `protocol`: `:h1` or `:h2` for the selected wire protocol
+
+### `HTTP.ResponseHeadEvent` — Type
+
+    ResponseHeadEvent
+
+Trace event emitted after response headers are available for a successful
+request attempt and before the body is fully consumed.
+
+Fields:
+- `response`: response head metadata for the attempt
+- `url`: absolute request URL for the attempt
+- `attempt`: 1-based request attempt number
+- `redirect_count`: number of redirects followed before this response
+
+### `HTTP.RetryEvent` — Type
+
+    RetryEvent
+
+Trace event emitted when the high-level request path schedules another attempt.
+
+Fields:
+- `request`: request metadata that will be retried
+- `url`: absolute request URL for the attempt being retried
+- `attempt`: current 1-based attempt number
+- `next_attempt`: next 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `delay_ns`: delay before the next attempt in nanoseconds
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+
+### `HTTP.RetrySkippedEvent` — Type
+
+    RetrySkippedEvent
+
+Trace event emitted when the retry policy wanted to retry an attempt but the
+retry was not armed, so the attempt's failure becomes the request's outcome.
+Without this event a denied retry is indistinguishable from a non-retryable
+failure.
+
+Fields:
+- `request`: request metadata for the attempt that will not be retried
+- `url`: absolute request URL for the attempt
+- `attempt`: current 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `reason`: `:retry_bucket` when the transport's `RetryBucket` denied
+  retry capacity; `:deadline` when the request deadline preempted the retry
+  backoff
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+
+### `HTTP.RedirectEvent` — Type
+
+    RedirectEvent
+
+Trace event emitted when a redirect response is accepted and a follow-up request
+is about to be issued.
+
+Fields:
+- `request`: original request metadata that produced the redirect response
+- `response`: redirect response head
+- `from_url`: original absolute request URL
+- `to_url`: resolved redirect target URL
+- `redirect_count`: 1-based redirect count after accepting this redirect
+
+### `HTTP.DoneEvent` — Type
+
+    DoneEvent
+
+Trace event emitted when a high-level request call finishes, either with a
+final response or an exception.
+
+Fields:
+- `response`: final response, or `nothing` if the request failed before one was produced
+- `err`: terminal exception, or `nothing` when the request completed successfully
+- `url`: absolute request URL for the overall call
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/server/ -->
+
+# Server API
+
+## Server Lifecycle and Request Handlers
+
+### `HTTP.Server` — Type
+
+    Server(; network="tcp", address="127.0.0.1:0", handler, stream=false, ...)
+
+Stateful HTTP server handle returned by `listen!` and `serve!`.
+
+The handle owns the listener, background task, active-connection set, and
+timeout configuration. Keep it around for lifecycle operations such as
+`port`, `wait(server)`, `close(server)`, or `forceclose`.
+
+HTTP.jl schedules server tasks on Julia's `:interactive` thread pool. Start
+Julia with at least one interactive thread, such as `--threads=4,1`, to keep
+server and health-check work isolated from non-yielding tasks on the default
+pool. Without an interactive thread, Julia falls back to the default pool.
+
+Timeout fields are stored in nanoseconds. Use the convenience `listen!` and
+`serve!` keywords to configure request-read, header-read, response-write, and
+idle deadlines without constructing a `Server` manually.
+
+HTTP/2 receive flow control is configurable through the `http2_settings` keyword,
+an `HTTP2Settings` carrying the per-stream and connection-level receive
+windows. It defaults to the protocol defaults so existing behavior is unchanged.
+Raising the windows improves single-stream throughput on links with non-trivial
+latency, where the default 64 KiB window would otherwise cap a transfer at roughly
+`window / RTT`.
+
+### `HTTP.Stream` — Type
+
+    Stream
+
+Bidirectional HTTP stream used by `listen!`, `serve!`, `HTTP.open`, and
+stream-oriented request/response handlers.
+
+Server-side streams expose request metadata through `startread(stream)` and let
+handlers consume request bytes from the stream directly before writing a
+response. Client-side streams let callers write a request body first, then
+switch to reading the response head/body from the same object.
+
+### `HTTP.listen!` — Function
+
+    listen!(server) -> Server
+
+Start a configured `Server` asynchronously and return it.
+
+    listen!(handler, host="127.0.0.1", port=8080;
+            read_timeout_ns=0, read_header_timeout_ns=0, write_timeout_ns=0,
+            idle_timeout_ns=0, max_header_bytes=1*1024*1024,
+            listenany=false, reuseaddr=true, backlog=128) -> Server
+    listen!(handler, port; kwargs...) -> Server
+    listen!(handler, listener; kwargs...) -> Server
+
+Start a streaming HTTP server and return the running `Server`.
+
+`handler` is called with an `HTTP.Stream` and is responsible for reading the
+request and writing the response. Timeout keywords ending in `_ns` are
+nanoseconds; `read_timeout`, `read_header_timeout`, `write_timeout`, and
+`idle_timeout` accept seconds. The older `readtimeout` keyword is accepted as a
+seconds-valued migration alias for `read_timeout`.
+
+Server tasks use Julia's `:interactive` thread pool. Configure at least one
+interactive thread; see `Server` and the Server Guide.
+
+### `HTTP.listen` — Function
+
+    listen(handler, args...; kwargs...)
+
+Run `listen!` in the foreground, blocking until the server is closed.
+
+### `HTTP.serve!` — Function
+
+    serve!(handler, host="127.0.0.1", port=8080;
+           read_timeout_ns=0, read_header_timeout_ns=0,
+           write_timeout_ns=0, idle_timeout_ns=0,
+           max_header_bytes=1*1024*1024, max_body_bytes=64*1024*1024,
+           listenany=false, reuseaddr=true, backlog=128) -> Server
+    serve!(handler, port; kwargs...) -> Server
+    serve!(handler, listener; kwargs...) -> Server
+
+Start an HTTP server and return the running `Server`.
+
+`handler` is called with an `HTTP.Request` and must return an `HTTP.Response`.
+Use `listen!` for the lower-level `HTTP.Stream` handler path.
+Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
+keyword is accepted as a seconds-valued migration alias for `read_timeout`.
+Ordinary request handlers buffer request bodies before dispatch; `max_body_bytes`
+caps that buffering, and `0` restores the legacy unbounded behavior.
+
+Server tasks use Julia's `:interactive` thread pool. Configure at least one
+interactive thread; see `Server` and the Server Guide.
+
+### `HTTP.serve` — Function
+
+    serve(handler, args...; kwargs...)
+
+Run `serve!` in the foreground, blocking until the server is closed.
+
+### `HTTP.streamhandler` — Function
+
+    streamhandler(request_handler) -> stream handler
+
+Adapter that takes a request handler and returns a stream handler.
+
+### `HTTP.servefile` — Function
+
+    servefile(request, path; ...)
+
+Serve the file or directory at `path` for `request` using `servecontent`
+semantics and canonical redirect handling.
+
+Only `GET` and `HEAD` are served. Directory requests resolve `index_file`;
+missing files return `404`, and unsafe or invalid request paths return `400`.
+
+### `HTTP.fileserver` — Function
+
+    fileserver(root; ...)
+
+Return a request handler that serves static files rooted at `root`.
+
+If `spa_fallback` is provided, missing request paths whose final segment does
+not look like a filename are served from that file within `root`. Missing
+asset-like paths still return `404`.
+
+The returned function is a normal `Request -> Response` handler suitable for
+`serve!`, routers, and middleware.
+
+### `HTTP.servecontent` — Function
+
+    servecontent(request, source; ...)
+
+Build a response for `request` from byte-backed or seekable content while
+handling conditional headers and single-byte-range requests.
+
+`source` may be an `AbstractVector{UInt8}` or a seekable `IO`. The helper sets
+`Content-Type`, `Content-Length`, `Last-Modified`, `ETag`, `Accept-Ranges`, and
+`Content-Range` when enough information is provided. It returns `304`, `412`,
+or `416` responses for the corresponding precondition/range outcomes.
+
+### `HTTP.forceclose` — Function
+
+    forceclose(server)
+
+Immediately stop accepting new connections and close all tracked connections.
+
+### `HTTP.port` — Function
+
+    port(server) -> Int
+
+Return the bound port for `server`, or the configured port if it has not started
+listening yet.
+
+### `HTTP.startread` — Function
+
+    startread(stream)
+
+Begin the readable side of `stream`.
+
+For client streams, this finalizes request writes if needed, executes the HTTP
+exchange, and returns the response metadata without buffering the response
+body. Subsequent reads on `stream` consume the response body.
+
+For server streams, this returns request metadata only. The request body stays
+attached to `stream` itself, so handlers should read it with `read(stream)` or
+`readbytes!(stream, ...)`.
+
+### `HTTP.startwrite` — Function
+
+    startwrite(stream) -> Response
+
+Start the response side of a server-side `Stream` and return the response
+metadata. Calling `write(stream, data)` starts writing automatically; use
+`startwrite` explicitly when you need headers to be sent before body bytes.
+
+### `HTTP.setstatus` — Function
+
+    setstatus(stream, status) -> nothing
+
+Set the response status for a server-side `Stream` before response writing
+starts.
+
+### `HTTP.addtrailer` — Function
+
+    addtrailer(stream, header_or_headers) -> nothing
+
+Append response trailers for a server-side `Stream`. Trailers are emitted when
+the response body is closed, so call this before `closewrite(stream)`.
+
+### `HTTP.closeread` — Function
+
+    closeread(stream) -> Response
+
+Close the readable side of `stream` and return its response metadata.
+
+If the response body has already been fully consumed, this is effectively a
+no-op. If unread response bytes remain, the underlying client connection is not
+reused.
+
+### `HTTP.peeraddr` — Function
+
+    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
+
+Return the remote (client) socket address of a server `stream`, or `nothing`
+when the peer endpoint is unavailable.
+
+The returned `SocketAddr` carries the client IP and port: render it with
+`string(addr)` to get `"ip:port"`, or read `addr.ip` (an `NTuple` of octets)
+and `addr.port`. Works for both plain-TCP and TLS connections and for HTTP/1
+and HTTP/2 server streams.
+
+This is the supported way to obtain the client IP for rate limiting, audit
+logging, and other per-client policy; it avoids reaching into transport
+internals and restores the capability `Sockets.getpeername(::HTTP.Stream)`
+provided in HTTP.jl 1.x.
+
+Throws `ArgumentError` when called on a client-side stream.
+
+## Routing and Middleware
+
+The router and middleware helpers live in `HTTP.Handlers` and are also
+available through `HTTP.Router`, `HTTP.register!`, and the related imported
+aliases for compatibility.
+
+### `HTTP.Handlers.Handler` — Type
+
+    Handler
+
+Abstract type for the handler interface that exists for documentation purposes.
+A `Handler` is any function of the form `f(req::HTTP.Request) -> HTTP.Response`.
+There is no requirement to subtype `Handler` and users should not rely on or
+dispatch on `Handler`.
+
+For advanced cases, a `Handler` function can also be of the form
+`f(stream::HTTP.Stream) -> Nothing`. In this case, the server would be run like
+`HTTP.listen(f, ...)`. Any middleware used with a stream handler
+also needs to accept and return a stream handler.
+
+### `HTTP.Handlers.Middleware` — Type
+
+    Middleware
+
+Abstract type for the middleware interface that exists for documentation
+purposes. A `Middleware` is any function of the form `f(::Handler) -> Handler`.
+There is no requirement to subtype `Middleware` and users should not rely on or
+dispatch on `Middleware`.
+
+### `HTTP.Handlers.Router` — Type
+
+    HTTP.Handlers.Router([_404], [_405], [middleware])
+    HTTP.Router([_404], [_405], [middleware])
+
+Define a router object that maps incoming requests by path to registered routes
+and associated handlers.
+
+Routes are matched by method and path segments. Supported segment patterns are:
+
+- exact segments, such as `/users`
+- named variables, such as `/users/{id}`
+- named variables with regular expressions, such as `/files/{name:\w+}`
+- single-segment wildcards with `*`
+- trailing multi-segment wildcards with `**`
+
+Matched route metadata is stored on the request context and can be read with
+`getroute`, `getparams`, and `getparam`.
+
+### `HTTP.Handlers.Node` — Type
+
+    Node
+
+Internal trie node used by `Router` to store exact, wildcard, and parameterized
+path segments.
+
+### `HTTP.Handlers.register!` — Function
+
+    register!(router, method, path, handler) -> Nothing
+    register!(router, path, handler) -> Nothing
+    register!(handler, router, method, path) -> Nothing
+    register!(handler, router, path) -> Nothing
+
+Register a new route in `router`.
+
+The `path` may include named path variables like `/{id}` or wildcard segments.
+The 3-argument form registers the handler for all methods.
+
+`handler` may be a `Request -> Response` handler for `serve!` or a
+`Stream -> Nothing` handler for `listen!`, as long as the router is used with
+the matching server entrypoint.
+
+The handler-first forms accept the handler as the first positional argument so
+that `do`-block syntax may be used:
+
+```julia
+register!(router, "GET", "/users/{id}") do req
+    return HTTP.Response(200; body = HTTP.Handlers.getparam(req, "id"))
+end
+```
+
+### `HTTP.Handlers.getroute` — Function
+
+    HTTP.getroute(req) -> Union{Nothing, String}
+
+Retrieve the original route registration string for a request after its target
+has been matched against a router.
+
+### `HTTP.Handlers.getparams` — Function
+
+    HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
+
+Retrieve any matched path parameters from the request context.
+
+Returns `nothing` when the request has not been routed or the route contained
+no path variables.
+
+### `HTTP.Handlers.getparam` — Function
+
+    HTTP.getparam(req, name, default=nothing) -> Any
+
+Retrieve a matched path parameter with name `name` from request context.
+
+### `HTTP.Handlers.getcookies` — Function
+
+    HTTP.getcookies(req) -> Vector{Cookie}
+
+Retrieve any parsed cookies from a request context.
+
+### `HTTP.Handlers.handlertimeout` — Function
+
+    handlertimeout(timeout_s; status=503, body="handler timed out", content_type="text/plain; charset=utf-8")
+        -> middleware
+
+Wrap a request handler with a wall-clock timeout and synthesize a timeout
+response when the handler does not finish in time.
+
+The wrapped handler receives a child `RequestContext` whose deadline is bounded
+by both the configured timeout and any existing parent request deadline. On
+timeout, the child context is canceled and a response with `status`, `body`,
+and `content_type` is returned.
+
+### `HTTP.Handlers.logging_middleware` — Function
+
+    logging_middleware(handler; logger=nothing, level=Logging.Info) -> handler
+
+Middleware that emits one log record per request through Julia's logging
+system: an opt-in access log.
+
+The record is emitted after the wrapped `handler` returns and carries the
+request `method` and `target`, the response `status`, the handler's wall-clock
+`elapsed_ms`, and the response body `length` in bytes when it is known without
+reading the body (`nothing` otherwise). The message reads like
+`GET /users/1 200 0.412ms`, and every record uses the `:access` log group so
+it can be filtered. When the handler throws, the record is logged at
+`Logging.Error` with the `exception` and its backtrace and with the `status`
+the server sends for that failure, and the exception is rethrown.
+
+Records are logged at `level` to the current logger, or with
+`Logging.with_logger(logger)` when `logger` is given.
+
+The middleware wraps both `Request -> Response` handlers (`serve!`,
+`streamhandler`) and `Stream -> Nothing` handlers (`listen!`). Stream records
+also carry the client `peer` address from `peeraddr`; request
+handlers do not have access to the connection, so request records omit it.
+
+```julia
+server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
+```
+
+## Server-Sent Events
+
+### `HTTP.SSEEvent` — Type
+
+    SSEEvent(data; event=nothing, id=nothing, retry=nothing)
+
+Server-Sent Event value used for both client-side parsing and server-side
+emission.
+
+Fields:
+- `data`: concatenated `data:` lines joined by `
+`
+- `event`: optional event name
+- `id`: last event id in effect when the event dispatched
+- `retry`: last valid retry hint in milliseconds
+- `fields`: all observed fields collected into a string dictionary
+
+### `HTTP.SSEStream` — Type
+
+    SSEStream(; max_len=16*1024*1024)
+
+Writable Server-Sent Events body used by `sse_stream(status)`.
+
+`SSEStream` is also an `AbstractBody`, so server response writers can stream it
+directly to HTTP/1 or HTTP/2 connections while user code keeps pushing
+`SSEEvent` values into it.
+
+### `HTTP.sse_stream` — Function
+
+    sse_stream(status=200; max_len=16*1024*1024, ...) -> Response
+    sse_stream(status, f; max_len=16*1024*1024, ...) -> Response
+    sse_stream(response; max_len=16*1024*1024) -> SSEStream
+    sse_stream(response, f; max_len=16*1024*1024) -> SSEStream
+
+Create or configure a server-sent events response.
+
+`sse_stream(status; ...)` constructs a `Response` with an `SSEStream` body,
+sets the standard SSE headers, and returns the response for manual event
+emission.
+
+`sse_stream(status) do stream ... end` is the usual server helper. It creates
+the response, runs the producer on a background task, and closes the stream
+automatically when the callback finishes.
+
+The `response`-accepting forms are for responses that already have an
+`SSEStream` body.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/websockets/ -->
+
+# WebSockets API
+
+## Module and Core Types
+
+### `HTTP.WebSockets` — Module
+
+    HTTP.WebSockets
+
+WebSocket client and server helpers layered on top of the HTTP request/response
+stack and `Reseau` transports.
+
+Use `open` for client connections and `listen!`,
+`listen`, or `serve!` for servers. Most applications will work
+with `WebSocket` values directly rather than the lower-level
+`Conn` codec state.
+
+### `HTTP.WebSockets.Conn` — Type
+
+    Conn
+
+Low-level WebSocket codec connection state.
+
+This is primarily useful for advanced integrations that need direct access to
+frame-level state. Most client and server code should work with
+`WebSocket` instead.
+
+### `HTTP.WebSockets.CloseFrameBody` — Type
+
+    CloseFrameBody(code, reason="")
+
+Structured close payload carrying the WebSocket close status code and optional
+UTF-8 reason text.
+
+### `HTTP.WebSockets.WebSocketError` — Type
+
+    WebSocketError
+
+Exception raised when a WebSocket closes or encounters a protocol/payload
+error.
+
+Inspect `err.message.code` and `err.message.reason` to distinguish normal
+closures from errors.
+
+### `HTTP.WebSockets.WebSocket` — Type
+
+    WebSocket
+
+Stateful WebSocket endpoint returned by `open` and passed to server
+handlers created by `listen!` or `serve!`.
+
+Use `send`, `receive`, `ping`, `close(ws)`, or iterate
+over the socket directly.
+
+## Client Operations
+
+### `HTTP.WebSockets.open` — Function
+
+    open(url; kwargs...) -> WebSocket
+    open(f, url; kwargs...) -> Any
+
+Open a client WebSocket connection to `url`.
+
+Keyword arguments cover handshake headers, redirect behavior, cookies, proxy
+selection, TLS verification, timeout controls, and frame limits.
+`request_timeout` applies an overall handshake deadline, while
+`response_header_timeout` and `write_idle_timeout` configure HTTP handshake
+phases. `read_idle_timeout` bounds both handshake response-header reads and
+post-upgrade inbound WebSocket inactivity. `maxframesize` defaults to 16 MiB
+and bounds incoming frame/message buffering. Pass `compress=true` to offer
+permessage-deflate message compression ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692));
+it is only used when the server also accepts it. When called with a function,
+the socket is closed automatically with status code `1000` when `f` returns.
+
+    open(io::IO; target="/", host="", kwargs...) -> WebSocket
+    open(f, io::IO; target="/", host="", kwargs...) -> Any
+
+Perform the WebSocket client handshake directly over an already-connected `io`
+(a raw `TCPSocket`, a TLS stream, or any other byte `IO`) instead of dialing a
+new connection from a URL. This is useful when the transport is established
+out-of-band, for testing, or for tunnelling WebSockets over a custom stream.
+
+Because there is no URL to derive them from, the request-line `target` and `Host`
+header default to `"/"` and unset; override them with the `target` and `host`
+keyword arguments. The remaining `headers`, `subprotocols`, `maxframesize`, and
+`maxfragmentation` keywords match the URL-based `open`; pool, TLS, proxy,
+redirect, cookie, and timeout options do not apply.
+
+`io` is **not** closed by `open` — the caller retains ownership of the underlying
+stream's lifetime. As with the URL form, calling `open` with a function closes
+the WebSocket with status code `1000` when `f` returns (the close frame is sent
+over `io`, but `io` itself stays open).
+
+### `HTTP.WebSockets.send` — Function
+
+    send(ws, message) -> Int
+
+Send one text or binary message on `ws`.
+
+`message` may be an `AbstractString`, an `AbstractVector{UInt8}`, or an
+iterable of chunks. Iterable inputs are sent as one fragmented message and the
+returned value is the total payload bytes sent.
+
+### `HTTP.WebSockets.receive` — Function
+
+    receive(ws) -> Union{String, Vector{UInt8}}
+
+Receive the next complete message from `ws`.
+
+Text messages are returned as `String`; binary messages are returned as
+`Vector{UInt8}`. Throws `WebSocketError` once the connection has closed.
+
+### `HTTP.WebSockets.ping` — Function
+
+    ping(ws, data=UInt8[]) -> nothing
+
+Send a WebSocket ping control frame with optional payload bytes.
+
+### `HTTP.WebSockets.pong` — Function
+
+    pong(ws, data=UInt8[]) -> nothing
+
+Send a WebSocket pong control frame with optional payload bytes.
+
+## Server Operations
+
+### `HTTP.WebSockets.Server` — Type
+
+    Server(; network="tcp", address="127.0.0.1:0", handler, tls_config=nothing, ...)
+
+WebSocket server handle returned by `listen!` and `serve!`.
+
+Hold onto the returned value so you can inspect its bound address with
+`server_addr`, wait on it with `wait(server)`, or stop it with
+`forceclose`.
+
+### `HTTP.WebSockets.listen!` — Function
+
+    listen!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
+
+Start a background WebSocket server and return its `Server` handle.
+
+Pass `tls_config` to serve `wss://` traffic, `subprotocols` to advertise
+supported subprotocols, and `check_origin` to customize origin validation. Pass
+`listenany=true` to ignore `port` and bind to an OS-assigned ephemeral port;
+read the actual address afterwards with `server_addr`. Pass
+`compress=true` to advertise permessage-deflate message compression
+([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)); it is negotiated per
+connection and clients must also opt in. `maxframesize` defaults to 16 MiB
+and bounds incoming frame/message buffering.
+
+WebSocket server tasks use Julia's `:interactive` thread pool. Start Julia with
+at least one interactive thread, such as `--threads=4,1`, to isolate server work
+from non-yielding tasks on the default pool. Without an interactive thread,
+Julia falls back to the default pool.
+
+### `HTTP.WebSockets.listen` — Function
+
+    listen(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
+
+Start a WebSocket server and block until it exits.
+
+### `HTTP.WebSockets.serve!` — Function
+
+`serve!` is an alias for `listen!`.
+
+### `HTTP.WebSockets.upgrade` — Function
+
+    upgrade(f, stream::HTTP.Stream; kwargs...)
+
+Upgrade an in-flight HTTP/1.1 server `stream` to a WebSocket connection and run
+`f(ws::WebSocket)`. This is the manual counterpart to `listen!`: it lets
+a single `HTTP.listen!` / `HTTP.Router` server mix ordinary HTTP routes with
+WebSocket routes by upgrading the connection from inside a stream handler.
+
+Guard the call with `isupgrade` and call `upgrade` before writing any
+response to the stream:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    if HTTP.WebSockets.isupgrade(stream.message)
+        HTTP.WebSockets.upgrade(stream) do ws
+            for msg in ws
+                HTTP.WebSockets.send(ws, msg)
+            end
+        end
+    else
+        HTTP.setstatus(stream, 200)
+        HTTP.startwrite(stream)
+        write(stream, "ok")
+    end
+end
+```
+
+`f` runs synchronously; the connection is closed when it returns. Keyword
+arguments mirror `listen!`: `subprotocols`, `check_origin`,
+`maxframesize`, `maxfragmentation`, and `compress` (opt-in permessage-deflate
+message compression, RFC 7692). WebSocket upgrades over HTTP/2 are not
+supported.
+
+### `HTTP.WebSockets.isupgrade` — Function
+
+    isupgrade(message) -> Bool
+
+Return `true` when `message` is a WebSocket upgrade. For a request this checks
+for a valid client upgrade handshake — use it to guard `upgrade` inside
+an `HTTP.listen!` stream handler. For a response it checks for a `101 Switching
+Protocols` handshake response.
+
+### `HTTP.WebSockets.server_addr` — Function
+
+    server_addr(server) -> String
+
+Return the host:port address currently bound by `server`.
+
+### `HTTP.WebSockets.forceclose` — Function
+
+    forceclose(server) -> nothing
+
+Immediately stop accepting new WebSocket connections and close active sessions.
