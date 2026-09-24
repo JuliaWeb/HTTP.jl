@@ -810,10 +810,12 @@ Names that differ only in case are listed once, in their first spelling.
 """
 function header_keys(headers::Headers)::Vector{String}
     out = String[]
-    # Quadratic in distinct names, the same order as the per-key `headers`
-    # scans its callers run; allocation-free for real header counts.
+    seen = Set{String}()
     for (key, _) in headers
-        any(seen -> _ascii_equal_fold(seen, key), out) || push!(out, key)
+        folded = _ascii_lowercase_string(key)
+        folded in seen && continue
+        push!(seen, folded)
+        push!(out, key)
     end
     return out
 end

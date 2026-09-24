@@ -141,6 +141,9 @@ end
     end
     mixed = HT.Headers(["x-a" => "1", "X-B" => "2", "X-A" => "3", "Connection" => "keep-alive, Upgrade"])
     @test HT.header_keys(mixed) == ["x-a", "X-B", "Connection"]
+    many = HT.Headers(["x-$(i)" => "value" for i in 1:10_000])
+    append!(many, ["X-$(i)" => "again" for i in 1:10_000])
+    @test HT.header_keys(many) == ["x-$(i)" for i in 1:10_000]
     @test HT.headers(mixed, "X-a") == ["1", "3"]
     @test HT.headercontains(mixed, "connection", "upgrade")
     HT.removeheader(mixed, "X-A")
