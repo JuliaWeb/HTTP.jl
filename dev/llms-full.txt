@@ -1,6 +1,6 @@
 # HTTP.jl documentation
 
-> Complete documentation for HTTP.jl v2.7.1 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+> Complete documentation for HTTP.jl v2.8.0 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
 
 ---
 
@@ -623,9 +623,10 @@ as temporary compatibility, not as the preferred API:
 - `retry_delays` and `retry_check` should become `retry_if`, `retries`, and
   `retry_bucket`
 - `sslconfig` and `socket_type_tls` should move to transport/TLS configuration
-- `canonicalize_headers`, `detect_content_type`,
-  `observelayers`, `logerrors`, and `logtag` are accepted for compatibility
-  where possible
+- `detect_content_type`, `observelayers`, `logerrors`, and `logtag` are
+  accepted for compatibility where possible
+- `canonicalize_headers=true` sends request header names in `Content-Type`
+  form, as in 1.x; by default names are sent as spelled
 
 See the [migration guide](https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/) for before/after examples.
 
@@ -1285,7 +1286,12 @@ req = HTTP.Request(
 ## Headers
 
 `HTTP.Headers` is the canonical mutable header container. It preserves pair
-order and canonicalizes header keys on insertion.
+order and each header name as you spell it, as 1.x did. Lookups such as
+`HTTP.header(headers, "Content-Type")` match names in any case. Unlike 1.x,
+headers received from the network use `Content-Type` form. To send every
+request header name in that form, pass `canonicalize_headers=true`, as in 1.x.
+HTTP/2, which 2.0 uses for HTTPS when the server supports it, always sends
+names in lowercase; pass `protocol=:h1` to a server that needs exact spelling.
 
 Before:
 
@@ -1793,9 +1799,11 @@ abruptly:
 - `retry_delays` and `retry_check`: accepted, but use `retry_if`,
   `retries`, and `retry_bucket`
 - `sslconfig` and `socket_type_tls`: accepted, but configure the transport
-- `canonicalize_headers`, `detect_content_type`,
-  `observelayers`, `logerrors`, and `logtag`: accepted for compatibility, but
-  not the preferred 2.0 observation/configuration surface
+- `detect_content_type`, `observelayers`, `logerrors`, and `logtag`:
+  accepted for compatibility, but not the preferred 2.0
+  observation/configuration surface
+- `canonicalize_headers`: supported with its 1.x meaning. `true` sends request
+  header names in `Content-Type` form. The default sends them as spelled.
 
 Treat these as temporary migration aids. New code should use the documented
 2.0 API names.
@@ -1934,14 +1942,22 @@ body=..., content_length=...)`.
 
     Headers
 
-Ordered, case-canonicalized collection of header pairs.
+Ordered collection of header pairs.
 
 `Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
 written against the long-standing pair-vector header representation can reuse
-the same helper functions. Keys are canonicalized on insertion, but pair order
-is preserved. Constructing from a vector, dictionary, or tuple goes through
-`mkheaders`: the source is left unchanged, keys are canonicalized, and adjacent
-duplicate keys are joined the way `appendheader` joins them.
+the same helper functions. Pair order is preserved.
+
+Header names are case-insensitive (RFC 9110 §5.1). Every lookup and update
+(`header`, `setheader`, `removeheader`, `haskey`, ...) matches a name in any
+case, but a name is stored exactly as it was given. HTTP/1 sends it in that
+spelling; HTTP/2 sends every name in lowercase. Headers read from the network
+are stored in `canonical_header_key` form (`Content-Type`), so a
+response looks the same over HTTP/1 and HTTP/2.
+
+Constructing from a vector, dictionary, or tuple goes through `mkheaders`: the
+source is left unchanged, and adjacent duplicate keys are joined the way
+`appendheader` joins them.
 
     Headers(hint)
 
@@ -1950,7 +1966,7 @@ the backing pair storage. Throws `ArgumentError` when `hint < 0`.
 
     Headers(items...; kwargs...) -> Headers
 
-Construct a canonicalized Headers from items and/or kwargs
+Construct a Headers from items and/or kwargs.
 
 ### `HTTP.RequestContext` — Type
 
@@ -2150,7 +2166,8 @@ tokens rather than one opaque string.
     setheader(headers, key, value) -> Headers
 
 Replace all stored values for `key` with `value`, preserving the first matching
-position if the key already exists and appending it otherwise. Returns the
+position if the key already exists and appending it otherwise. Names match in
+any case; the kept entry takes the spelling of `key`. Returns the
 mutated `headers`. `setheader!` is the same function under the
 conventional mutating-name spelling.
 
@@ -2189,10 +2206,10 @@ without overwriting caller-specified headers.
 
 Append a header value to `headers`.
 
-If the previous stored header has the same name and the key is not
-`Set-Cookie`, the value is merged into the previous entry with a comma
-(no whitespace), as permitted by RFC 9110 §5.3 and required by common
-request-signing canonicalizations.
+If the previous stored header has the same name (in any case) and the key is
+not `Set-Cookie`, the value is merged into the previous entry, which keeps its
+spelling, with a comma (no whitespace), as permitted by RFC 9110 §5.3 and
+required by common request-signing canonicalizations.
 Otherwise a new pair is appended. `appendheader!` is the same
 function under the conventional mutating-name spelling.
 
@@ -2869,6 +2886,9 @@ Keyword arguments:
   mutate it until the call completes; final contents are unspecified. Other
   header inputs become a new collection either way. Retry attempts still
   receive isolated headers.
+- `canonicalize_headers`: header names are sent as the caller spelled them
+  (HTTP/2 sends them in lowercase). `true` rewrites every request header name
+  into `canonical_header_key` form first, as in HTTP.jl 1.x
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
@@ -2900,7 +2920,7 @@ Keyword arguments:
 HTTP.jl 2.0 accepts several HTTP.jl 1.x keywords as migration shims:
 `readtimeout` maps to `read_idle_timeout`; `pool`, `retry_delays`,
 `retry_check`, `sslconfig`, `socket_type_tls`,
-`canonicalize_headers`, `detect_content_type`, `logerrors`, `logtag`, and
+`detect_content_type`, `logerrors`, `logtag`, and
 `observelayers` are accepted so older call sites fail less abruptly. Prefer the
 2.0 forms listed above for new code: `client` / `transport` for pooling,
 `retry_if` / `retry_bucket` for retries, Reseau `Transport` TLS configuration
