@@ -869,13 +869,9 @@ function _handle_stream_header_fragment!(
             end
         else
             block_end_stream || throw(ProtocolError("HTTP/2 response trailers must end the stream"))
-            trailers = _decode_h2_trailer_headers(decoded)
-            for key in header_keys(trailers)
-                values = headers(trailers, key)
-                for value in values
-                    appendheader(state.pending_trailers, key, value)
-                end
-            end
+            # One pass in wire order: a peer picks how many trailer fields
+            # arrive, so no per-name rescans.
+            append!(state.pending_trailers, _decode_h2_trailer_headers(decoded))
             # If the response head was already constructed, the caller is
             # holding a reference to `state.response_trailers`. Publish the
             # decoded trailers into it immediately so callers that don't
@@ -1680,12 +1676,7 @@ function _publish_h2_response_trailers!(state::H2StreamState)
     state.trailers_published && return nothing
     target = state.response_trailers
     target === nothing && return nothing
-    for key in header_keys(state.pending_trailers)
-        values = headers(state.pending_trailers, key)
-        for value in values
-            appendheader(target::Headers, key, value)
-        end
-    end
+    append!(target::Headers, state.pending_trailers)
     # `pending_trailers` may still be empty if the trailing HEADERS frame has
     # not arrived yet. Drop what we already copied so a later call won't append
     # the same entries again, and keep `trailers_published=false` until the

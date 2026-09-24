@@ -13,6 +13,7 @@ mutable struct _H2ServerStreamState
     received_body_bytes::Int64
     headers_complete::Bool
     stream_done::Bool
+    header_block_end_stream::Bool
     trailers_complete::Bool
     handler_started::Bool
     handler_finished::Bool
@@ -35,6 +36,7 @@ function _H2ServerStreamState(stream_id::UInt32, max_buffered_bytes::Int=_H2_DEF
         max_buffered_bytes,
         Int64(-1),
         Int64(0),
+        false,
         false,
         false,
         false,
@@ -184,6 +186,23 @@ end
     actual = state.received_body_bytes
     actual == expected || throw(_h2_server_content_length_error(expected, actual, actual > expected))
     return nothing
+end
+
+# END_STREAM is carried by the HEADERS frame that opens a header block, but the
+# block may finish on a later CONTINUATION frame. Call this once the block is
+# decoded: ending the stream sooner would let the body report EOF, and the
+# handler run, before trailers split across CONTINUATION frames are decoded.
+# Returns `true` when the received body contradicts Content-Length.
+function _end_h2_server_stream_locked!(state::_H2ServerStreamState)::Bool
+    state.header_block_end_stream = false
+    state.stream_done = true
+    try
+        _check_h2_server_body_end_locked(state)
+    catch err
+        err isa ProtocolError || rethrow()
+        return true
+    end
+    return false
 end
 
 function _compact_h2_server_body_buffer!(state::_H2ServerStreamState)::Nothing
@@ -1910,6 +1929,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     remaining = max_header_block_bytes - length(state.header_block)
                     remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
                     append!(state.header_block, hf.header_block_fragment)
+                    hf.end_stream && (state.header_block_end_stream = true)
                     if hf.end_headers
                         decoded = decode_header_block(decoder, state.header_block)
                         empty!(state.header_block)
@@ -1917,29 +1937,14 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                             state.decoded_headers = decoded
                             state.headers_complete = true
                         else
-                            trailers = _decode_h2_trailer_headers(decoded)
-                            for key in header_keys(trailers)
-                                values = headers(trailers, key)
-                                for value in values
-                                    appendheader(state.trailers, key, value)
-                                end
-                            end
+                            # One pass in wire order: a peer picks how many
+                            # trailer fields arrive, so no per-name rescans.
+                            append!(state.trailers, _decode_h2_trailer_headers(decoded))
                             state.trailers_complete = true
                         end
+                        state.header_block_end_stream && (stream_error = _end_h2_server_stream_locked!(state))
                     end
                     hf.end_headers || (continuation_stream = hf.stream_id)
-                    if hf.end_stream
-                        state.stream_done = true
-                        try
-                            _check_h2_server_body_end_locked(state)
-                        catch err
-                            if err isa ProtocolError
-                                stream_error = true
-                            else
-                                rethrow(err)
-                            end
-                        end
-                    end
                     notify(state.condition)
                 finally
                     unlock(state.lock)
@@ -1964,6 +1969,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(states_lock)
                 end
+                stream_error = false
                 lock(state.lock)
                 try
                     initial_headers = !state.headers_complete
@@ -1977,15 +1983,12 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                             state.decoded_headers = decoded
                             state.headers_complete = true
                         else
-                            trailers = _decode_h2_trailer_headers(decoded)
-                            for key in header_keys(trailers)
-                                values = headers(trailers, key)
-                                for value in values
-                                    appendheader(state.trailers, key, value)
-                                end
-                            end
+                            # One pass in wire order: a peer picks how many
+                            # trailer fields arrive, so no per-name rescans.
+                            append!(state.trailers, _decode_h2_trailer_headers(decoded))
                             state.trailers_complete = true
                         end
+                        state.header_block_end_stream && (stream_error = _end_h2_server_stream_locked!(state))
                         continuation_stream = UInt32(0)
                     else
                         continuation_stream = cf.stream_id
@@ -1993,6 +1996,10 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     notify(state.condition)
                 finally
                     unlock(state.lock)
+                end
+                if stream_error
+                    _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
+                    continue
                 end
                 cf.end_headers && !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
                 continue
