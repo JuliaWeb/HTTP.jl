@@ -48,6 +48,13 @@ Useful top-level request helpers:
 - `HTTP.request` for the fully general call shape
 - `HTTP.open` when you want streaming control instead of an eagerly consumed body
 
+Redirect locations are resolved against the current request URL. Literal `.`
+and `..` path segments are removed, including in absolute redirect URLs, while
+repeated slashes and percent-encoded bytes are preserved. A location of `?`
+replaces the query with an empty query; a fragment-only location preserves the
+current query. Fragments are never sent in the request target. Resolving a
+redirect does not normalize the caller's initial request URL.
+
 ## Streaming Responses
 
 `HTTP.open` gives you pull-based control over the response stream while still
