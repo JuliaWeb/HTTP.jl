@@ -165,6 +165,18 @@ server = HTTP.serve!(
 The older `readtimeout` keyword is accepted as a seconds-valued migration alias
 for `read_timeout`.
 
+For HTTP/1 connections, `read_header_timeout` limits request-head reads. After
+the headers, `read_timeout` starts a fresh budget for reading the request body.
+Between keep-alive requests, `idle_timeout` applies until bytes for the next
+request arrive; the header budget starts then. An idle timeout closes the
+connection without sending an unsolicited response. A timeout while reading a
+request head or body uses the server's request-timeout error handling.
+
+The header and idle settings fall back to `read_timeout` when zero. If both a
+phase's setting and its fallback are zero, that phase has no read deadline.
+The default configuration disables all timeouts. A header or idle deadline does
+not carry over into a body whose `read_timeout` is zero.
+
 Ordinary `serve!` request handlers receive a buffered `HTTP.Request` body. That
 buffering is capped by `max_body_bytes`, which defaults to 64 MiB. Raise the
 limit for larger in-memory uploads, pass `max_body_bytes = 0` to restore legacy
