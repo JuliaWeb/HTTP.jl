@@ -1013,27 +1013,164 @@ end
     try
         request = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
         HT.write_request!(sock, request)
-        response = HT._read_response(HT._ConnReader(sock), request)
+        reader = HT._ConnReader(sock)
+        response = HT._read_response(reader, request)
         @test response.status == 200
         @test String(_read_all_server_bytes(response.body)) == "ok"
-        # The timeout response is best-effort. Depending on whether its write
-        # wins the race with transport shutdown, the peer observes either a
-        # clean EOF or a complete 408 response followed by EOF.
-        trailing = read(sock)
-        if !isempty(trailing)
-            timeout_io = IOBuffer(trailing)
-            timeout_response = HT._read_response(timeout_io)
-            @test timeout_response.status == 408
-            @test timeout_response.close
-            @test timeout_response.content_length == 0
-            @test eof(timeout_io)
-        end
+        # Keep the response reader: it may already hold bytes past the body.
+        @test readbytes!(reader, Vector{UInt8}(undef, 256)) == 0
     finally
         HT.@try_ignore begin
             NC.close(sock)
         end
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP server read deadlines follow the current phase" begin
+    listener = NC.listen(NC.loopback_addr(0))
+    accepted = @async NC.accept(listener)
+    client = NC.connect(NC.loopback_addr(Int(NC.addr(listener).port)))
+    conn = fetch(accepted)
+    far_future = typemax(Int64) ÷ 4
+    try
+        for (options, apply) in (
+            ((; idle_timeout_ns = 1), HT._set_read_deadline_for_header!),
+            ((; read_header_timeout_ns = 1), HT._set_read_deadline_for_body!),
+        )
+            server = HT.Server(; handler = identity, options...)
+            NC.set_read_deadline!(conn, Int64(1))
+            NC.set_write_deadline!(conn, far_future)
+            apply(server, conn)
+            @test (@atomic :acquire conn.fd.pfd.pd.rd_ns) == 0
+            @test (@atomic :acquire conn.fd.pfd.pd.wd_ns) == far_future
+        end
+        for apply in (HT._set_read_deadline_for_header!, HT._set_read_deadline_for_body!, HT._set_idle_deadline!)
+            # A configured read timeout is the fallback for headers and idle.
+            server = HT.Server(handler = identity, read_timeout_ns = far_future)
+            NC.set_read_deadline!(conn, Int64(1))
+            apply(server, conn)
+            @test (@atomic :acquire conn.fd.pfd.pd.rd_ns) >= far_future
+            # The default configuration leaves manually managed deadlines alone.
+            NC.set_read_deadline!(conn, far_future)
+            apply(HT.Server(handler = identity), conn)
+            @test (@atomic :acquire conn.fd.pfd.pd.rd_ns) == far_future
+        end
+    finally
+        close(conn)
+        close(client)
+        close(listener)
+    end
+end
+
+@testset "HTTP server separates body, idle, and next-header reads" begin
+    for tls in (false, true), ending in (:partial_header, :idle_timeout, :idle_eof)
+        far_future = typemax(Int64) ÷ 4
+        listener = if tls
+            Reseau.TLS.listen("tcp", "127.0.0.1:0", Reseau.TLS.Config(
+                verify_peer = false,
+                cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt"),
+                key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            ))
+        else
+            NC.listen("tcp", "127.0.0.1:0")
+        end
+        captured = Channel{HT._ServerConn}(1)
+        server = HT.listen!(listener; read_header_timeout_ns = far_future, idle_timeout_ns = far_future) do stream
+            put!(captured, stream.tracked)
+            payload = read(stream)
+            # Make the next header budget already expired when it is armed.
+            # This must not affect the idle wait before the next request starts.
+            stream.server.read_header_timeout_ns = 1
+            HT.setheader(stream, "Content-Length", string(length(payload)))
+            write(stream, payload)
+        end
+        sock = tls ? Reseau.TLS.connect(NC.loopback_addr(HT.port(server)), Reseau.TLS.Config(verify_peer = false)) :
+                     NC.connect(NC.loopback_addr(HT.port(server)))
+        try
+            write(sock, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n")
+            tracked = take!(captured)
+            tcp = tls ? tracked.conn.tcp : tracked.conn
+            pd = tcp.fd.pfd.pd
+            waiter = IOP._poll_registration(pd).read_waiter
+            @test (@atomic :acquire pd.rd_ns) == 0
+            write(sock, "ok")
+            reader = HT._ConnReader(sock)
+            response = HT._read_response(reader)
+            @test response.status == 200
+            @test String(_read_all_server_bytes(response.body)) == "ok"
+            # Observe a parked real socket read, not elapsed time. A regressed
+            # header deadline closes the connection instead of parking idle.
+            while !((@atomic :acquire waiter.state) isa Task) &&
+                  (@atomic :acquire tracked.state) != HT._ConnState.CLOSED
+                yield()
+            end
+            @test (@atomic :acquire pd.rd_ns) >= far_future
+            if (@atomic :acquire tracked.state) != HT._ConnState.CLOSED
+                if ending == :partial_header
+                    write(sock, "P")
+                elseif ending == :idle_timeout
+                    NC.set_read_deadline!(tcp, Int64(1))
+                else
+                    closewrite(sock)
+                end
+            end
+            # TLS wraps its read timeout in TLSError and retains the existing
+            # close-only error path; raw TCP sends the request-timeout response.
+            if ending == :partial_header && !tls
+                response = HT._read_response(reader)
+                @test response.status == 408
+                @test response.close
+                @test response.content_length == 0
+            end
+            @test readbytes!(reader, Vector{UInt8}(undef, 256)) == 0
+        finally
+            close(sock)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
+@testset "HTTP server preserves pipelined heads and bodies across timeout phases" begin
+    for stream in (false, true), tls in (false, true)
+        listener = if tls
+            Reseau.TLS.listen("tcp", "127.0.0.1:0", Reseau.TLS.Config(
+                verify_peer = false,
+                cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt"),
+                key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            ))
+        else
+            NC.listen("tcp", "127.0.0.1:0")
+        end
+        start = stream ? HT.listen! : HT.serve!
+        server = start(listener; idle_timeout_ns = typemax(Int64) ÷ 4) do input
+            if stream
+                payload = read(input)
+                HT.setheader(input, "Content-Length", string(length(payload)))
+                write(input, payload)
+            else
+                HT.Response(200; body = input.body)
+            end
+        end
+        sock = tls ? Reseau.TLS.connect(NC.loopback_addr(HT.port(server)), Reseau.TLS.Config(verify_peer = false)) :
+                     NC.connect(NC.loopback_addr(HT.port(server)))
+        try
+            write(sock, "POST /one HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\nab" *
+                        "POST /two HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nConnection: close\r\n\r\ncde")
+            reader = HT._ConnReader(sock)
+            for expected in ("ab", "cde")
+                response = HT._read_response(reader)
+                @test response.status == 200
+                @test String(_read_all_server_bytes(response.body)) == expected
+            end
+            @test readbytes!(reader, Vector{UInt8}(undef, 256)) == 0
+        finally
+            close(sock)
+            HT.forceclose(server)
+            wait(server)
+        end
     end
 end
 
