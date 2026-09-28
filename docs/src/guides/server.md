@@ -137,7 +137,9 @@ end
 ```
 
 After `startwrite`, a failure can only close the connection. Either way,
-writing more than `Content-Length` bytes throws.
+writing more than `Content-Length` bytes throws. `HTTP.streamhandler` streams
+a response body this way when it is not already in memory, such as a
+`fileserver` file.
 
 ## Server Lifecycle
 
