@@ -188,6 +188,15 @@ end
     @test collect(cookies) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
 end
 
+@testset "appendheader joins Cookie values with a semicolon (RFC 6265 §5.4)" begin
+    cookie = HT.Headers()
+    HT.appendheader(cookie, "Cookie", "a=1")
+    HT.appendheader(cookie, "cookie", "b=2")
+    @test collect(cookie) == ["Cookie" => "a=1; b=2"]
+    request = HT.Request("GET", "/"; headers = ["Cookie" => "a=1", "Cookie" => "b=2"])
+    @test [(c.name, c.value) for c in HT.Cookies.cookies(request)] == [("a", "1"), ("b", "2")]
+end
+
 @testset "Tuple header collections" begin
     for items in ((), ("x-a" => "one",), ("x-a" => "one", "x-b" => "two"),
                   ("x-a" => "one", "x-b" => "two", "x-c" => "three"),

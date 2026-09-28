@@ -974,16 +974,9 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
         if name == "te"
             lowercase(_trim_http_ows(normalized)) == "trailers" || throw(ProtocolError("HTTP/2 TE header may only contain trailers"))
         end
-        if name == "cookie"
-            if hasheader(out_headers, "Cookie")
-                setheader(out_headers, "Cookie", string(header(out_headers, "Cookie"), "; ", normalized))
-            else
-                setheader(out_headers, "Cookie", normalized)
-            end
-            continue
-        end
-        appendheader(out_headers, canonical_header_key(name), normalized)
+        push!(out_headers, canonical_header_key(name) => normalized)
     end
+    _fold_received_fields!(out_headers)
     method === nothing && throw(ProtocolError("missing HTTP/2 :method pseudo-header"))
     # RFC 9113 8.3.1: "If the :authority pseudo-header field is present, the
     # endpoint MUST NOT generate a request with a Host header field that differs

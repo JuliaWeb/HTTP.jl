@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- A byte-buffer `response_stream` (a vector or view) is left untouched when the
+  status is 300 or above, other than a 301, 302, 303, 307, or 308 redirect. The
+  body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
+  the buffer raises `StatusError` rather than `ArgumentError: Unable to grow
+  response stream`. `IO` sinks still receive every final response body.
 - HTTP/1 server read deadlines now follow the request phase. `read_header_timeout`
   no longer limits the request body (only `read_timeout` does) or the wait
   between keep-alive requests (`idle_timeout`, else `read_timeout`), so a server
@@ -165,6 +170,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comma, so two adjacent calls produced `Cookie: a=1,b=2`. `cookies(::Request)`
   splits a `Cookie` header on `;` only, so that header parsed back as the single
   cookie `a="1,b=2"` and the second cookie was lost.
+- The HTTP/1 parser now joins every `Cookie` line of a request into one
+  `Cookie` header with `"; "`, as the HTTP/2 server does. Adjacent lines were
+  joined with a comma, so `Cookie: a=1` followed by `Cookie: b=2` was read by
+  `cookies(::Request)` as the single cookie `a="1,b=2"`. ([#1386])
+- `appendheader` now joins repeated `Cookie` values with `"; "` instead of a
+  comma, so `HTTP.get(url, ["Cookie" => "a=1", "Cookie" => "b=2"])` sends
+  `Cookie: a=1; b=2` rather than the single cookie `a="1,b=2"`. ([#1386])
+- Received header sections are joined in linear time. Joining each repeated
+  line onto the previous one rebuilt the growing value, so an HTTP/1 request
+  made of 1 MiB of repeated header lines took about 3 s and 16 GiB of
+  allocation to parse; HTTP/2 request and response headers scaled the same
+  way. ([#1386])
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
@@ -987,3 +1004,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
 [#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377
 [#1381]: https://github.com/JuliaWeb/HTTP.jl/issues/1381
+[#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
