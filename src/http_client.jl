@@ -1398,9 +1398,11 @@ function close_idle_connections!()
     return close_idle_connections!(client)
 end
 
-function _status_throws(resp::Response)::Bool
-    return resp.status >= 300 && !_is_redirect_status(resp.status)
+function _status_throws(status::Int)::Bool
+    return status >= 300 && !_is_redirect_status(status)
 end
+
+_status_throws(resp::Response)::Bool = _status_throws(resp.status)
 
 function _read_all_response_bytes(io::IO, limit::Int=0)::Vector{UInt8}
     out = UInt8[]
@@ -2256,7 +2258,10 @@ function request(
                     return sse_response
                 end
             end
-            final_body, final_length = _consume_incoming_response!(incoming, sink, decompress, Int(max_decompressed_size))
+            # As in HTTP.jl 1.x, a failing response's body goes to a new vector,
+            # so it can't overflow or overwrite a caller's byte buffer.
+            body_sink = sink isa AbstractVector{UInt8} && _status_throws(incoming.head.status) ? nothing : sink
+            final_body, final_length = _consume_incoming_response!(incoming, body_sink, decompress, Int(max_decompressed_size))
             response = _finalize_request_response(incoming, final_body, final_length, resolved_request, parsed.url)
             final_response = response
             status_exception && _status_throws(response) && throw(StatusError(response))
@@ -2326,7 +2331,9 @@ Keyword arguments:
   default to `client.cookiejar`, while implicit convenience calls default to the
   shared `HTTP.COOKIEJAR`
 - `query`: optional query string or key/value collection appended to the URL
-- `response_stream`: optional sink `IO` or byte buffer written with the final response body
+- `response_stream`: optional sink `IO` or byte buffer written with the final response body.
+  A byte buffer is left untouched when the status is a failure (300 or above,
+  except redirects); that body is returned in `response.body` instead
 - `copyheaders`: `true` copies caller headers (the default). `false` transfers
   an existing `HTTP.Headers` collection to the operation. Do not access or
   mutate it until the call completes; final contents are unspecified. Other
@@ -2380,7 +2387,8 @@ failures.
 Returns a high-level `Response`. When no response body sink is provided,
 `response.body` is a fully materialized `Vector{UInt8}`. When `response_stream`
 is provided, the final `Response` contains either the filled buffer/view or
-`nothing` for `IO` sinks.
+`nothing` for `IO` sinks. A failing response given a byte-buffer sink has its
+body in a new `Vector{UInt8}`.
 
 # Working with the response body
 

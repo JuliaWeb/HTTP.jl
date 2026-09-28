@@ -1818,6 +1818,72 @@ end
     end
 end
 
+@testset "HTTP failing responses stay out of byte-buffer response_stream sinks" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    base_url = "http://$(ND.join_host_port("127.0.0.1", Int(laddr.port)))"
+    error_body = repeat("<Error>NoSuchKey</Error>", 4)
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:5
+            conn = NC.accept(listener)
+            try
+                req = HT.read_request(HT._ConnReader(conn))
+                _send_response_client!(conn, req; status = 404, reason = "Not Found", body_text = error_body, close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end)
+    try
+        # A buffer smaller than the error body used to hide the status behind
+        # "Unable to grow response stream".
+        small = fill(0xff, 4)
+        err = try
+            HT.get("$(base_url)/small"; response_stream = small)
+            nothing
+        catch e
+            e
+        end
+        @test err isa HT.StatusError
+        if err isa HT.StatusError
+            @test err.status == 404
+            @test err.response.body == codeunits(error_body)
+        end
+        @test small == fill(0xff, 4)
+
+        storage = fill(0xff, 8)
+        err = try
+            HT.get("$(base_url)/view"; response_stream = view(storage, 3:6))
+            nothing
+        catch e
+            e
+        end
+        @test err isa HT.StatusError
+        err isa HT.StatusError && @test err.response.body == codeunits(error_body)
+        @test storage == fill(0xff, 8)
+
+        # A buffer that could hold the error body is not resized or overwritten either.
+        large = fill(0xff, 256)
+        @test_throws HT.StatusError HT.get("$(base_url)/large"; response_stream = large)
+        @test large == fill(0xff, 256)
+
+        resp = HT.get("$(base_url)/no-exception"; response_stream = small, status_exception = false)
+        @test resp.status == 404
+        @test resp.body == codeunits(error_body)
+        @test small == fill(0xff, 4)
+
+        # IO sinks still receive the final body, as in HTTP.jl 1.x.
+        io = IOBuffer()
+        @test_throws HT.StatusError HT.get("$(base_url)/io"; response_stream = io)
+        @test String(take!(io)) == error_body
+
+        _wait_task_client!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP buffered request replay retains payload storage" begin
     payload = collect(codeunits("replay-body"))
     body = HT.BytesBody(payload)
