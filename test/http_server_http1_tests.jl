@@ -43,6 +43,24 @@ function HT.body_close!(body::_BlockingResponseBody)
     return nothing
 end
 
+# Seekable `servecontent` source that records, at each body read, how many
+# response bytes the server stream is holding in `request_buffer`.
+mutable struct _HeldBytesSource <: IO
+    data::IOBuffer
+    stream::Union{Nothing, HT.Stream}
+    held::Vector{Int}
+end
+
+function Base.seek(io::_HeldBytesSource, pos::Integer)
+    seek(io.data, pos)
+    return io
+end
+
+function Base.readbytes!(io::_HeldBytesSource, b::Vector{UInt8}, nb::Integer)
+    push!(io.held, position(io.stream.request_buffer))
+    return readbytes!(io.data, b, nb)
+end
+
 function _read_exact_server!(conn::NC.Conn, n::Int)::Vector{UInt8}
     bytes = Vector{UInt8}(undef, n)
     readbytes!(conn, bytes, n; all = true) == n || error("unexpected EOF")
@@ -1701,6 +1719,39 @@ end
             end
         end
         @test take!(overflow_error) isa HT.ProtocolError
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP streamhandler streams response bodies that are not in memory (#1384)" begin
+    data = rand(UInt8, 8 * 1024 * 1024)
+    source = _HeldBytesSource(IOBuffer(data), nothing, Int[])
+    adapter = HT.streamhandler() do request
+        if request.target == "/file"
+            return HT.servecontent(request, source; size = length(data), content_type = "application/octet-stream")
+        elseif request.target == "/short"
+            # An in-memory body waits for closewrite, so a length mismatch gets
+            # an error response instead of a truncated body.
+            return HT.Response(200, HT.BytesBody(collect(codeunits("hi"))); content_length = 5)
+        end
+        return HT.Response(200; body = "small")
+    end
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        source.stream = stream
+        adapter(stream)
+        return nothing
+    end
+    url = "http://127.0.0.1:$(HT.port(server))"
+    try
+        @test HT.get("$url/file"; retry = false).body == data
+        @test length(source.held) == length(data) ÷ (16 * 1024)
+        @test maximum(source.held) == 0
+        small = HT.get("$url/small"; retry = false)
+        @test HT.header(small, "Content-Length") == "5"
+        @test String(small.body) == "small"
+        @test HT.get("$url/short"; retry = false, status_exception = false).status >= 400
     finally
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))

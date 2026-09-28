@@ -509,6 +509,9 @@ function _write_response_body_to_stream!(stream::Stream, body)::Nothing
         end
         buf = Vector{UInt8}(undef, 16 * 1024)
         try
+            # As in `write_response!`, a `BytesBody` is already in memory;
+            # other bodies are read in chunks, so send the head and stream them.
+            body isa BytesBody || startwrite(stream)
             while true
                 n = body_read!(body::AbstractBody, buf)
                 n == 0 && break

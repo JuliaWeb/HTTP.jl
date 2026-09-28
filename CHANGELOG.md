@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler can stream a large `Content-Length` body instead of holding all of
   it until `closewrite`. A response started by `write` alone is still held, so
   a handler failure can still get an error response. ([#1384])
+- `HTTP.streamhandler` streams a response body that is not already in memory,
+  such as a `fileserver` file, as `serve!` does, instead of holding all of it
+  until the handler finishes. ([#1384])
 
 ### Fixed
 - Requests with a zero-length streaming body can be copied for retries and
