@@ -205,10 +205,10 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     @atomic write_closed::Bool
     @atomic read_closed::Bool
     @atomic response_started::Bool
-    # `response_started` flips at `startwrite` even when the response head is
-    # deferred (h1 FIXED mode). `head_committed` means head bytes were sent or
-    # a failed transport write may have sent them; a replacement response is
-    # then unsafe.
+    # `response_started` flips when writing starts, even when the response head
+    # is deferred (an h1 FIXED response started by `write`). `head_committed`
+    # means head bytes were sent or a failed transport write may have sent
+    # them; a replacement response is then unsafe.
     @atomic head_committed::Bool
     @atomic continue_sent::Bool
     ignore_writes::Bool
@@ -454,7 +454,9 @@ end
 
 @inline function _server_stream_buffered_fixed_h1(stream::Stream)::Bool
     _require_server_stream(stream)
-    return !(_server_stream_buffered_h2(stream) || _server_stream_live_h2(stream)) && stream.write_mode == _ServerStreamWriteMode.FIXED
+    return !(_server_stream_buffered_h2(stream) || _server_stream_live_h2(stream)) &&
+           stream.write_mode == _ServerStreamWriteMode.FIXED &&
+           !(@atomic :acquire stream.head_committed)
 end
 
 """
@@ -1197,10 +1199,10 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                             closewrite(stream)
                         end
                     elseif !(@atomic :acquire stream.head_committed)
-                        # startwrite ran but the response head was deferred (h1
-                        # FIXED mode) and never reached the wire: answer with a
-                        # raw error response instead of silently dropping the
-                        # connection (#1303).
+                        # Writing started but the response head was deferred
+                        # (h1 FIXED mode) and never reached the wire: answer
+                        # with a raw error response instead of silently
+                        # dropping the connection (#1303).
                         _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
                         return nothing
                     end

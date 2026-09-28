@@ -263,19 +263,32 @@ end
 """
     startwrite(stream) -> Response
 
-Start the response side of a server-side `Stream` and return the response
-metadata. Calling `write(stream, data)` starts writing automatically; use
-`startwrite` explicitly when you need headers to be sent before body bytes.
+Send the response head of a server-side `Stream` and return the response
+metadata; later writes go straight to the connection.
+
+`write(stream, data)` also starts the response, but a fixed-length
+(`Content-Length`) HTTP/1 response started that way is held in memory until
+`closewrite`, so the server can still send an error response if the handler
+throws or writes the wrong number of bytes. Call `startwrite` first to stream a
+large fixed-length body; a failure after that closes the connection instead.
 """
 function startwrite(stream::Stream)::Response
+    _server_startwrite!(stream)
+    _server_stream_buffered_fixed_h1(stream) && _write_buffered_fixed_head!(stream)
+    return stream.response
+end
+
+# Starts the response. A fixed-length HTTP/1 head is not sent here; its body
+# collects in `request_buffer` until `closewrite` or an explicit `startwrite`.
+function _server_startwrite!(stream::Stream)::Nothing
     _require_server_stream(stream)
     started = @atomic :acquire stream.response_started
-    started && return stream.response
+    started && return nothing
     !_stream_request_body_fully_consumed(stream) && (stream.response.close = true)
     !_server_stream_allows_body(stream) && (stream.ignore_writes = true)
     if _server_stream_buffered_h2(stream)
         @atomic :release stream.response_started = true
-        return stream.response
+        return nothing
     end
     if _server_stream_live_h2(stream)
         stream.write_mode = _server_stream_write_mode(stream)
@@ -285,7 +298,7 @@ function startwrite(stream::Stream)::Response
             stream.response.content_length = expected
         end
         _write_server_stream_head!(stream)
-        return stream.response
+        return nothing
     end
     stream.write_mode = _server_stream_write_mode(stream)
     if stream.write_mode == _ServerStreamWriteMode.FIXED
@@ -295,16 +308,28 @@ function startwrite(stream::Stream)::Response
             stream.response.content_length = expected
         end
         @atomic :release stream.response_started = true
-        return stream.response
+        return nothing
     end
     _write_server_stream_head!(stream)
-    return stream.response
+    return nothing
+end
+
+function _write_buffered_fixed_head!(stream::Stream)::Nothing
+    body_bytes = take!(stream.request_buffer)
+    # Bound the extra copy: large buffered bodies keep separate writes.
+    if length(body_bytes) <= 4096
+        _write_server_stream_head!(stream, body_bytes)
+    else
+        _write_server_stream_head!(stream)
+        _write_server_stream_bytes!(stream, body_bytes, false)
+    end
+    return nothing
 end
 
 function _server_write(stream::Stream, data::AbstractVector{UInt8})::Int
     _require_server_stream(stream)
     (@atomic :acquire stream.write_closed) && throw(ArgumentError("response writes are closed"))
-    startwrite(stream)
+    _server_startwrite!(stream)
     stream.ignore_writes && return length(data)
     if _server_stream_buffered_h2(stream) || _server_stream_live_h2(stream) || stream.write_mode == _ServerStreamWriteMode.FIXED
         if stream.response.content_length >= 0 && (stream.written_bytes + length(data)) > stream.response.content_length
@@ -338,7 +363,7 @@ function _server_closewrite(stream::Stream)::Nothing
     _require_server_stream(stream)
     was_closed = @atomic :acquire stream.write_closed
     was_closed && return nothing
-    startwrite(stream)
+    _server_startwrite!(stream)
     if _server_stream_buffered_h2(stream)
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length"))
@@ -374,14 +399,7 @@ function _server_closewrite(stream::Stream)::Nothing
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length"))
         end
-        body_bytes = take!(stream.request_buffer)
-        # Bound the extra copy: large buffered bodies keep separate writes.
-        if length(body_bytes) <= 4096
-            _write_server_stream_head!(stream, body_bytes)
-        else
-            _write_server_stream_head!(stream)
-            _write_server_stream_bytes!(stream, body_bytes, false)
-        end
+        _server_stream_buffered_fixed_h1(stream) && _write_buffered_fixed_head!(stream)
     elseif stream.write_mode == _ServerStreamWriteMode.CHUNKED
         io = IOBuffer()
         write(io, "0\r\n")

@@ -117,6 +117,28 @@ Stream handlers are the right tool when you need:
 - trailers or custom sequencing
 - long-lived handlers that cannot be expressed as a single eager `Response`
 
+### Fixed-Length Responses
+
+A stream handler that sets `Content-Length` on an HTTP/1 response and writes
+without calling `HTTP.startwrite` has its body held in memory until it
+returns or calls `closewrite`. Until then nothing is sent, so if the handler
+throws or writes the wrong number of bytes, the client gets an error response
+instead.
+
+To stream a large body, call `HTTP.startwrite` first. It sends the head at
+once, and each `write` goes straight to the connection:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    HTTP.setheader(stream, "Content-Length" => string(filesize(path)))
+    HTTP.startwrite(stream)
+    open(io -> write(stream, io), path)
+end
+```
+
+After `startwrite`, a failure can only close the connection. Either way,
+writing more than `Content-Length` bytes throws.
+
 ## Server Lifecycle
 
 The returned `Server` handle is operationally important. Hold onto it so you

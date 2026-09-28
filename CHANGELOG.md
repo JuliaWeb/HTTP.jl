@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   curl and Python accepted them. The 1 MiB header-block limit is unchanged and
   still bounds memory; the server-side request parser shares the new per-line
   default. ([#1362])
+- `HTTP.startwrite(stream)` now sends the head of a fixed-length HTTP/1 stream
+  response at once, as it already did for chunked and HTTP/2 responses, so a
+  handler can stream a large `Content-Length` body instead of holding all of
+  it until `closewrite`. A response started by `write` alone is still held, so
+  a handler failure can still get an error response. ([#1384])
 
 ### Fixed
 - HTTP and WebSocket client redirects resolve `Location` against the current
@@ -1013,4 +1018,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
 [#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377
 [#1381]: https://github.com/JuliaWeb/HTTP.jl/issues/1381
+[#1384]: https://github.com/JuliaWeb/HTTP.jl/issues/1384
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
