@@ -1418,6 +1418,21 @@ end
     @test HT.header(headers, "Cookie") == "a=1; b=2"
 end
 
+@testset "HTTP/2 server joins repeated request fields in one pass" begin
+    request_fields(n) = vcat(HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", "example.test", false),
+            HT.HeaderField(":path", "/", false),
+        ], [HT.HeaderField(isodd(i) ? "cookie" : "x-a", "a", false) for i in 1:n])
+    _, _, _, _, headers = HT._validate_h2_request_headers!(request_fields(4))
+    @test collect(headers) == ["Cookie" => "a; a", "X-A" => "a,a"]
+    small, large = request_fields(10_000), request_fields(20_000)
+    HT._validate_h2_request_headers!(small); HT._validate_h2_request_headers!(large)
+    # twice the repeated fields must cost about twice as much, not four times
+    @test @allocated(HT._validate_h2_request_headers!(large)) < 3 * @allocated(HT._validate_h2_request_headers!(small))
+end
+
 @testset "HTTP/2 server stores request header names in canonical form" begin
     fields = HT.HeaderField[
         HT.HeaderField(":method", "GET", false),

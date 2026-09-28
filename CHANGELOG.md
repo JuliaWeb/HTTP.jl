@@ -159,14 +159,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comma, so two adjacent calls produced `Cookie: a=1,b=2`. `cookies(::Request)`
   splits a `Cookie` header on `;` only, so that header parsed back as the single
   cookie `a="1,b=2"` and the second cookie was lost.
-- The HTTP/1 parser now joins repeated `Cookie` header lines with `"; "`, as
-  the HTTP/2 server already does for split `cookie` fields. It folded them with
-  the `appendheader` comma, so a request carrying `Cookie: a=1` and
-  `Cookie: b=2` was read by `cookies(::Request)` as the single cookie
-  `a="1,b=2"`.
+- The HTTP/1 parser now joins every `Cookie` line of a request into one
+  `Cookie` header with `"; "`, as the HTTP/2 server does. Adjacent lines were
+  joined with a comma, so `Cookie: a=1` followed by `Cookie: b=2` was read by
+  `cookies(::Request)` as the single cookie `a="1,b=2"`. ([#1386])
 - `appendheader` now joins repeated `Cookie` values with `"; "` instead of a
   comma, so `HTTP.get(url, ["Cookie" => "a=1", "Cookie" => "b=2"])` sends
   `Cookie: a=1; b=2` rather than the single cookie `a="1,b=2"`. ([#1386])
+- Received header sections are joined in linear time. Joining each repeated
+  line onto the previous one rebuilt the growing value, so an HTTP/1 request
+  made of 1 MiB of repeated header lines took about 3 s and 16 GiB of
+  allocation to parse; HTTP/2 request and response headers scaled the same
+  way. ([#1386])
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The

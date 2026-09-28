@@ -976,6 +976,61 @@ function appendheader(headers::Headers, key::AbstractString, value::AbstractStri
 end
 
 """
+    _fold_received_fields!(headers, separate=Returns(false)) -> headers
+
+Join a received header section stored one entry per line, in one pass: a line
+with the same name as the entry kept before it is joined onto that entry with a
+comma, as `appendheader` does, and every `Cookie` line onto the first `Cookie`
+entry with `"; "` (RFC 6265 §5.4). `Set-Cookie` lines and names for which
+`separate` returns true stay separate. Each joined value is built once, so
+repeated names cost linear rather than quadratic time.
+"""
+function _fold_received_fields!(headers::Headers, separate::F=Returns(false)) where {F}
+    entries = headers.entries
+    out = 0
+    run = nothing     # the value of entries[out] and the values joined onto it
+    cookie_at = 0
+    cookie = nothing  # the joined Cookie value, from the second Cookie line on
+    for i in eachindex(entries)
+        key, value = entries[i]
+        if _ascii_equal_fold(key, "Cookie") && cookie_at > 0
+            if cookie === nothing
+                cookie = IOBuffer()
+                write(cookie, last(entries[cookie_at]))
+            end
+            # no separator while the joined value is still empty
+            position(cookie) > 0 && write(cookie, "; ")
+            write(cookie, value)
+            continue
+        end
+        if out > 0 && _ascii_equal_fold(first(entries[out]), key) &&
+           !_ascii_equal_fold(key, "Set-Cookie") && !separate(key)
+            if run === nothing
+                run = IOBuffer()
+                write(run, last(entries[out]))
+            end
+            write(run, ',', value)
+            continue
+        end
+        _store_run!(entries, out, run)
+        run = nothing
+        out += 1
+        entries[out] = entries[i]
+        _ascii_equal_fold(key, "Cookie") && (cookie_at = out)
+    end
+    _store_run!(entries, out, run)
+    cookie === nothing || (entries[cookie_at] = first(entries[cookie_at]) => String(take!(cookie)))
+    resize!(entries, out)
+    return headers
+end
+
+@inline function _store_run!(entries::Vector{Pair{String,String}}, out::Int, run::Union{Nothing,IOBuffer})::Nothing
+    run === nothing && return nothing
+    entries[out] = first(entries[out]) => String(take!(run))
+    return nothing
+end
+
+"""
     removeheader(headers, key) -> Headers
 
 Remove every stored header for `key` and return the mutated `headers`.

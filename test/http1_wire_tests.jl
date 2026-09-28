@@ -93,6 +93,23 @@ end
     req = HT.read_request(IOBuffer(codeunits(raw)))
     @test HT.headers(req.headers, "Cookie") == ["a=1; b=2; c=3"]
     @test [(c.name, c.value) for c in HT.Cookies.cookies(req)] == [("a", "1"), ("b", "2"), ("c", "3")]
+    raw = "GET / HTTP/1.1\r\nHost: example.com\r\nCookie: \r\nCookie: b=2\r\n\r\n"
+    req = HT.read_request(IOBuffer(codeunits(raw)))
+    @test HT.headers(req.headers, "Cookie") == ["b=2"]
+end
+
+@testset "HTTP/1 header parse joins repeated lines in one pass" begin
+    raw = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1\r\nX-A: 1\r\nCookie: b=2\r\nX-A: 2\r\nx-a: 3\r\n" *
+          "Set-Cookie: s=1\r\nSet-Cookie: s=2\r\n\r\n"
+    req = HT.read_request(IOBuffer(codeunits(raw)))
+    @test collect(req.headers) == ["Host" => "x", "Cookie" => "a=1; b=2", "X-A" => "1,2,3",
+                                   "Set-Cookie" => "s=1", "Set-Cookie" => "s=2"]
+    repeated_lines(n) = codeunits("GET / HTTP/1.1\r\nHost: x\r\n" * "X-A: a\r\nCookie: c\r\n"^n * "\r\n")
+    readreq(bytes) = HT.read_request(IOBuffer(bytes))
+    small, large = repeated_lines(4_000), repeated_lines(8_000)
+    readreq(small); readreq(large)
+    # twice the repeated lines must cost about twice as much, not four times
+    @test @allocated(readreq(large)) < 3 * @allocated(readreq(small))
 end
 
 @testset "HTTP/1 header serialization preserves stored entries" begin
