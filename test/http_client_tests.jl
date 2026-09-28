@@ -1922,6 +1922,76 @@ end
     end
 end
 
+@testset "HTTP failing responses stay out of byte-buffer response_stream sinks" begin
+    error_body = repeat("<Error>NoSuchKey</Error>", 4)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        req.target == "/moved" && return HT.Response(302; headers = ["Location" => "/missing"], body = "moved")
+        req.target == "/unavailable" && return HT.Response(503; body = error_body)
+        if req.target == "/gzip"
+            return HT.Response(404; headers = ["Content-Encoding" => "gzip"], body = _gzip_bytes_client(error_body))
+        end
+        return HT.Response(404; body = error_body)
+    end
+    base_url = "http://127.0.0.1:$(HT.port(server))"
+    try
+        for protocol in (:h1, :h2)
+            # The status must not be lost to an "Unable to grow response stream"
+            # overflow, including after a followed redirect, after the last
+            # retry, and for a gzip-encoded error body.
+            for (path, status) in (("/missing", 404), ("/moved", 404), ("/unavailable", 503), ("/gzip", 404))
+                small = fill(0xff, 4)
+                err = try
+                    HT.get(base_url * path; protocol, response_stream = small, retries = 1, retry_bucket = false)
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa HT.StatusError
+                if err isa HT.StatusError
+                    @test err.status == status
+                    @test err.response.body == codeunits(error_body)
+                end
+                @test small == fill(0xff, 4)
+            end
+
+            storage = fill(0xff, 8)
+            err = try
+                HT.get(base_url * "/missing"; protocol, response_stream = view(storage, 3:6))
+                nothing
+            catch e
+                e
+            end
+            @test err isa HT.StatusError
+            err isa HT.StatusError && @test err.response.body == codeunits(error_body)
+            @test storage == fill(0xff, 8)
+
+            # A buffer that could hold the error body is not resized or overwritten either.
+            large = fill(0xff, 256)
+            @test_throws HT.StatusError HT.get(base_url * "/missing"; protocol, response_stream = large)
+            @test large == fill(0xff, 256)
+
+            small = fill(0xff, 4)
+            resp = HT.get(base_url * "/missing"; protocol, response_stream = small, status_exception = false)
+            @test resp.status == 404
+            @test resp.body == codeunits(error_body)
+            @test small == fill(0xff, 4)
+
+            # An unfollowed redirect is a result, as for `status_exception`.
+            resp = HT.get(base_url * "/moved"; protocol, response_stream = large, redirect = false)
+            @test resp.status == 302
+            @test resp.body === large
+            @test large == codeunits("moved")
+
+            # IO sinks still receive the final body, as in HTTP.jl 1.x.
+            io = IOBuffer()
+            @test_throws HT.StatusError HT.get(base_url * "/missing"; protocol, response_stream = io)
+            @test String(take!(io)) == error_body
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
 @testset "HTTP buffered request replay retains payload storage" begin
     payload = collect(codeunits("replay-body"))
     body = HT.BytesBody(payload)
