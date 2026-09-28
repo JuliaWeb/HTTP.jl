@@ -2041,6 +2041,85 @@ end
     end
 end
 
+@testset "HTTP/2 server allow_h2c controls cleartext HTTP/2" begin
+    handler = request -> HT.Response(200, "ok:" * request.target)
+    @test HT.Server(handler = handler).allow_h2c
+
+    server = HT.serve!(handler, "127.0.0.1", 0; listenany = true, allow_h2c = true)
+    try
+        conn, _ = _open_raw_h2_server_conn(HT.server_addr(server))
+        NC.close(conn)
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+
+    preface = IOBuffer()
+    write(preface, HT._H2_PREFACE)
+    HT.write_frame!(preface, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+    preface_bytes = take!(preface)
+    servers = HT.Server[
+        HT.serve!(handler, "127.0.0.1", 0; listenany = true, allow_h2c = false),
+        HT.serve!(handler, 0; listenany = true, allow_h2c = false),
+        HT.serve!(handler, NC.listen("tcp", "127.0.0.1:0"); allow_h2c = false),
+        HT.listen!(HT.streamhandler(handler), "127.0.0.1", 0; listenany = true, allow_h2c = false),
+        HT.listen!(HT.streamhandler(handler), 0; listenany = true, allow_h2c = false),
+        HT.listen!(HT.streamhandler(handler), NC.listen("tcp", "127.0.0.1:0"); allow_h2c = false),
+    ]
+    try
+        for server in servers
+            @test !server.allow_h2c
+            address = HT.server_addr(server)
+            # The HTTP/1 parser reads the preface as "PRI * HTTP/2.0" with no Host.
+            # A fixed-size read keeps an h2c reply (SETTINGS frames on an open
+            # connection) from hanging the test.
+            conn = ND.connect("tcp", address)
+            try
+                _write_all_h2_server_raw!(conn, preface_bytes)
+                @test String(read(conn, 12)) == "HTTP/1.1 400"
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+            response = HT.get("http://$(address)/h1"; retry = false)
+            @test response.status == 200
+            @test String(response.body) == "ok:/h1"
+        end
+    finally
+        for server in servers
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+
+    # TLS negotiates h2 through ALPN; allow_h2c does not apply.
+    tls_listener = Reseau.TLS.listen(
+        "tcp",
+        "127.0.0.1:0",
+        Reseau.TLS.Config(
+            verify_peer = false,
+            cert_file = joinpath(@__DIR__, "resources", "unittests.crt"),
+            key_file = joinpath(@__DIR__, "resources", "unittests.key"),
+            alpn_protocols = ["h2"],
+        );
+        backlog = 8,
+    )
+    server = HT.serve!(handler, tls_listener; allow_h2c = false)
+    client = HT.Client(
+        transport = HT.Transport(
+            tls_config = Reseau.TLS.Config(verify_peer = false, server_name = "localhost", alpn_protocols = ["h2"]),
+        ),
+    )
+    try
+        response = HT.get!(client, HT.server_addr(server), "/tls"; secure = true, protocol = :h2)
+        @test response.status == 200
+        @test String(_read_all_h2_server(response.body)) == "ok:/tls"
+    finally
+        close(client)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 # Regression coverage for the HTTP/2 Rapid-Reset / unbounded-stream hardening
 # (JLSEC-2026-611). Drives the internal decision helper and the live server.
 @testset "HTTP/2 server bounds concurrent streams (Rapid Reset)" begin

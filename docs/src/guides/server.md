@@ -298,3 +298,17 @@ clients, configure TLS so ALPN can select `h2`; for cleartext prior-knowledge
 clients, HTTP.jl accepts the HTTP/2 connection preface on the normal listener.
 Most applications do not need a separate server API for HTTP/2; use the normal
 `serve!`, `listen!`, and `streamhandler` surfaces.
+
+To serve only HTTP/1 on a plain listener, pass `allow_h2c = false`. A client
+that opens with the HTTP/2 preface then gets `400 Bad Request`:
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 8080; allow_h2c = false) do req
+    return HTTP.Response(200, "HTTP/1 only")
+end
+```
+
+`allow_h2c` does not affect TLS listeners, where the `alpn_protocols` of the
+listener's `TLS.Config` decide whether `h2` is offered.

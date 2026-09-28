@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP/1 client's per-line and header-block limits can be tuned per transport
   (`HTTP.Transport(max_line_bytes = 128 * 1024)`). Both must be positive and
   `max_line_bytes` may not exceed `max_header_bytes`. ([#1362])
+- Added an `allow_h2c` keyword to `Server`, `listen!`, `serve!` and `serve`.
+  With `allow_h2c = false`, plain TCP listeners parse every connection as
+  HTTP/1 instead of serving cleartext HTTP/2 (h2c) to clients that open with
+  the HTTP/2 preface. The default is unchanged, and TLS listeners still pick
+  `h2` through ALPN. ([#1385])
 
 ### Changed
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
@@ -1009,4 +1014,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
 [#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377
 [#1381]: https://github.com/JuliaWeb/HTTP.jl/issues/1381
+[#1385]: https://github.com/JuliaWeb/HTTP.jl/issues/1385
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
