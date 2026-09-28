@@ -495,8 +495,8 @@ function (middleware::_LoggingMiddleware)(stream::Stream)
     catch err
         # A committed head keeps its status, including transport failures that
         # may have sent part of it. Before commitment the server can still send
-        # an error status; fixed-length h1 heads started by `write` are
-        # deferred until closewrite.
+        # an error status; fixed-length h1 heads can be deferred until
+        # closewrite.
         status = (@atomic :acquire stream.head_committed) ? _access_stream_status(stream) : _access_error_status(err)
         _log_access(
             middleware, Logging.Error, request.method, request.target, status, stream.written_bytes, start_ns,

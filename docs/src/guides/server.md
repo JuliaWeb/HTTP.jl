@@ -125,8 +125,10 @@ returns or calls `closewrite`. Until then nothing is sent, so if the handler
 throws or writes the wrong number of bytes, the client gets an error response
 instead.
 
-To stream a large body, call `HTTP.startwrite` first. It sends the head at
-once, and each `write` goes straight to the connection:
+To stream a large body, call `HTTP.startwrite` first. The server still holds
+the first 4 KiB, so a small response goes out in one write with its head. Once
+the body passes 4 KiB, the head and the held bytes are sent, and each later
+`write` goes straight to the connection:
 
 ```julia
 HTTP.listen!("127.0.0.1", 8080) do stream
@@ -136,7 +138,7 @@ HTTP.listen!("127.0.0.1", 8080) do stream
 end
 ```
 
-After `startwrite`, a failure can only close the connection. Either way,
+Once the head is sent, a failure can only close the connection. Either way,
 writing more than `Content-Length` bytes throws. `HTTP.streamhandler` streams
 a response body this way when it is not already in memory, such as a
 `fileserver` file.
