@@ -186,6 +186,14 @@ end
     HT.appendheader(cookies, "Set-Cookie", "a=1")
     HT.appendheader(cookies, "Set-Cookie", "b=2")
     @test collect(cookies) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
+
+    # Cookie pairs are joined with "; ", the only separator a Cookie header has.
+    cookie = HT.Headers()
+    HT.appendheader(cookie, "Cookie", "a=1")
+    HT.appendheader(cookie, "cookie", "b=2")
+    @test collect(cookie) == ["Cookie" => "a=1; b=2"]
+    request = HT.Request("GET", "/"; headers = ["Cookie" => "a=1", "Cookie" => "b=2"])
+    @test [(c.name, c.value) for c in HT.Cookies.cookies(request)] == [("a", "1"), ("b", "2")]
 end
 
 @testset "Tuple header collections" begin

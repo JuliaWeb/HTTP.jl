@@ -164,6 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `appendheader` comma, so a request carrying `Cookie: a=1` and
   `Cookie: b=2` was read by `cookies(::Request)` as the single cookie
   `a="1,b=2"`.
+- `appendheader` now joins repeated `Cookie` values with `"; "` instead of a
+  comma, so `HTTP.get(url, ["Cookie" => "a=1", "Cookie" => "b=2"])` sends
+  `Cookie: a=1; b=2` rather than the single cookie `a="1,b=2"`. ([#1386])
 
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
@@ -985,3 +988,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1362]: https://github.com/JuliaWeb/HTTP.jl/issues/1362
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
 [#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377
+[#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386

@@ -951,8 +951,9 @@ Append a header value to `headers`.
 
 If the previous stored header has the same name (in any case) and the key is
 not `Set-Cookie`, the value is merged into the previous entry, which keeps its
-spelling, with a comma (no whitespace), as permitted by RFC 9110 §5.3 and
-required by common request-signing canonicalizations.
+spelling. `Cookie` values are joined with `"; "` (RFC 6265 §5.4); other values
+with a comma and no whitespace, as permitted by RFC 9110 §5.3 and required by
+common request-signing canonicalizations.
 Otherwise a new pair is appended. [`appendheader!`](@ref) is the same
 function under the conventional mutating-name spelling.
 """
@@ -961,7 +962,8 @@ function appendheader(headers::Headers, header::Pair)
     if !isempty(headers.entries)
         last_header = headers.entries[end]
         if !_ascii_equal_fold(first(item), "Set-Cookie") && _ascii_equal_fold(first(last_header), first(item))
-            headers.entries[end] = first(last_header) => string(last(last_header), ",", last(item))
+            sep = _ascii_equal_fold(first(item), "Cookie") ? "; " : ","
+            headers.entries[end] = first(last_header) => string(last(last_header), sep, last(item))
             return headers
         end
     end
