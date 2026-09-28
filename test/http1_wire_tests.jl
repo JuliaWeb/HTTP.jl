@@ -88,6 +88,13 @@ end
     @test take!(partial_io) == collect(codeunits("cdef"))
 end
 
+@testset "HTTP/1 request parse combines cookie lines with semicolons" begin
+    raw = "GET / HTTP/1.1\r\nHost: example.com\r\nCookie: a=1\r\nX-Test: one\r\nCookie: b=2\r\nCookie: c=3\r\n\r\n"
+    req = HT.read_request(IOBuffer(codeunits(raw)))
+    @test HT.headers(req.headers, "Cookie") == ["a=1; b=2; c=3"]
+    @test [(c.name, c.value) for c in HT.Cookies.cookies(req)] == [("a", "1"), ("b", "2"), ("c", "3")]
+end
+
 @testset "HTTP/1 header serialization preserves stored entries" begin
     headers = HT.Headers()
     push!(headers, "X-Test" => "one")

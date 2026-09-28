@@ -189,6 +189,9 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
         canon_key = canonical_header_key(key)
         if canon_key == "Content-Length" || canon_key == "Transfer-Encoding" || canon_key == "Host"
             push!(headers, canon_key => normalized)
+        elseif canon_key == "Cookie" && hasheader(headers, "Cookie")
+            # RFC 6265 5.4: cookie pairs are separated by "; ", not the appendheader comma
+            setheader(headers, "Cookie", string(header(headers, "Cookie"), "; ", normalized))
         else
             appendheader(headers, canon_key, normalized)
         end
