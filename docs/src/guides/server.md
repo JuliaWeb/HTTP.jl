@@ -169,8 +169,7 @@ For HTTP/1 connections, `read_header_timeout` limits request-head reads. After
 the headers, `read_timeout` starts a fresh budget for reading the request body.
 Between keep-alive requests, `idle_timeout` applies until bytes for the next
 request arrive; the header budget starts then. An idle timeout closes the
-connection without sending an unsolicited response. A timeout while reading a
-request head or body uses the server's request-timeout error handling.
+connection without sending an unsolicited response.
 
 The header and idle settings fall back to `read_timeout` when zero. If both a
 phase's setting and its fallback are zero, that phase has no read deadline.
