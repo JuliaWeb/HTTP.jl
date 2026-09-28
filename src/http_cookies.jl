@@ -191,7 +191,7 @@ slot.
 function addcookie! end
 
 function addcookie!(r::Request, c::Cookie)
-    # one Cookie header, pairs joined with "; " (RFC 6265 5.4); appendheader would join with ","
+    # one Cookie header holding every stored pair, joined with "; " (RFC 6265 5.4)
     setheader(r.headers, "Cookie" => stringify(join(headers(r.headers, "Cookie"), "; "), [c]))
     return r
 end

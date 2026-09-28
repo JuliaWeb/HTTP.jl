@@ -186,8 +186,9 @@ end
     HT.appendheader(cookies, "Set-Cookie", "a=1")
     HT.appendheader(cookies, "Set-Cookie", "b=2")
     @test collect(cookies) == ["Set-Cookie" => "a=1", "Set-Cookie" => "b=2"]
+end
 
-    # Cookie pairs are joined with "; ", the only separator a Cookie header has.
+@testset "appendheader joins Cookie values with a semicolon (RFC 6265 §5.4)" begin
     cookie = HT.Headers()
     HT.appendheader(cookie, "Cookie", "a=1")
     HT.appendheader(cookie, "cookie", "b=2")

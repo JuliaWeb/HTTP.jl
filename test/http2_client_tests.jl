@@ -226,6 +226,9 @@ end
     HT._decode_response_headers(small); HT._decode_response_headers(large)
     # twice the repeated fields must cost about twice as much, not four times
     @test @allocated(HT._decode_response_headers(large)) < 3 * @allocated(HT._decode_response_headers(small))
+    small, large = small[2:end], large[2:end]
+    HT._decode_h2_trailer_headers(small); HT._decode_h2_trailer_headers(large)
+    @test @allocated(HT._decode_h2_trailer_headers(large)) < 3 * @allocated(HT._decode_h2_trailer_headers(small))
 end
 
 @testset "HTTP/2 client validates response pseudo-headers" begin

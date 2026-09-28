@@ -104,7 +104,7 @@ end
     req = HT.read_request(IOBuffer(codeunits(raw)))
     @test collect(req.headers) == ["Host" => "x", "Cookie" => "a=1; b=2", "X-A" => "1,2,3",
                                    "Set-Cookie" => "s=1", "Set-Cookie" => "s=2"]
-    repeated_lines(n) = codeunits("GET / HTTP/1.1\r\nHost: x\r\n" * "X-A: a\r\nCookie: c\r\n"^n * "\r\n")
+    repeated_lines(n) = codeunits("GET / HTTP/1.1\r\nHost: x\r\n" * "X-A: a\r\n"^n * "X-B: b\r\nCookie: c\r\n"^n * "\r\n")
     readreq(bytes) = HT.read_request(IOBuffer(bytes))
     small, large = repeated_lines(4_000), repeated_lines(8_000)
     readreq(small); readreq(large)
