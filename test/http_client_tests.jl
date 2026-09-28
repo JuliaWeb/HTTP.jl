@@ -921,6 +921,110 @@ end
     @test HT.header(headers, "X-Keep", nothing) == "keep"
 end
 
+@testset "HTTP redirect reference resolution" begin
+    # RFC 3986 section 5.4, with fragments omitted from the HTTP request target.
+    for (location, expected) in [
+        ("g", "/b/c/g"), ("./g", "/b/c/g"), ("g/", "/b/c/g/"),
+        ("/g", "/g"), ("?y", "/b/c/d;p?y"), ("g?y", "/b/c/g?y"),
+        ("#s", "/b/c/d;p?q"), ("g#s", "/b/c/g"), ("g?y#s", "/b/c/g?y"),
+        (";x", "/b/c/;x"), ("g;x", "/b/c/g;x"), ("g;x?y#s", "/b/c/g;x?y"),
+        ("", "/b/c/d;p?q"), (".", "/b/c/"), ("./", "/b/c/"),
+        ("..", "/b/"), ("../", "/b/"), ("../g", "/b/g"),
+        ("../..", "/"), ("../../", "/"), ("../../g", "/g"),
+        ("../../../g", "/g"), ("../../../../g", "/g"),
+        ("/./g", "/g"), ("/../g", "/g"), ("g.", "/b/c/g."),
+        (".g", "/b/c/.g"), ("g..", "/b/c/g.."), ("..g", "/b/c/..g"),
+        ("./../g", "/b/g"), ("./g/.", "/b/c/g/"),
+        ("g/./h", "/b/c/g/h"), ("g/../h", "/b/c/h"),
+        ("g;x=1/./y", "/b/c/g;x=1/y"), ("g;x=1/../y", "/b/c/y"),
+        ("g?y/./x", "/b/c/g?y/./x"), ("g?y/../x", "/b/c/g?y/../x"),
+        ("g#s/./x", "/b/c/g"), ("g#s/../x", "/b/c/g"),
+        ("?", "/b/c/d;p?"), ("?#fragment", "/b/c/d;p?"),
+        ("?q=1#fragment", "/b/c/d;p?q=1"), ("g?", "/b/c/g?"),
+        ("g//h", "/b/c/g//h"), ("/a//b/../", "/a//"),
+        ("/a/..//.", "//"), ("/a/.//..", "/a/"),
+        ("/%2e/%2E%2e/%2f", "/%2e/%2E%2e/%2f"),
+        ("/日本/./é//..", "/日本/é/"),
+    ]
+        @test HT._resolve_redirect_target("a:80", false, location, "/b/c/d;p?q", "a") ==
+            ("a:80", false, expected, "a")
+    end
+    for location in ("", "#fragment")
+        @test HT._resolve_relative_redirect_request_target("/path?", location) == "/path?"
+        @test HT._resolve_relative_redirect_request_target("/path", location) == "/path"
+    end
+    for (path, expected) in [
+        ("", ""), (".", ""), ("..", ""), ("../a", "a"),
+        ("a/..", "/"), ("a/../b", "/b"), ("a//../b", "a/b"),
+        ("..//.", "/"), ("..//..", "/"), ("//.", "//"),
+        ("/a/..//.", "//"), ("/a/..//..", "/"),
+        (".../....", ".../...."), ("/a//b/", "/a//b/"),
+    ]
+        @test HT._remove_dot_segments(path) == expected
+    end
+    for prefix in ("http://next", "//next")
+        for (path, expected) in (("/a/./b//c/..", "/a/b//"), ("/a/../?", "/?"), ("?", "/?"))
+            @test HT._resolve_redirect_target("a:80", false, prefix * path, "/base?old", "a") ==
+                ("next:80", false, expected, "next")
+        end
+    end
+    @test HT._resolve_redirect_target("a:443", true, "//next/a/../b?", "/", "a") ==
+        ("next:443", true, "/b?", "next")
+end
+
+@testset "HTTP redirects preserve the request target on the wire" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    cases = [
+        ("/start/file", "d//e", "/start/d//e"),
+        ("/start/file", "/a//b/../", "/a//"),
+        ("/start/file?old", "?q=1#fragment", "/start/file?q=1"),
+        ("/start/file?old", "?", "/start/file?"),
+        ("/start/file?", "#fragment", "/start/file?"),
+        ("/start/file", "$(base_url)/a/./b/../c?", "/a/c?"),
+        ("/start/file", "//$(address)/a/./b//c/..", "/a/b//"),
+        ("/start/file", "../ordinary?x=2", "/ordinary?x=2"),
+        ("/start/file", "/%2e/%2E%2e/%2f?q=%23#fragment", "/%2e/%2E%2e/%2f?q=%23"),
+        ("/a/./b?old", "?new", "/a/./b?new"),
+    ]
+    seen_targets = String[]
+    server_task = errormonitor(Threads.@spawn begin
+        for (_, location, _) in cases
+            for redirect in (true, false)
+                conn = NC.accept(listener)
+                try
+                    request = HT.read_request(HT._ConnReader(conn))
+                    push!(seen_targets, request.target)
+                    if redirect
+                        _send_response_client!(conn, request; status = 302, reason = "Found",
+                            headers = HT.Headers(["Location" => location]), close_conn = true)
+                    else
+                        _send_response_client!(conn, request; body_text = request.target, close_conn = true)
+                    end
+                finally
+                    HTTP.@try_ignore NC.close(conn)
+                end
+            end
+        end
+    end)
+    client = HT.Client(request_timeout = 5.0)
+    try
+        for (start, _, expected) in cases
+            response = HT.get(base_url * start; client = client, retry = false)
+            @test response.status == 200
+            @test String(response.body) == expected
+            @test response.url == base_url * expected
+        end
+        _wait_task_client!(server_task)
+        @test seen_targets == [target for (start, _, expected) in cases for target in (start, expected)]
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP client redirect absolute location default ports" begin
     # `_resolve_redirect_target` returns `(address, secure, target, host_header)`.
     # `address` keeps the dial port; `host_header` mirrors the next hop's authority

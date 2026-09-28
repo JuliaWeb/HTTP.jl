@@ -260,9 +260,11 @@ end
     target_listener = nothing
     target_task = nothing
     ws = nothing
+    seen_target = Ref("")
     try
         target_listener, target_task, target_address = _ws_server() do conn
             request = _read_ws_request(conn)
+            seen_target[] = request.target
             @test HT.header(request.headers, "Cookie") == "session=abc"
             _accept_ws_request!(conn, request)
             server_ws = W.Conn(is_client = false)
@@ -272,12 +274,13 @@ end
         redirect_listener, redirect_task, redirect_address = _ws_server() do conn
             request = _read_ws_request(conn)
             headers = HT.Headers()
-            HT.setheader(headers, "Location", "ws://$target_address/final")
+            HT.setheader(headers, "Location", "ws://$target_address/a/../final//?q=1#fragment")
             HT.setheader(headers, "Set-Cookie", "session=abc; Path=/")
             _write_response_all!(conn, HT.Response(302, HT.EmptyBody(); headers = headers, content_length = 0))
         end
         ws = W.open("ws://$redirect_address/start"; cookiejar = HT.CookieJar())
         @test ws.handshake_response.status == 101
+        @test seen_target[] == "/final//?q=1"
     finally
         ws === nothing || HTTP.@try_ignore close(ws)
         _close_quiet!(redirect_listener)

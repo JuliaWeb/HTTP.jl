@@ -28,22 +28,23 @@ function _is_redirect_status(status::Int)::Bool
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
 end
 
-function _split_request_target(target::String)::Tuple{String,String}
-    current = isempty(target) ? "/" : target
+function _split_request_target(target::String)::Tuple{String,Union{Nothing,String}}
+    # An absent query may be inherited; an explicitly empty query must replace it.
+    current = target
     hash_idx = findfirst('#', current)
     hash_idx === nothing || (current = String(SubString(current, firstindex(current), prevind(current, hash_idx))))
     query_idx = findfirst('?', current)
     if query_idx === nothing
-        return isempty(current) ? "/" : current, ""
+        return current, nothing
     end
-    path = query_idx == firstindex(current) ? "/" : String(SubString(current, firstindex(current), prevind(current, query_idx)))
+    path = query_idx == firstindex(current) ? "" : String(SubString(current, firstindex(current), prevind(current, query_idx)))
     query = query_idx == lastindex(current) ? "" : String(SubString(current, nextind(current, query_idx), lastindex(current)))
-    return isempty(path) ? "/" : path, query
+    return path, query
 end
 
-function _join_request_target(path::String, query::String)::String
+function _join_request_target(path::String, query::Union{Nothing,String})::String
     final_path = isempty(path) ? "/" : path
-    isempty(query) && return final_path
+    query === nothing && return final_path
     return string(final_path, "?", query)
 end
 
@@ -63,23 +64,26 @@ function _merge_redirect_base_path(base_path::String, relative_path::String)::St
 end
 
 function _remove_dot_segments(path::String)::String
+    occursin('.', path) || return path
     absolute = startswith(path, "/")
-    trailing_slash = endswith(path, "/") || endswith(path, "/.") || endswith(path, "/..")
-    segments = split(path, '/'; keepempty=false)
-    stack = String[]
-    for segment in segments
+    terminal_dot = endswith(path, "/.") || endswith(path, "/..")
+    stack = SubString{String}[]
+    for (i, segment) in enumerate(eachsplit(path, '/'; keepempty=true))
+        i == 1 && absolute && continue
         if segment == "."
             continue
         elseif segment == ".."
-            isempty(stack) || pop!(stack)
+            if !isempty(stack)
+                pop!(stack)
+                # Removing the first segment also leaves the following slash.
+                isempty(stack) && (absolute = true)
+            end
         else
             push!(stack, segment)
         end
     end
-    normalized = absolute ? "/" : ""
-    normalized *= join(stack, "/")
-    isempty(normalized) && return absolute ? "/" : "."
-    if trailing_slash && normalized != "/"
+    normalized = (absolute ? "/" : "") * join(stack, "/")
+    if terminal_dot && !isempty(stack)
         normalized *= "/"
     end
     return normalized
@@ -87,19 +91,9 @@ end
 
 function _resolve_relative_redirect_request_target(current_target::String, location::String)::String
     base_path, base_query = _split_request_target(current_target)
-    startswith(location, "#") && return _join_request_target(base_path, base_query)
-    startswith(location, "?") && return _join_request_target(base_path, String(SubString(location, nextind(location, firstindex(location)), lastindex(location))))
-    reference = location
-    hash_idx = findfirst('#', reference)
-    hash_idx === nothing || (reference = String(SubString(reference, firstindex(reference), prevind(reference, hash_idx))))
-    query = ""
-    query_idx = findfirst('?', reference)
-    if query_idx !== nothing
-        query = query_idx == lastindex(reference) ? "" : String(SubString(reference, nextind(reference, query_idx), lastindex(reference)))
-        reference = query_idx == firstindex(reference) ? "" : String(SubString(reference, firstindex(reference), prevind(reference, query_idx)))
-    end
+    reference, query = _split_request_target(location)
     if isempty(reference)
-        return _join_request_target(base_path, query_idx === nothing ? base_query : query)
+        return _join_request_target(base_path, query === nothing ? base_query : query)
     end
     path = if startswith(reference, "/")
         _remove_dot_segments(reference)
@@ -219,11 +213,13 @@ function _resolve_redirect_target(current_address::String, current_secure::Bool,
         scheme = lowercase(String(scheme_match.captures[1]))
         (scheme == "http" || scheme == "https") || throw(ProtocolError("unsupported redirect location scheme '$scheme'"))
         parsed = _parse_http_url(location)
-        return parsed.address, parsed.secure, parsed.target, parsed.host_header
+        target = _resolve_relative_redirect_request_target("/", parsed.target)
+        return parsed.address, parsed.secure, target, parsed.host_header
     end
     if startswith(location, "//")
         parsed = _parse_http_url(string(current_secure ? "https:" : "http:", location))
-        return parsed.address, parsed.secure, parsed.target, parsed.host_header
+        target = _resolve_relative_redirect_request_target("/", parsed.target)
+        return parsed.address, parsed.secure, target, parsed.host_header
     end
     next_host_header = current_host_header === nothing ? current_address : current_host_header
     return current_address, current_secure, _resolve_relative_redirect_request_target(current_target, location), next_host_header

@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- HTTP and WebSocket client redirects resolve `Location` against the current
+  URL as RFC 3986 §5.2 specifies. A relative location lost repeated slashes
+  (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
+  fragment to the server, and absolute and `//host` locations kept their `.`
+  and `..` segments.
 - A byte-buffer `response_stream` (a vector or view) is left untouched when the
   status is 300 or above, other than a 301, 302, 303, 307, or 308 redirect. The
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than

@@ -48,6 +48,12 @@ Useful top-level request helpers:
 - `HTTP.request` for the fully general call shape
 - `HTTP.open` when you want streaming control instead of an eagerly consumed body
 
+Redirects resolve the `Location` header against the current request URL as
+[RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-5.2) specifies: `.`
+and `..` segments are removed, while repeated slashes and percent-encoded bytes
+are kept as-is. Fragments are never sent to the server. The path of the URL
+you pass to a request is sent unchanged.
+
 ## Streaming Responses
 
 `HTTP.open` gives you pull-based control over the response stream while still
