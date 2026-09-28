@@ -706,6 +706,8 @@ function _h2_preface_prefix_matches(prefix::Vector{UInt8})::Bool
 end
 
 function _probe_h2_preface!(server::Server, conn::TCP.Conn)::Tuple{Bool,_ServerPrefaceConn{TCP.Conn}}
+    # With h2c off, read nothing: the h1 path arms its own header deadline.
+    server.allow_h2c || return false, _ServerPrefaceConn(UInt8[], conn)
     # Cleartext HTTP/2 has no ALPN, so we sniff enough of the connection preface
     # to choose h2 and replay the same bytes into the h1 parser otherwise.
     _set_read_deadline_for_header!(server, conn)

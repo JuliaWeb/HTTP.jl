@@ -119,8 +119,9 @@ close(h1_only)
 On the server side, use the same `serve!` and `listen!` entrypoints. For browser
 and most production HTTP/2 traffic, run the server with TLS configured so ALPN
 can select `h2`. Cleartext HTTP/2 is accepted when the peer starts the
-connection with the HTTP/2 prior-knowledge preface; ordinary HTTP/1.1 upgrade
-requests are not a separate public server API.
+connection with the HTTP/2 prior-knowledge preface (pass `allow_h2c = false` to
+turn this off); ordinary HTTP/1.1 upgrade requests are not a separate public
+server API.
 
 ### Tuning flow-control windows
 

@@ -78,6 +78,12 @@ windows. It defaults to the protocol defaults so existing behavior is unchanged.
 Raising the windows improves single-stream throughput on links with non-trivial
 latency, where the default 64 KiB window would otherwise cap a transfer at roughly
 `window / RTT`.
+
+On plain TCP listeners, a connection that opens with the HTTP/2 preface is
+served as cleartext HTTP/2 (h2c). Set `allow_h2c=false` to parse every plain
+connection as HTTP/1, which answers the preface with `400 Bad Request`. TLS
+listeners select `h2` only through ALPN (the `alpn_protocols` of their
+`TLS.Config`) and ignore `allow_h2c`.
 """
 mutable struct Server{F}
     network::String
@@ -92,6 +98,7 @@ mutable struct Server{F}
     max_body_bytes::Int64
     http2_settings::HTTP2Settings
     max_concurrent_streams::Int
+    allow_h2c::Bool
     listenany::Bool
     reuseaddr::Bool
     backlog::Int
@@ -117,6 +124,7 @@ function Server(;
     max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -144,6 +152,7 @@ function Server(;
         Int64(max_body_bytes),
         http2_settings,
         Int(max_concurrent_streams),
+        allow_h2c,
         listenany,
         reuseaddr,
         Int(backlog),
@@ -1405,7 +1414,8 @@ Start a streaming HTTP server and return the running `Server`.
 request and writing the response. Timeout keywords ending in `_ns` are
 nanoseconds; `read_timeout`, `read_header_timeout`, `write_timeout`, and
 `idle_timeout` accept seconds. The older `readtimeout` keyword is accepted as a
-seconds-valued migration alias for `read_timeout`.
+seconds-valued migration alias for `read_timeout`. `allow_h2c=false` turns off
+cleartext HTTP/2 on plain TCP listeners; see [`Server`](@ref).
 
 Server tasks use Julia's `:interactive` thread pool. Configure at least one
 interactive thread; see [`Server`](@ref) and the [Server Guide](@ref).
@@ -1425,6 +1435,7 @@ function listen!(
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1444,6 +1455,7 @@ function listen!(
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
+        allow_h2c=allow_h2c,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1465,6 +1477,7 @@ function listen!(
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1486,6 +1499,7 @@ function listen!(
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
+        allow_h2c=allow_h2c,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1507,6 +1521,7 @@ function listen!(
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1530,6 +1545,7 @@ function listen!(
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
+        allow_h2c=allow_h2c,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1573,6 +1589,8 @@ Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
 keyword is accepted as a seconds-valued migration alias for `read_timeout`.
 Ordinary request handlers buffer request bodies before dispatch; `max_body_bytes`
 caps that buffering, and `0` restores the legacy unbounded behavior.
+`allow_h2c=false` turns off cleartext HTTP/2 on plain TCP listeners; see
+[`Server`](@ref).
 
 Server tasks use Julia's `:interactive` thread pool. Configure at least one
 interactive thread; see [`Server`](@ref) and the [Server Guide](@ref).
@@ -1594,6 +1612,7 @@ function serve!(
     max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1618,6 +1637,7 @@ function serve!(
         max_body_bytes=max_body_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
+        allow_h2c=allow_h2c,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1645,6 +1665,7 @@ function serve!(
     max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1674,6 +1695,7 @@ function serve!(
             max_body_bytes=max_body_bytes,
             http2_settings=http2_settings,
             max_concurrent_streams=max_concurrent_streams,
+            allow_h2c=allow_h2c,
             reuseaddr=reuseaddr,
             backlog=backlog,
         )
@@ -1702,6 +1724,7 @@ function serve!(
     max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1724,6 +1747,7 @@ function serve!(
         max_body_bytes=max_body_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
+        allow_h2c=allow_h2c,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1752,6 +1776,7 @@ function serve(
     max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
+    allow_h2c::Bool=true,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1773,6 +1798,7 @@ function serve(
         max_body_bytes=max_body_bytes,
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
+        allow_h2c=allow_h2c,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
