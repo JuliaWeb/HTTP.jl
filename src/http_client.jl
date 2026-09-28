@@ -2333,7 +2333,8 @@ Keyword arguments:
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body.
   A byte buffer is left untouched when the status is a failure (300 or above,
-  except redirects); that body is returned in `response.body` instead
+  other than a 301, 302, 303, 307, or 308 redirect); that body is returned in
+  `response.body` instead
 - `copyheaders`: `true` copies caller headers (the default). `false` transfers
   an existing `HTTP.Headers` collection to the operation. Do not access or
   mutate it until the call completes; final contents are unspecified. Other

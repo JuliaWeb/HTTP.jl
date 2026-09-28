@@ -72,12 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
-- A byte-vector `response_stream` no longer receives the body of a failing
-  response (300 or above, except redirects). The body goes to `response.body`
-  instead, so `StatusError` carries the whole error document and the caller's
-  buffer is untouched, as in HTTP.jl 1.x. Before, an error body larger than the
-  buffer threw `ArgumentError: Unable to grow response stream` and hid the
-  status. `IO` sinks still receive every final response body.
+- A byte-buffer `response_stream` (a vector or view) is left untouched when the
+  status is 300 or above, other than a 301, 302, 303, 307, or 308 redirect. The
+  body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
+  the buffer raises `StatusError` rather than `ArgumentError: Unable to grow
+  response stream`. `IO` sinks still receive every final response body.
 - The HTTP/2 client and server copy received trailers in one pass. They
   copied them name by name and rescanned the whole trailer block for each
   name, so a peer could cost seconds to minutes of CPU per stream by sending
