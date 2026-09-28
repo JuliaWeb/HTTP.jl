@@ -850,6 +850,28 @@ end
     end
 end
 
+@testset "HTTP server sends no 100 Continue after the response head" begin
+    # The handler sends its head before reading an Expect: 100-continue body;
+    # an interim response after that would land inside the response body.
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.startwrite(stream)
+        write(stream, read(stream))
+        return nothing
+    end
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nExpect: 100-continue\r\n\r\n")))
+        @test startswith(_read_until_server_marker(sock, "\r\n\r\n"), "HTTP/1.1 200 OK\r\n")
+        write(sock, Vector{UInt8}(codeunits("abc")))
+        @test String(read(sock)) == "3\r\nabc\r\n0\r\n\r\n"
+    finally
+        NC.close(sock)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server rejects unsupported Expect headers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
