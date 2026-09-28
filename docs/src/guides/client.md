@@ -48,12 +48,11 @@ Useful top-level request helpers:
 - `HTTP.request` for the fully general call shape
 - `HTTP.open` when you want streaming control instead of an eagerly consumed body
 
-Redirect locations are resolved against the current request URL. Literal `.`
-and `..` path segments are removed, including in absolute redirect URLs, while
-repeated slashes and percent-encoded bytes are preserved. A location of `?`
-replaces the query with an empty query; a fragment-only location preserves the
-current query. Fragments are never sent in the request target. Resolving a
-redirect does not normalize the caller's initial request URL.
+Redirects resolve the `Location` header against the current request URL as
+[RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-5.2) specifies: `.`
+and `..` segments are removed, while repeated slashes and percent-encoded bytes
+are kept as-is. Fragments are never sent to the server. The path of the URL
+you pass to a request is sent unchanged.
 
 ## Streaming Responses
 
