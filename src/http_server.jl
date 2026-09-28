@@ -784,16 +784,15 @@ end
 end
 
 function _set_read_deadline_for_header!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    _server_has_any_timeouts(server) || return nothing
     timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
-    timeout <= 0 && return nothing
     _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
 function _set_read_deadline_for_body!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    timeout = server.read_timeout_ns
-    timeout <= 0 && return nothing
-    _set_read_deadline!(conn, _deadline_after(timeout))
+    _server_has_any_timeouts(server) || return nothing
+    _set_read_deadline!(conn, _deadline_after(server.read_timeout_ns))
     return nothing
 end
 
@@ -1254,6 +1253,16 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             end
             _set_conn_state!(tracked, _ConnState.IDLE)
             _set_idle_deadline!(server, tracked.conn)
+            # Start the next header deadline only after request bytes arrive.
+            # Buffered pipeline bytes already belong to the next request.
+            if _conn_reader_available(reader) == 0
+                try
+                    _fill_conn_reader!(reader) == 0 && return nothing
+                catch err
+                    _classify_server_conn_error(err::Exception) == _SERVER_CONN_ERR_RETHROW && rethrow(err)
+                    return nothing
+                end
+            end
         end
     finally
         _finalize_server_conn!(server, tracked)

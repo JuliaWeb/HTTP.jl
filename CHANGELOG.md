@@ -82,6 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
   the buffer raises `StatusError` rather than `ArgumentError: Unable to grow
   response stream`. `IO` sinks still receive every final response body.
+- HTTP/1 server read deadlines now follow the request phase. `read_header_timeout`
+  no longer limits the request body (only `read_timeout` does) or the wait
+  between keep-alive requests (`idle_timeout`, else `read_timeout`), so a server
+  that sets only `read_header_timeout` keeps idle connections open. An idle
+  timeout or client close between requests no longer writes a `408` or `400`.
+  ([#1381])
 - The HTTP/2 client and server copy received trailers in one pass. They
   copied them name by name and rescanned the whole trailer block for each
   name, so a peer could cost seconds to minutes of CPU per stream by sending
@@ -1002,4 +1008,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1362]: https://github.com/JuliaWeb/HTTP.jl/issues/1362
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
 [#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377
+[#1381]: https://github.com/JuliaWeb/HTTP.jl/issues/1381
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
