@@ -106,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that sets only `read_header_timeout` keeps idle connections open. An idle
   timeout or client close between requests no longer writes a `408` or `400`.
   ([#1381])
+- HTTP/1 stream handlers no longer send `100 Continue` after the response head.
+  A handler that called `startwrite` before reading the body of an
+  `Expect: 100-continue` request put the interim response inside its own
+  response body.
 - The HTTP/2 client and server copy received trailers in one pass. They
   copied them name by name and rescanned the whole trailer block for each
   name, so a peer could cost seconds to minutes of CPU per stream by sending

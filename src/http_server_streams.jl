@@ -143,6 +143,8 @@ function _maybe_write_continue!(stream::Stream)::Nothing
     stream.message.proto_major == UInt8(2) && return nothing
     already_sent = @atomic :acquire stream.continue_sent
     already_sent && return nothing
+    # An interim response after the final head would land inside its body.
+    (@atomic :acquire stream.head_committed) && return nothing
     # We only acknowledge `Expect: 100-continue` once the handler actually tries
     # to consume the request body.
     headercontains(stream.message.headers, "Expect", "100-continue") || return nothing
