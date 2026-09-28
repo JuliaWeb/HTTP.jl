@@ -215,6 +215,22 @@ end
     @test collect(trailers) == ["Grpc-Status" => "0"]
 end
 
+@testset "HTTP/2 client joins repeated response fields in one pass" begin
+    response_fields(n) = vcat(HT.HeaderField[HT.HeaderField(":status", "200", false)],
+                              [HT.HeaderField("x-a", "a", false) for _ in 1:n])
+    _, headers = HT._decode_response_headers(response_fields(3))
+    @test collect(headers) == ["X-A" => "a,a,a"]
+    trailer_fields = [HT.HeaderField("x-a", "a", false) for _ in 1:3]
+    @test collect(HT._decode_h2_trailer_headers(trailer_fields)) == ["X-A" => "a,a,a"]
+    small, large = response_fields(10_000), response_fields(20_000)
+    HT._decode_response_headers(small); HT._decode_response_headers(large)
+    # twice the repeated fields must cost about twice as much, not four times
+    @test @allocated(HT._decode_response_headers(large)) < 3 * @allocated(HT._decode_response_headers(small))
+    small, large = small[2:end], large[2:end]
+    HT._decode_h2_trailer_headers(small); HT._decode_h2_trailer_headers(large)
+    @test @allocated(HT._decode_h2_trailer_headers(large)) < 3 * @allocated(HT._decode_h2_trailer_headers(small))
+end
+
 @testset "HTTP/2 client validates response pseudo-headers" begin
     @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[])
     @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[

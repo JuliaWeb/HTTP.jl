@@ -169,6 +169,9 @@ function _upcoming_header_keys(io::IO)::Int
     return 0
 end
 
+# Framing and Host lines stay separate so their checks see every line.
+_h1_separate_field(key::String)::Bool = key == "Content-Length" || key == "Transfer-Encoding" || key == "Host"
+
 function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Integer)::Headers
     max_header_bytes <= 0 && throw(ArgumentError("max_header_bytes must be > 0"))
     headers = Headers(_upcoming_header_keys(io))
@@ -177,7 +180,7 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
         line = _readline_crlf(io, max_line_bytes)
         consumed += ncodeunits(line) + 2
         consumed > max_header_bytes && throw(ProtocolError("HTTP/1 headers exceed configured max_header_bytes", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
-        isempty(line) && return headers
+        isempty(line) && return _fold_received_fields!(headers, _h1_separate_field)
         sep = findfirst(':', line)
         sep === nothing && throw(ParseError("malformed HTTP/1 header line (missing ':'): $(repr(line))"))
         key = String(SubString(line, firstindex(line), prevind(line, sep)))
@@ -186,12 +189,7 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
         value = _trim_http_ows(SubString(line, nextind(line, sep), lastindex(line)))
         normalized = _normalize_header_field_value(value)
         normalized === nothing && throw(ParseError("invalid HTTP/1 header field value for $(repr(key))"))
-        canon_key = canonical_header_key(key)
-        if canon_key == "Content-Length" || canon_key == "Transfer-Encoding" || canon_key == "Host"
-            push!(headers, canon_key => normalized)
-        else
-            appendheader(headers, canon_key, normalized)
-        end
+        push!(headers, canonical_header_key(key) => normalized)
     end
 end
 

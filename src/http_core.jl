@@ -951,8 +951,9 @@ Append a header value to `headers`.
 
 If the previous stored header has the same name (in any case) and the key is
 not `Set-Cookie`, the value is merged into the previous entry, which keeps its
-spelling, with a comma (no whitespace), as permitted by RFC 9110 §5.3 and
-required by common request-signing canonicalizations.
+spelling. `Cookie` values are joined with `"; "` (RFC 6265 §5.4); other values
+with a comma and no whitespace, as permitted by RFC 9110 §5.3 and required by
+common request-signing canonicalizations.
 Otherwise a new pair is appended. [`appendheader!`](@ref) is the same
 function under the conventional mutating-name spelling.
 """
@@ -961,7 +962,8 @@ function appendheader(headers::Headers, header::Pair)
     if !isempty(headers.entries)
         last_header = headers.entries[end]
         if !_ascii_equal_fold(first(item), "Set-Cookie") && _ascii_equal_fold(first(last_header), first(item))
-            headers.entries[end] = first(last_header) => string(last(last_header), ",", last(item))
+            sep = _ascii_equal_fold(first(item), "Cookie") ? "; " : ","
+            headers.entries[end] = first(last_header) => string(last(last_header), sep, last(item))
             return headers
         end
     end
@@ -971,6 +973,61 @@ end
 
 function appendheader(headers::Headers, key::AbstractString, value::AbstractString)
     return appendheader(headers, key => value)
+end
+
+"""
+    _fold_received_fields!(headers, separate=Returns(false)) -> headers
+
+Join a received header section stored one entry per line, in one pass: a line
+with the same name as the entry kept before it is joined onto that entry with a
+comma, as `appendheader` does, and every `Cookie` line onto the first `Cookie`
+entry with `"; "` (RFC 6265 §5.4). `Set-Cookie` lines and names for which
+`separate` returns true stay separate. Each joined value is built once, so
+repeated names cost linear rather than quadratic time.
+"""
+function _fold_received_fields!(headers::Headers, separate::F=Returns(false)) where {F}
+    entries = headers.entries
+    out = 0
+    run = nothing     # the value of entries[out] and the values joined onto it
+    cookie_at = 0
+    cookie = nothing  # the joined Cookie value, from the second Cookie line on
+    for i in eachindex(entries)
+        key, value = entries[i]
+        if _ascii_equal_fold(key, "Cookie") && cookie_at > 0
+            if cookie === nothing
+                cookie = IOBuffer()
+                write(cookie, last(entries[cookie_at]))
+            end
+            # no separator while the joined value is still empty
+            position(cookie) > 0 && write(cookie, "; ")
+            write(cookie, value)
+            continue
+        end
+        if out > 0 && _ascii_equal_fold(first(entries[out]), key) &&
+           !_ascii_equal_fold(key, "Set-Cookie") && !separate(key)
+            if run === nothing
+                run = IOBuffer()
+                write(run, last(entries[out]))
+            end
+            write(run, ',', value)
+            continue
+        end
+        _store_run!(entries, out, run)
+        run = nothing
+        out += 1
+        entries[out] = entries[i]
+        _ascii_equal_fold(key, "Cookie") && (cookie_at = out)
+    end
+    _store_run!(entries, out, run)
+    cookie === nothing || (entries[cookie_at] = first(entries[cookie_at]) => String(take!(cookie)))
+    resize!(entries, out)
+    return headers
+end
+
+@inline function _store_run!(entries::Vector{Pair{String,String}}, out::Int, run::Union{Nothing,IOBuffer})::Nothing
+    run === nothing && return nothing
+    entries[out] = first(entries[out]) => String(take!(run))
+    return nothing
 end
 
 """
