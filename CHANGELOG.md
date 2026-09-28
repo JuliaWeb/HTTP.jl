@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- HTTP and WebSocket client redirects resolve `Location` against the current
+  URL as RFC 3986 §5.2 specifies. A relative location lost repeated slashes
+  (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
+  fragment to the server, and absolute and `//host` locations kept their `.`
+  and `..` segments.
 - The HTTP/2 client and server copy received trailers in one pass. They
   copied them name by name and rescanned the whole trailer block for each
   name, so a peer could cost seconds to minutes of CPU per stream by sending
