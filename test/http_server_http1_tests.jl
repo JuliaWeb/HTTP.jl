@@ -350,6 +350,38 @@ end
     end
 end
 
+@testset "HTTP server ignores empty writes to a chunked response body" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        write(stream, "hello")
+        # Each of these used to go out as a zero-length chunk, which is the
+        # last-chunk marker, so the client saw the body end after "hello".
+        write(stream, UInt8[])
+        write(stream, codeunits(""))
+        write(stream, view(UInt8[0x61], 1:0))
+        write(stream, "")
+        write(stream, " world")
+        return nothing
+    end
+    address = HT.server_addr(server)
+    port = parse(Int, last(split(address, ':')))
+    try
+        @test String(HT.get("http://$(address)/").body) == "hello world"
+
+        raw = _raw_http_request(
+            port, "GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"
+        )
+        head, body = split(raw, "\r\n\r\n"; limit = 2)
+        @test occursin("transfer-encoding: chunked", lowercase(head))
+        @test body == "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server peeraddr exposes the client socket address" begin
     captured = Channel{Any}(1)
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
