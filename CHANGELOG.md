@@ -75,6 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   curl and Python accepted them. The 1 MiB header-block limit is unchanged and
   still bounds memory; the server-side request parser shares the new per-line
   default. ([#1362])
+- `HTTP.startwrite(stream)` now sends the head of a fixed-length HTTP/1 stream
+  response at once, as it already did for chunked and HTTP/2 responses, so a
+  handler can stream a large `Content-Length` body instead of holding all of
+  it until `closewrite`. A response started by `write` alone is still held, so
+  a handler failure can still get an error response. ([#1384])
+- `HTTP.streamhandler` streams a response body that is not already in memory,
+  such as a `fileserver` file, as `serve!` does, instead of holding all of it
+  until the handler finishes. ([#1384])
 
 ### Fixed
 - Requests with a zero-length streaming body can be copied for retries and
@@ -106,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that sets only `read_header_timeout` keeps idle connections open. An idle
   timeout or client close between requests no longer writes a `408` or `400`.
   ([#1381])
+- HTTP/1 stream handlers no longer send `100 Continue` after the response head.
+  A handler that called `startwrite` before reading the body of an
+  `Expect: 100-continue` request put the interim response inside its own
+  response body.
 - The HTTP/2 client and server copy received trailers in one pass. They
   copied them name by name and rescanned the whole trailer block for each
   name, so a peer could cost seconds to minutes of CPU per stream by sending
@@ -1027,6 +1039,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1371]: https://github.com/JuliaWeb/HTTP.jl/issues/1371
 [#1377]: https://github.com/JuliaWeb/HTTP.jl/issues/1377
 [#1381]: https://github.com/JuliaWeb/HTTP.jl/issues/1381
+[#1384]: https://github.com/JuliaWeb/HTTP.jl/issues/1384
 [#1385]: https://github.com/JuliaWeb/HTTP.jl/issues/1385
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
