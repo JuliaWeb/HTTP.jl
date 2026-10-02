@@ -788,6 +788,30 @@ Stream handlers are the right tool when you need:
 - trailers or custom sequencing
 - long-lived handlers that cannot be expressed as a single eager `Response`
 
+### Fixed-Length Responses
+
+A stream handler that sets `Content-Length` on an HTTP/1 response and writes
+without calling `HTTP.startwrite` has its body held in memory until it
+returns or calls `closewrite`. Until then nothing is sent, so if the handler
+throws or writes the wrong number of bytes, the client gets an error response
+instead.
+
+To stream a large body, call `HTTP.startwrite` first. It sends the head at
+once, and each `write` goes straight to the connection:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    HTTP.setheader(stream, "Content-Length" => string(filesize(path)))
+    HTTP.startwrite(stream)
+    open(io -> write(stream, io), path)
+end
+```
+
+After `startwrite`, a failure can only close the connection. Either way,
+writing more than `Content-Length` bytes throws. `HTTP.streamhandler` streams
+a response body this way when it is not already in memory, such as a
+`fileserver` file.
+
 ## Server Lifecycle
 
 The returned `Server` handle is operationally important. Hold onto it so you
@@ -3705,9 +3729,14 @@ attached to `stream` itself, so handlers should read it with `read(stream)` or
 
     startwrite(stream) -> Response
 
-Start the response side of a server-side `Stream` and return the response
-metadata. Calling `write(stream, data)` starts writing automatically; use
-`startwrite` explicitly when you need headers to be sent before body bytes.
+Send the response head of a server-side `Stream` and return the response
+metadata; later writes go straight to the connection.
+
+`write(stream, data)` also starts the response, but a fixed-length
+(`Content-Length`) HTTP/1 response started that way is held in memory until
+`closewrite`, so the server can still send an error response if the handler
+throws or writes the wrong number of bytes. Call `startwrite` first to stream a
+large fixed-length body; a failure after that closes the connection instead.
 
 ### `HTTP.setstatus` — Function
 
