@@ -1,5 +1,6 @@
 using Test
 using HTTP
+using Reseau
 
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
@@ -24,6 +25,40 @@ end
 
 function _run_trim_executable(run_cmd)
     return _run_trim_command(run_cmd)
+end
+
+function _run_trim_h1_upload(run_cmd)
+    outputs = String[]
+    for method in ("GET", "POST")
+        listener = Reseau.TCP.listen(Reseau.TCP.loopback_addr(0))
+        address = "127.0.0.1:$(Int(Reseau.TCP.addr(listener).port))"
+        peer = errormonitor(Threads.@spawn begin
+            conn = Reseau.TCP.accept(listener)
+            try
+                request = HTTP.read_request(HTTP._ConnReader(conn))
+                body = HTTP._read_all_response_bytes(request.body, request.content_length)
+                HTTP.body_close!(request.body)
+                @test request.method == method
+                @test request.target == "/upload"
+                @test String(body) == (method == "GET" ? "" : "writer-native-test")
+                write(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            finally
+                close(conn)
+            end
+        end)
+        exit_code, output = try
+            _run_trim_executable(addenv(`$run_cmd $method $address`, "JULIA_LOAD_CODEGEN_LIB" => "0"))
+        finally
+            close(listener)
+        end
+        push!(outputs, output)
+        if exit_code != 0
+            HTTP.@try_ignore wait(peer)
+            return exit_code, join(outputs, '\n')
+        end
+        fetch(peer)
+    end
+    return 0, join(outputs, '\n')
 end
 
 function _run_trim_command(cmd::Cmd)
@@ -83,7 +118,7 @@ function _trim_run_task_backed_executables()::Bool
     return get(ENV, "HTTP_TRIM_RUN_TASK_EXECUTABLES", "0") == "1"
 end
 
-function _run_trim_case(project_path::String, script_file::String, output_name::String)
+function _run_trim_case(project_path::String, script_file::String, output_name::String; run_executable = _run_trim_executable)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
     println("[trim] compile START $(script_file)")
@@ -111,12 +146,19 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             run_path = bundle_dir === nothing ? output_path : joinpath(bundle_dir, "bin", output_path)
             @test exit_code == 0
             @test isfile(run_path)
+            if script_file == "http_trim_client_h1_upload.jl" && VERSION < v"1.13.0"
+                # Julia 1.12's trimmed networking runtime can stall before even
+                # a bodyless GET reaches the external peer. Keep verifier coverage.
+                println("[trim] run SKIP $(script_file): native networking requires Julia 1.13 or newer")
+                @test_skip VERSION >= v"1.13.0"
+                return nothing
+            end
             if _trim_task_backed_workload(script_path) && !_trim_run_task_backed_executables()
                 println("[trim] run SKIP $(script_file): task-backed trimmed executables currently hang in the Julia runtime; compile verifier stayed strict")
                 return nothing
             end
             run_cmd = Sys.iswindows() ? `$(abspath(run_path))` : `$(abspath(run_path))`
-            run_exit, run_output = _run_trim_executable(run_cmd)
+            run_exit, run_output = run_executable(run_cmd)
             if run_exit != 0
                 _maybe_print_output("---- trim executable output ($(script_file)) ----", run_output)
             end
@@ -153,6 +195,7 @@ end
             ("http_trim_client_h1_raw.jl", "http_trim_client_h1_raw"),
             ("http_trim_client_h1_wire.jl", "http_trim_client_h1_wire"),
             ("http_trim_client_h1_roundtrip.jl", "http_trim_client_h1_roundtrip"),
+            ("http_trim_client_h1_upload.jl", "http_trim_client_h1_upload"),
             ("http_trim_client_h2_wire.jl", "http_trim_client_h2_wire"),
             ("http_trim_client_h2_tcp_roundtrip.jl", "http_trim_client_h2_tcp_roundtrip"),
             ("http_trim_client_h2_roundtrip.jl", "http_trim_client_h2_roundtrip"),
@@ -168,7 +211,8 @@ end
         ]
         trim_workloads = _trim_selected_workloads(trim_workloads)
         for (script_file, output_name) in trim_workloads
-            _run_trim_case(project_path, script_file, output_name)
+            runner = script_file == "http_trim_client_h1_upload.jl" ? _run_trim_h1_upload : _run_trim_executable
+            _run_trim_case(project_path, script_file, output_name; run_executable = runner)
         end
     end
 end

@@ -111,6 +111,17 @@ end
     @test_throws ArgumentError HT.Transport(max_conns_per_host = -1)
 end
 
+@testset "HTTP request head wait propagates a failed writer without progress" begin
+    state = HT._RequestWriteState(false)
+    writer = Task(() -> error("writer failed before publishing progress"))
+    schedule(writer)
+    @test_throws TaskFailedException HT._wait_request_head!(state, writer, Int64(0))
+    @test !HT._request_write_head_written(state)
+    @test !HT._request_write_done(state)
+    @test istaskfailed(writer)
+    @test_throws TaskFailedException HT._wait_request_head!(state, writer, Int64(1))
+end
+
 @testset "HTTP transport waiter uses deterministic wake state" begin
     transport = HT.Transport()
     waiter = HT._ConnWaiter("http://waiter.test")
@@ -773,6 +784,68 @@ end
         isready(release_second_chunk) || put!(release_second_chunk, nothing)
         close(transport)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP upload failure and cancellation release the body and connection" begin
+    for action in (:fail, :cancel)
+        listener = NC.listen(NC.loopback_addr(0))
+        address = "127.0.0.1:$(Int(NC.addr(listener).port))"
+        transport = HT.Transport(; proxy = HT.ProxyConfig(), max_conns_per_host = 1)
+        context = HT.RequestContext()
+        body_started = Base.Event()
+        release_body = Base.Event()
+        body_closed = Base.Event()
+        close_count = Ref(0)
+        body = HT.CallbackBody(
+            dst -> begin
+                notify(body_started)
+                wait(release_body)
+                action == :fail && error("upload source failed")
+                dst[1] = 0x78
+                return 1
+            end,
+            () -> begin
+                close_count[] += 1
+                notify(body_closed)
+            end,
+        )
+        peer = errormonitor(Threads.@spawn begin
+            conn = NC.accept(listener)
+            try
+                request = HT.read_request(HT._ConnReader(conn))
+                @test request.method == "POST"
+                @test isempty(read(conn))
+            finally
+                close(conn)
+            end
+        end)
+        request = HT.Request("POST", "/upload"; host = address, body = body,
+            content_length = 1, context = context)
+        upload = errormonitor(Threads.@spawn try
+            HT.roundtrip!(transport, address, request)
+        catch err
+            err
+        end)
+        try
+            wait(body_started)
+            if action == :cancel
+                HT.cancel!(context)
+            else
+                notify(release_body)
+            end
+            @test fetch(upload) isa Exception
+            notify(release_body)
+            wait(body_closed)
+            @test close_count[] == 1
+            @test isempty(context.cancel_callbacks)
+            @test isempty(transport.conns_per_host)
+            fetch(peer)
+        finally
+            notify(release_body)
+            close(transport)
+            close(listener)
+        end
     end
 end
 

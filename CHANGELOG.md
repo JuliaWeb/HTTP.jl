@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
+  waits also propagate failed writer tasks instead of waiting indefinitely.
+  ([#1390])
 - An empty `write` to a server stream (`write(stream, UInt8[])`, an empty
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the
@@ -1020,3 +1023,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1381]: https://github.com/JuliaWeb/HTTP.jl/issues/1381
 [#1385]: https://github.com/JuliaWeb/HTTP.jl/issues/1385
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
+[#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
