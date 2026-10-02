@@ -39,6 +39,40 @@ end
     end
 end
 
+@testset "Request copies retain first-send streaming ownership" begin
+    for content_length in (0, 1, -1)
+        closed = Ref(0)
+        body = HTTP.CallbackBody(dst -> error("copying must not read the producer"), () -> (closed[] += 1))
+        request = HTTP.Request("POST", "/"; body, content_length)
+        first_send = HTTP._copy_request_for_send(request, true)
+        @test first_send.body === body
+        @test first_send.headers !== request.headers
+        if content_length == 0
+            replay = HTTP._copy_request_for_send(request)
+            @test replay.body isa HTTP.EmptyBody
+            @test replay.content_length == 0
+        else
+            @test_throws HTTP.ProtocolError HTTP._copy_request_for_send(request)
+        end
+        @test closed[] == 0
+        HTTP.body_close!(first_send.body)
+        HTTP.body_close!(request.body)
+        @test closed[] == 1
+    end
+    for content_length in (0, 3)
+        body = HTTP.BytesBody(UInt8[0x61, 0x62, 0x63])
+        request = HTTP.Request("POST", "/"; body, content_length)
+        first_send = HTTP._copy_request_for_send(request, true)
+        replay = HTTP._copy_request_for_send(request)
+        @test first_send.body !== body && replay.body !== body && replay.body !== first_send.body
+        @test first_send.body.data === body.data && replay.body.data === body.data
+        @test HTTP.body_read!(first_send.body, zeros(UInt8, 1)) == 1
+        @test body.next_index == replay.body.next_index == 1
+        HTTP.body_close!(first_send.body)
+        @test !HTTP.body_closed(body) && !HTTP.body_closed(replay.body)
+    end
+end
+
 # Downstream bodies can implement only the original Vector destination contract.
 struct _VectorOnlyTransferBody <: HTTP.AbstractBody
     data::IOBuffer
