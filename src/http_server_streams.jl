@@ -304,6 +304,10 @@ function _server_write(stream::Stream, data::AbstractVector{UInt8})::Int
     (@atomic :acquire stream.write_closed) && throw(ArgumentError("response writes are closed"))
     startwrite(stream)
     stream.ignore_writes && return length(data)
+    # Nothing to send. In chunked mode an empty write would otherwise be framed
+    # as a zero-length chunk, which is the last-chunk marker and ends the body;
+    # `unsafe_write` already returns early for `n == 0`.
+    isempty(data) && return 0
     if _server_stream_buffered_h2(stream) || _server_stream_live_h2(stream) || stream.write_mode == _ServerStreamWriteMode.FIXED
         if stream.response.content_length >= 0 && (stream.written_bytes + length(data)) > stream.response.content_length
             throw(ProtocolError("response body bytes exceeded Content-Length"))
