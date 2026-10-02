@@ -206,6 +206,42 @@ end
     @test HT.header(parsed_response.trailers, "X-Custom") == "yes"
 end
 
+@testset "HTTP/1 fixed-length streams reuse a bounded body buffer" begin
+    payload = UInt8[i % 251 for i in 1:(32 * 1024 + 3)]
+    suffix = UInt8[0xff, 0xfe, 0xfd]
+    plan = HT._ProxyPlan(HT._ProxyPlanMode.DIRECT, nothing, "example.com", "http://example.com")
+    for mode in (:request, :response, :transport), read_limit in (typemax(Int), 997)
+        source = IOBuffer(vcat(payload, suffix))
+        buffers = Vector{UInt8}[]
+        body = HT.CallbackBody(
+            dst -> begin
+                push!(buffers, dst)
+                return readbytes!(source, dst, min(length(dst), read_limit))
+            end,
+            () -> nothing,
+        )
+        io = IOBuffer()
+        if mode == :response
+            HT.write_response!(io, HT.Response(200, body; content_length = length(payload)))
+        else
+            request = HT.Request("POST", "/upload"; host = "example.com", body = body,
+                content_length = length(payload))
+            if mode == :request
+                HT.write_request!(io, request)
+            else
+                @test HT._write_request_streaming!(IOBuffer(), io, request, plan)
+            end
+        end
+        wire = IOBuffer(take!(io))
+        message = mode == :response ? HT._read_response(wire) : HT.read_request(wire)
+        @test message.content_length == length(payload)
+        @test _read_all_body_bytes(message.body) == payload
+        @test read(source) == suffix
+        @test length(buffers) > 1
+        @test all(buffer -> buffer === first(buffers), buffers)
+    end
+end
+
 @testset "HTTP/1 serializes text and byte-vector response bodies" begin
     text_response = HT.Response(404, "Not found")
     text_io = IOBuffer()
