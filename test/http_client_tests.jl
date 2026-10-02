@@ -658,6 +658,56 @@ end
     end
 end
 
+@testset "Empty streaming requests preserve ownership across sends and replays" begin
+    for protocol in (:h1, :h2), mode in (:get, :redirect, :retry)
+        seen = Tuple{String,String,Vector{UInt8},Int}[]
+        server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            push!(seen, (request.method, request.target, _read_all_body_bytes_client(request.body), request.proto_major))
+            if length(seen) == 1 && mode == :redirect
+                return HT.Response(307, "redirect"; headers = HT.Headers(["Location" => "/final"]))
+            elseif length(seen) == 1 && mode == :retry
+                return HT.Response(503, "retry"; headers = HT.Headers(["Retry-After" => "0"]))
+            end
+            return HT.Response(200, "ok")
+        end
+        address = "127.0.0.1:$(HT.port(server))"
+        client = HT.Client(; transport = HT.Transport(; proxy = HT.ProxyConfig()),
+            prefer_http2 = false, cookiejar = nothing)
+        close_count = Ref(0)
+        body = HT.CallbackBody(dst -> begin
+            protocol == :h1 && error("an empty HTTP/1 body must not be read")
+            return 0
+        end, () -> (close_count[] += 1))
+        method = mode == :get ? "GET" : "POST"
+        request = HT.Request(method, "/start"; host = address, body, content_length = 0)
+        try
+            response = if mode == :get && protocol == :h1
+                HT.roundtrip!(client.transport, address, request)
+            elseif mode != :retry
+                HT.do!(client, address, request; protocol, cookies = false)
+            else
+                bucket = HT.RetryBucket(; backoff_scale_factor_ms = 0, max_backoff_secs = 0)
+                controller = HT._retry_controller(client, true, 1, true, nothing, true, bucket)
+                incoming = HT._do_incoming!(nothing, client, address, request, false, nothing,
+                    protocol, HT._redirect_policy(client), controller, client.transport.proxy, false, nothing)
+                HT._streaming_response(incoming)
+            end
+            @test response.status == 200
+            @test String(_read_all_body_bytes_client(response.body)) == "ok"
+            @test close_count[] == 1
+            @test HT.body_closed(body)
+            version = protocol == :h1 ? 1 : 2
+            expected = [(method, "/start", UInt8[], version)]
+            mode == :redirect && push!(expected, (method, "/final", UInt8[], version))
+            mode == :retry && push!(expected, (method, "/start", UInt8[], version))
+            @test seen == expected
+        finally
+            close(client)
+            HT.forceclose(server)
+        end
+    end
+end
+
 @testset "HTTP client redirect referer behavior" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

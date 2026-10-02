@@ -784,16 +784,19 @@ end
 function _clone_body(body::AbstractBody)::AbstractBody
     body isa EmptyBody && return EmptyBody()
     body isa BytesBody && return _clone_bytes_body(body::BytesBody)
-    throw(ProtocolError("request body is not replayable for redirect"))
+    throw(ProtocolError("request body is not replayable"))
 end
 
 function _copy_request(request::Request)
+    # A declared empty payload needs no producer when it is replayed.
+    body = request.content_length == 0 && !_body_replayable(request.body) ?
+        EmptyBody() : _clone_body(request.body)
     return _request_nocopy(
         request.method,
         request.target,
         copy(request.headers),
         copy(request.trailers),
-        _clone_body(request.body),
+        body,
         request.host,
         request.content_length,
         request.proto_major,
@@ -819,19 +822,10 @@ function _copy_request_shallow_body(request::Request)
     )
 end
 
-@inline function _is_nonreplayable_body_error(err)::Bool
-    err isa ProtocolError || return false
-    return occursin("request body is not replayable for redirect", (err::ProtocolError).message)
-end
-
 function _copy_request_for_send(request::Request, allow_nonreplayable::Bool=false)::Request
-    if allow_nonreplayable
-        try
-            return _copy_request(request)
-        catch err
-            _is_nonreplayable_body_error(err) || rethrow(err)
-            return _copy_request_shallow_body(request)
-        end
+    if allow_nonreplayable && !_body_replayable(request.body)
+        # The first send retains the producer so the transport closes it.
+        return _copy_request_shallow_body(request)
     end
     return _copy_request(request)
 end

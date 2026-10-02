@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- Requests with a zero-length streaming body can be copied for retries and
+  redirects. The first send retains and closes the producer; later sends replay
+  the empty payload without trying to clone the producer.
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.

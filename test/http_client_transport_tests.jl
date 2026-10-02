@@ -1297,8 +1297,8 @@ end
     end
 end
 
-@testset "HTTP client transport retries stale PUT and DELETE requests" begin
-    for (method, payload) in (("PUT", "payload"), ("DELETE", ""))
+@testset "HTTP client transport retries replayable requests on stale connections" begin
+    for (method, payload) in (("PUT", "payload"), ("DELETE", ""), ("GET", ""))
         listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
         address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
         first_conn_closed = Channel{Nothing}(1)
@@ -1331,12 +1331,16 @@ end
             @test String(_read_all_transport_body_bytes(warmup_response.body)) == "warmup"
             take!(first_conn_closed)
 
-            body = isempty(payload) ? HT.EmptyBody() : HT.BytesBody(collect(codeunits(payload)))
+            close_count = Ref(0)
+            body = method == "GET" ?
+                HT.CallbackBody(dst -> error("an empty HTTP/1 body must not be read"), () -> (close_count[] += 1)) :
+                isempty(payload) ? HT.EmptyBody() : HT.BytesBody(collect(codeunits(payload)))
             request = HT.Request(method, "/retry"; host = address, body = body, content_length = ncodeunits(payload))
             response = HT.roundtrip!(transport, address, request)
             @test String(_read_all_transport_body_bytes(response.body)) == "recovered"
             _wait_task!(server_task)
             @test seen == [("GET", ""), (method, payload)]
+            method == "GET" && @test close_count[] == 1
         finally
             close(transport)
             HTTP.@try_ignore NC.close(listener)
