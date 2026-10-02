@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. ([#1362])
 
 ### Fixed
+- Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
+  reducing allocation for both uploads and response serialization. Short reads
+  no longer allocate a new buffer each time.
 - Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
   waits also propagate failed writer tasks instead of waiting indefinitely.
   ([#1390])

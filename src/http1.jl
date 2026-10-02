@@ -624,10 +624,10 @@ end
 function _write_exact_body!(io::IO, body::AbstractBody, expected_len::Int64)
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
     expected_len == 0 && return nothing
+    buf = Vector{UInt8}(undef, Int(min(Int64(16 * 1024), expected_len)))
     remaining = expected_len
     while remaining > 0
-        to_read = Int(min(Int64(16 * 1024), remaining))
-        buf = Vector{UInt8}(undef, to_read)
+        remaining < length(buf) && resize!(buf, Int(remaining))
         n = body_read!(body, buf)
         n > 0 || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
         write(io, n == length(buf) ? buf : @view(buf[1:n]))

@@ -491,11 +491,11 @@ function _write_exact_body_transport!(
 )::Bool
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
     expected_len == 0 && return true
+    buf = Vector{UInt8}(undef, Int(min(Int64(_TRANSPORT_WRITE_BODY_CHUNK_BYTES), expected_len)))
     remaining = expected_len
     while remaining > 0
         _request_write_should_stop(write_state) && return false
-        to_read = Int(min(Int64(_TRANSPORT_WRITE_BODY_CHUNK_BYTES), remaining))
-        buf = Vector{UInt8}(undef, to_read)
+        remaining < length(buf) && resize!(buf, Int(remaining))
         n = body_read!(body, buf)
         n > 0 || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
         _request_write_should_stop(write_state) && return false
