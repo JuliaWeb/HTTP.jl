@@ -445,6 +445,22 @@ end
     return _request_write_head_written(write_state) || _request_write_done(write_state)
 end
 
+function _wait_request_head!(write_state::_RequestWriteState, writer_task::Task, request_deadline::Int64)::Nothing
+    head_ready = () -> _request_write_head_written_or_done(write_state) || istaskdone(writer_task)
+    if request_deadline == 0
+        while !head_ready()
+            IOPoll.timedwait(head_ready, 0.05; pollint=0.001)
+        end
+    else
+        status = IOPoll.timedwait(head_ready, max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+        status == :timed_out && throw(IOPoll.DeadlineExceededError())
+    end
+    if _request_write_done(write_state) || istaskdone(writer_task)
+        wait(writer_task)
+    end
+    return nothing
+end
+
 function _expect_continue_deadline_ns(request_deadline::Int64)::Int64
     now_ns = Int64(time_ns())
     timeout_deadline = now_ns > typemax(Int64) - _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS ? typemax(Int64) : now_ns + _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS
@@ -890,6 +906,32 @@ function _write_request_streaming!(
         return _write_exact_bytes_body_transport!(stream, body::BytesBody, request.content_length, write_state)
     end
     return _write_exact_body_transport!(stream, body, request.content_length, write_state)
+end
+
+# Keep task captures concrete so ahead-of-time compilation retains its entry method.
+function _start_request_writer!(
+    request_io::IOBuffer,
+    stream::S,
+    request::Request,
+    plan::_ProxyPlan,
+    write_state::_RequestWriteState,
+    request_deadline::Int64,
+    conn::Conn,
+    writer_err::Base.RefValue{Union{Nothing,Exception}},
+) where {S}
+    return Threads.@spawn begin
+        try
+            _write_request_streaming!(request_io, stream, request, plan, write_state, request_deadline)
+        catch err
+            writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
+            _request_write_allows_close(write_state) || return nothing
+            @try_ignore _close_conn!(conn)
+        finally
+            @try_ignore body_close!(request.body)
+            _request_write_mark_done!(write_state)
+        end
+        return nothing
+    end
 end
 
 function _perform_http_connect_tunnel!(
@@ -1957,40 +1999,12 @@ function _roundtrip_incoming!(
             writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
             writer_task = nothing
             if has_request_body
-                writer_task = Threads.@spawn let send_request = attempt_request
-                    try
-                        _write_request_streaming!(
-                            request_io,
-                            deadline_stream,
-                            send_request,
-                            plan,
-                            write_state,
-                            request_deadline,
-                        )
-                    catch err
-                        writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
-                        _request_write_allows_close(write_state) || return nothing
-                        @try_ignore begin
-                            _close_conn!(conn)
-                        end
-                    finally
-                        @try_ignore begin
-                            body_close!(send_request.body)
-                        end
-                        _request_write_mark_done!(write_state)
-                    end
-                    return nothing
-                end
-                if request_deadline == 0
-                    while !_request_write_head_written_or_done(write_state)
-                        IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
-                    end
-                else
-                    status = IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
-                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
-                end
+                writer_task = _start_request_writer!(
+                    request_io, deadline_stream, attempt_request, plan,
+                    write_state::_RequestWriteState, request_deadline, conn, writer_err,
+                )
+                _wait_request_head!(write_state::_RequestWriteState, writer_task::Task, request_deadline)
                 if _request_write_done(write_state)
-                    wait(writer_task::Task)
                     err = writer_err[]
                     err === nothing || throw(err::Exception)
                 end
