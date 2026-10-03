@@ -692,7 +692,6 @@ Headers(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(items...; kwargs...)
 Base.copy(headers::Headers) = Headers(headers)
 
 Base.IndexStyle(::Type{Headers}) = IndexLinear()
-Base.eltype(::Type{Headers}) = Pair{String,String}
 
 Base.size(headers::Headers) = (length(headers.entries),)
 
