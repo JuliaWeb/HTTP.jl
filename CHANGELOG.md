@@ -75,11 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   curl and Python accepted them. The 1 MiB header-block limit is unchanged and
   still bounds memory; the server-side request parser shares the new per-line
   default. ([#1362])
-- `HTTP.startwrite(stream)` now sends the head of a fixed-length HTTP/1 stream
-  response at once, as it already did for chunked and HTTP/2 responses, so a
-  handler can stream a large `Content-Length` body instead of holding all of
-  it until `closewrite`. A response started by `write` alone is still held, so
-  a handler failure can still get an error response. ([#1384])
+- After `HTTP.startwrite(stream)`, a fixed-length HTTP/1 stream response is
+  sent as it is written once its body passes 4 KiB, so a handler can stream a
+  large `Content-Length` body instead of holding all of it until `closewrite`.
+  A smaller body still goes out in one write with the head. A response started
+  by `write` alone is still held whole, so a handler failure can still get an
+  error response. ([#1384])
 - `HTTP.streamhandler` streams a response body that is not already in memory,
   such as a `fileserver` file, as `serve!` does, instead of holding all of it
   until the handler finishes. ([#1384])

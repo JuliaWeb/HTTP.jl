@@ -29,9 +29,17 @@ end
 function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8}, buffer::Bool=true)::Nothing
     isempty(bytes) && return nothing
     data = bytes isa Vector{UInt8} ? bytes : Vector{UInt8}(bytes)
-    if buffer && (_server_stream_buffered_h2(stream) || _server_stream_buffered_fixed_h1(stream))
+    if buffer && _server_stream_buffered_h2(stream)
         write(stream.request_buffer, data)
         return nothing
+    end
+    if buffer && _server_stream_buffered_fixed_h1(stream)
+        if !stream.stream_fixed_body || position(stream.request_buffer) + length(data) <= _FIXED_BODY_COALESCE_BYTES
+            write(stream.request_buffer, data)
+            return nothing
+        end
+        # After an explicit startwrite, a body past the limit is sent as written.
+        _write_buffered_fixed_head!(stream)
     end
     if _server_stream_live_h2(stream)
         deadline_ns = _server_write_deadline_ns(stream.server::Server)
@@ -263,23 +271,26 @@ end
 """
     startwrite(stream) -> Response
 
-Send the response head of a server-side `Stream` and return the response
-metadata; later writes go straight to the connection.
+Start the response of a server-side `Stream` and return the response metadata.
+`write(stream, data)` starts it too.
 
-`write(stream, data)` also starts the response, but a fixed-length
-(`Content-Length`) HTTP/1 response started that way is held in memory until
-`closewrite`, so the server can still send an error response if the handler
-throws or writes the wrong number of bytes. Call `startwrite` first to stream a
-large fixed-length body; a failure after that closes the connection instead.
+Chunked and HTTP/2 responses send their head here. A fixed-length
+(`Content-Length`) HTTP/1 response holds its head and body so that a small
+response goes out in one write. Without an explicit `startwrite`, the whole
+body is held until `closewrite`, so the server can still send an error response
+if the handler throws or writes the wrong number of bytes. After `startwrite`,
+a body that grows past 4 KiB is sent as it is written, and a later failure
+closes the connection instead.
 """
 function startwrite(stream::Stream)::Response
     _server_startwrite!(stream)
-    _server_stream_buffered_fixed_h1(stream) && _write_buffered_fixed_head!(stream)
+    stream.stream_fixed_body = true
     return stream.response
 end
 
-# Starts the response. A fixed-length HTTP/1 head is not sent here; its body
-# collects in `request_buffer` until `closewrite` or an explicit `startwrite`.
+# Starts the response. A fixed-length HTTP/1 head is not sent here; it goes out
+# with the held body at `closewrite`, or earlier once an explicitly started
+# body outgrows `_FIXED_BODY_COALESCE_BYTES`.
 function _server_startwrite!(stream::Stream)::Nothing
     _require_server_stream(stream)
     started = @atomic :acquire stream.response_started
@@ -314,10 +325,13 @@ function _server_startwrite!(stream::Stream)::Nothing
     return nothing
 end
 
+# A fixed-length HTTP/1 body up to this size is sent in one write with its head.
+const _FIXED_BODY_COALESCE_BYTES = 4096
+
 function _write_buffered_fixed_head!(stream::Stream)::Nothing
     body_bytes = take!(stream.request_buffer)
     # Bound the extra copy: large buffered bodies keep separate writes.
-    if length(body_bytes) <= 4096
+    if length(body_bytes) <= _FIXED_BODY_COALESCE_BYTES
         _write_server_stream_head!(stream, body_bytes)
     else
         _write_server_stream_head!(stream)
@@ -510,7 +524,7 @@ function _write_response_body_to_stream!(stream::Stream, body)::Nothing
         buf = Vector{UInt8}(undef, 16 * 1024)
         try
             # As in `write_response!`, a `BytesBody` is already in memory;
-            # other bodies are read in chunks, so send the head and stream them.
+            # other bodies are read in chunks, so let them stream.
             body isa BytesBody || startwrite(stream)
             while true
                 n = body_read!(body::AbstractBody, buf)

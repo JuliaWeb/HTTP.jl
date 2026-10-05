@@ -215,14 +215,17 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     @atomic read_closed::Bool
     @atomic response_started::Bool
     # `response_started` flips when writing starts, even when the response head
-    # is deferred (an h1 FIXED response started by `write`). `head_committed`
-    # means head bytes were sent or a failed transport write may have sent
-    # them; a replacement response is then unsafe.
+    # is deferred (an h1 FIXED response whose body is still held).
+    # `head_committed` means head bytes were sent or a failed transport write
+    # may have sent them; a replacement response is then unsafe.
     @atomic head_committed::Bool
     @atomic continue_sent::Bool
     ignore_writes::Bool
     write_mode::_ServerStreamWriteMode.T
     written_bytes::Int64
+    # Set by an explicit `startwrite`: an h1 FIXED body is sent as it is
+    # written once it outgrows `_FIXED_BODY_COALESCE_BYTES`.
+    stream_fixed_body::Bool
 end
 
 # Rebuild through the positional internal constructor rather than the public
@@ -291,6 +294,7 @@ function Stream(server::Server, tracked::_ServerConn, request::Req) where {Req<:
         false,
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
+        false,
     )
 end
 
@@ -340,6 +344,7 @@ function Stream(request::Req) where {Req<:Request}
         false,
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
+        false,
     )
 end
 
@@ -397,6 +402,7 @@ function Stream(
         false,
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
+        false,
     )
 end
 

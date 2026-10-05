@@ -905,8 +905,10 @@ end
     # an interim response after that would land inside the response body.
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
         _ = HT.startread(stream)
-        fixed && HT.setheader(stream, "Content-Length", "3")
+        fixed && HT.setheader(stream, "Content-Length", "5003")
         HT.startwrite(stream)
+        # a fixed-length head is sent once the body passes the coalescing limit
+        fixed && write(stream, fill(UInt8('x'), 5000))
         write(stream, read(stream))
         return nothing
     end
@@ -915,7 +917,33 @@ end
         write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nExpect: 100-continue\r\n\r\n")))
         @test startswith(_read_until_server_marker(sock, "\r\n\r\n"), "HTTP/1.1 200 OK\r\n")
         write(sock, Vector{UInt8}(codeunits("abc")))
-        @test String(read(sock)) == (fixed ? "abc" : "3\r\nabc\r\n0\r\n\r\n")
+        @test String(read(sock)) == (fixed ? "x"^5000 * "abc" : "3\r\nabc\r\n0\r\n\r\n")
+    finally
+        NC.close(sock)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP server sends 100 Continue when a held fixed-length handler reads the body" begin
+    # startwrite holds a small fixed-length head, so reading the body can still
+    # acknowledge Expect: 100-continue; clients that wait for it would hang if
+    # the final head went out first.
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setheader(stream, "Content-Length", "3")
+        HT.startwrite(stream)
+        write(stream, read(stream))
+        return nothing
+    end
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")))
+        @test String(_read_exact_server!(sock, sizeof("HTTP/1.1 100 Continue\r\n\r\n"))) == "HTTP/1.1 100 Continue\r\n\r\n"
+        write(sock, Vector{UInt8}(codeunits("abc")))
+        final = String(read(sock))
+        @test startswith(final, "HTTP/1.1 200 OK\r\n")
+        @test endswith(final, "\r\n\r\nabc")
     finally
         NC.close(sock)
         _run_test_operation(() -> HT.forceclose(server))
@@ -1520,33 +1548,37 @@ end
 end
 
 @testset "HTTP stream handler error before the head is sent returns 500 (#1303)" begin
-    # A fixed-length h1 response started by write defers its head until
-    # closewrite; a handler throw before anything reaches the wire must produce
-    # a raw 500, not a silent connection drop the client sees as "unexpected EOF".
-    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
-        _ = HT.startread(stream)
-        HT.setstatus(stream, 200)
-        HT.setheader(stream, "Content-Length" => "2")
-        write(stream, "o")         # FIXED: response_started, head NOT committed
-        error("boom")
-    end
-    address = HT.server_addr(server)
-    try
-        resp = HT.request("GET", "http://$(address)/"; status_exception = false, retry = false)
-        @test resp.status == 500
-    finally
-        _run_test_operation(() -> HT.forceclose(server))
-        _run_test_operation(() -> wait(server))
+    # A small fixed-length h1 response defers its head until closewrite; a
+    # handler throw before anything reaches the wire must produce a raw 500,
+    # not a silent connection drop the client sees as "unexpected EOF".
+    for explicit in (true, false)
+        server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            HT.setstatus(stream, 200)
+            HT.setheader(stream, "Content-Length" => "2")
+            explicit ? HT.startwrite(stream) : write(stream, "o")  # head NOT committed
+            error("boom")
+        end
+        address = HT.server_addr(server)
+        try
+            resp = HT.request("GET", "http://$(address)/"; status_exception = false, retry = false)
+            @test resp.status == 500
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
     end
 
-    # control: once the head is committed (startwrite sends it for every
-    # framing), a handler throw must NOT emit a spurious 500 after the real head
-    for framing in ("Transfer-Encoding" => "chunked", "Content-Length" => "2")
+    # control: once the head is committed, a handler throw must NOT emit a
+    # spurious 500 after the real head
+    for framing in ("Transfer-Encoding" => "chunked", "Content-Length" => "8192")
         server2 = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             _ = HT.startread(stream)
             HT.setstatus(stream, 200)
             HT.setheader(stream, framing)
-            HT.startwrite(stream)      # head committed to the wire here
+            HT.startwrite(stream)      # chunked: head committed to the wire here
+            # fixed-length: the head is sent once the body passes the coalescing limit
+            last(framing) == "8192" && write(stream, fill(UInt8('x'), 5000))
             error("boom")
         end
         address2 = HT.server_addr(server2)
@@ -1606,16 +1638,16 @@ end
 end
 
 @testset "HTTP server stream handlers reject fixed-length mismatches before writing malformed bodies" begin
-    # Without startwrite, the head waits for closewrite, so a mismatch gets an
-    # error response instead of a malformed body.
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             request = HT.startread(stream)
             if request.target == "/overflow"
                 HT.setheader(stream, "Content-Length", "2")
+                HT.startwrite(stream)
                 write(stream, "toolong")
                 return nothing
             end
             HT.setheader(stream, "Content-Length", "5")
+            HT.startwrite(stream)
             write(stream, "hi")
             return nothing
         end
@@ -1640,37 +1672,43 @@ end
     end
 end
 
-@testset "HTTP startwrite sends a fixed-length head and streams the body (#1384)" begin
+@testset "HTTP startwrite streams a fixed-length body past the coalescing limit (#1384)" begin
     gate = Channel{Nothing}(1)
     states = Channel{Tuple{Bool, Int}}(1)
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
-        gated = HT.startread(stream).target == "/gated"
-        HT.setheader(stream, "Content-Length", "10")
+        large = HT.startread(stream).target == "/large"
+        n = large ? 5000 : 5
+        HT.setheader(stream, "Content-Length", string(2n))
         HT.startwrite(stream)
-        write(stream, "hello")
-        if gated
-            committed = @atomic stream.head_committed
-            put!(states, (committed, position(stream.request_buffer)))
-            # The client opens the gate after reading the head and "hello",
-            # so both reach it before closewrite.
-            committed && take!(gate)
-        end
-        write(stream, "world")
+        write(stream, fill(UInt8('a'), n))
+        committed = @atomic stream.head_committed
+        put!(states, (committed, position(stream.request_buffer)))
+        # The client opens the gate after reading the head and the first part,
+        # so both reach it before the rest is written.
+        large && committed && take!(gate)
+        write(stream, fill(UInt8('b'), n))
         return nothing
     end
     sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
     try
-        write(sock, Vector{UInt8}(codeunits("GET /gated HTTP/1.1\r\nHost: localhost\r\n\r\n")))
-        @test take!(states) == (true, 0)
+        # A small body stays held, so it goes out with the head in one write.
+        write(sock, Vector{UInt8}(codeunits("GET /small HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+        @test take!(states) == (false, 5)
         @test occursin("\r\nContent-Length: 10\r\n", _read_until_server_marker(sock, "\r\n\r\n"))
-        @test String(_read_exact_server!(sock, 5)) == "hello"
+        @test String(_read_exact_server!(sock, 10)) == "aaaaabbbbb"
+        # A body past 4 KiB is sent as it is written.
+        write(sock, Vector{UInt8}(codeunits("GET /large HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+        @test take!(states) == (true, 0)
+        @test occursin("\r\nContent-Length: 10000\r\n", _read_until_server_marker(sock, "\r\n\r\n"))
+        @test _read_exact_server!(sock, 5000) == fill(UInt8('a'), 5000)
         put!(gate, nothing)
-        @test String(_read_exact_server!(sock, 5)) == "world"
+        @test _read_exact_server!(sock, 5000) == fill(UInt8('b'), 5000)
         # A complete body leaves the connection reusable.
-        write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")))
+        write(sock, Vector{UInt8}(codeunits("GET /small HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")))
+        @test take!(states) == (false, 5)
         second = String(read(sock))
         @test startswith(second, "HTTP/1.1 200 OK\r\n")
-        @test endswith(second, "\r\n\r\nhelloworld")
+        @test endswith(second, "\r\n\r\naaaaabbbbb")
     finally
         NC.close(sock)
         _run_test_operation(() -> HT.forceclose(server))
@@ -1678,34 +1716,31 @@ end
     end
 end
 
-@testset "HTTP fixed-length mismatches after startwrite close the connection (#1384)" begin
+@testset "HTTP fixed-length mismatches after the head is sent close the connection (#1384)" begin
     overflow_error = Channel{Any}(1)
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
         target = HT.startread(stream).target
-        HT.setheader(stream, "Content-Length", target == "/overflow" ? "2" : "5")
+        HT.setheader(stream, "Content-Length", "6000")
         HT.startwrite(stream)
+        write(stream, fill(UInt8('x'), 5000))  # past the coalescing limit: the head is sent
         if target == "/overflow"
             put!(overflow_error, try
-                write(stream, "toolong")
+                write(stream, fill(UInt8('y'), 5000))
             catch err
                 err
             end)
-        elseif target == "/underflow"
-            write(stream, "hi")
-        else
-            write(stream, "again")
         end
         return nothing
     end
     try
-        for (target, declared, body) in (("/overflow", 2, ""), ("/underflow", 5, "hi"))
+        for target in ("/overflow", "/underflow")
             sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
             try
                 write(sock, Vector{UInt8}(codeunits("GET $target HTTP/1.1\r\nHost: localhost\r\n\r\n")))
                 head = _read_until_server_marker(sock, "\r\n\r\n")
                 @test startswith(head, "HTTP/1.1 200 OK\r\n")
-                @test occursin("\r\nContent-Length: $declared\r\n", head)
-                @test String(_read_exact_server!(sock, length(body))) == body
+                @test occursin("\r\nContent-Length: 6000\r\n", head)
+                @test _read_exact_server!(sock, 5000) == fill(UInt8('x'), 5000)
                 # A reused connection would answer this request; a closed one cannot.
                 HT.@try_ignore write(sock, Vector{UInt8}(codeunits("GET /next HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")))
                 rest = try

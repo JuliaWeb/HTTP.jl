@@ -92,6 +92,7 @@ function Stream(
         false,
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
+        false,
     )
 end
 
