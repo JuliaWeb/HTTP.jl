@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Public Interface · HTTP.jl</title><link href="https://cdnjs.cloudflare.com/ajax/libs/normalize/4.2.0/normalize.min.css" rel="stylesheet" type="text/css"/><link href="https://fonts.googleapis.com/css?family=Lato|Roboto+Mono" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.6.3/css/font-awesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/default.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.2.0/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link href="../assets/documenter.css" rel="stylesheet" type="text/css"/></head><body><nav class="toc"><h1>HTTP.jl</h1><select id="version-selector" onChange="window.location.href=this.value" style="visibility: hidden"></select><form class="search" id="search-form" action="../search/"><input id="search-query" name="q" type="text" placeholder="Search docs"/></form><ul><li><a class="toctext" href="../">Home</a></li><li class="current"><a class="toctext" href>Public Interface</a><ul class="internal"><li><a class="toctext" href="#Requests-1">Requests</a></li><li><a class="toctext" href="#URIs-1">URIs</a></li><li><a class="toctext" href="#Cookies-1">Cookies</a></li><li><a class="toctext" href="#Utilities-1">Utilities</a></li><li><a class="toctext" href="#Server-/-Handlers-1">Server / Handlers</a></li></ul></li><li><a class="toctext" href="../internal_architecture/">Internal Architecture</a></li><li><a class="toctext" href="../internal_interface/">Internal Interfaces</a></li></ul></nav><article id="docs"><header><nav><ul><li><a href>Public Interface</a></li></ul><a class="edit-page" href="https://github.com/JuliaWeb/HTTP.jl/blob/master/docs/src/public_interface.md"><span class="fa"></span> Edit on GitHub</a></nav><hr/><div id="topbar"><span>Public Interface</span><a class="fa fa-bars" href="#"></a></div></header><h1><a class="nav-anchor" id="Public-Interface-1" href="#Public-Interface-1">Public Interface</a></h1><h2><a class="nav-anchor" id="Requests-1" href="#Requests-1">Requests</a></h2><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.request" href="#HTTP.request"><code>HTTP.request</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.request(method, url [, headers [, body]]; &lt;keyword arguments&gt;]) -&gt; HTTP.Response</code></pre><p>Send a HTTP Request Message and receive a HTTP Response Message.</p><p>e.g.</p><pre><code class="language-julia">r = HTTP.request(&quot;GET&quot;, &quot;http://httpbin.org/ip&quot;)
+println(r.status)
+println(String(r.body))</code></pre><p><code>headers</code> can be any collection where <code>[string(k) =&gt; string(v) for (k,v) in headers]</code> yields <code>Vector{Pair}</code>. e.g. a <code>Dict()</code>, a <code>Vector{Tuple}</code>, a <code>Vector{Pair}</code> or an iterator.</p><p><code>body</code> can take a number of forms:</p><ul><li>a <code>String</code>, a <code>Vector{UInt8}</code> or any <code>T</code> accepted by <code>write(::IO, ::T)</code></li><li>a collection of <code>String</code> or <code>AbstractVector{UInt8}</code> or <code>IO</code> streams or items of any type <code>T</code> accepted by <code>write(::IO, ::T...)</code></li><li>a readable <code>IO</code> stream or any <code>IO</code>-like type <code>T</code> for which <code>eof(T)</code> and <code>readavailable(T)</code> are defined.</li></ul><p>The <code>HTTP.Response</code> struct contains:</p><ul><li><code>status::Int16</code> e.g. <code>200</code></li><li><code>headers::Vector{Pair{String,String}}</code>  e.g. [&quot;Server&quot; =&gt; &quot;Apache&quot;, &quot;Content-Type&quot; =&gt; &quot;text/html&quot;]</li><li><code>body::Vector{UInt8}</code>, the Response Body bytes  (empty if a <code>response_stream</code> was specified in the <code>request</code>).</li></ul><p>Functions <code>HTTP.get</code>, <code>HTTP.put</code>, <code>HTTP.post</code> and <code>HTTP.head</code> are defined as shorthand for <code>HTTP.request(&quot;GET&quot;, ...)</code>, etc.</p><p><code>HTTP.request</code> and <code>HTTP.open</code> also accept optional keyword parameters.</p><p>e.g.</p><pre><code class="language-julia">HTTP.request(&quot;GET&quot;, &quot;http://httpbin.org/ip&quot;; retries=4, cookies=true)
+
+HTTP.get(&quot;http://s3.us-east-1.amazonaws.com/&quot;; aws_authorization=true)
+
+conf = (readtimeout = 10,
+        pipeline_limit = 4,
+        retry = false,
+        redirect = false)
+
+HTTP.get(&quot;http://httpbin.org/ip&quot;; conf..)
+HTTP.put(&quot;http://httpbin.org/put&quot;, [], &quot;Hello&quot;; conf..)</code></pre><p>URL options</p><ul><li><code>query = nothing</code>, replaces the query part of <code>url</code>.</li></ul><p>Streaming options</p><ul><li><code>response_stream = nothing</code>, a writeable <code>IO</code> stream or any <code>IO</code>-like  type <code>T</code> for which <code>write(T, AbstractVector{UInt8})</code> is defined.</li><li><code>verbose = 0</code>, set to <code>1</code> or <code>2</code> for extra message logging.</li></ul><p>Connection Pool options</p><ul><li><code>connection_limit = 8</code>, number of concurrent connections to each host:port.</li><li><code>pipeline_limit = 16</code>, number of concurrent requests per connection.</li><li><code>reuse_limit = nolimit</code>, number of times a connection is reused after the                          first request.</li><li><code>socket_type = TCPSocket</code></li></ul><p>Timeout options</p><ul><li><code>readtimeout = 60</code>, close the connection if no data is received for this many seconds. Use <code>readtimeout = 0</code> to disable.</li></ul><p>Retry options</p><ul><li><code>retry = true</code>, retry idempotent requests in case of error.</li><li><code>retries = 4</code>, number of times to retry.</li><li><code>retry_non_idempotent = false</code>, retry non-idempotent requests too. e.g. POST.</li></ul><p>Redirect options</p><ul><li><code>redirect = true</code>, follow 3xx redirect responses.</li><li><code>redirect_limit = 3</code>, number of times to redirect.</li><li><code>forwardheaders = true</code>, forward original headers on redirect.</li></ul><p>Status Exception options</p><ul><li><code>status_exception = true</code>, throw <code>HTTP.StatusError</code> for response status &gt;= 300.</li></ul><p>SSLContext options</p><ul><li><code>require_ssl_verification = false</code>, pass <code>MBEDTLS_SSL_VERIFY_REQUIRED</code> to the mbed TLS library. <a href="https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37">&quot;... peer must present a valid certificate, handshake is aborted if   verification failed.&quot;</a></li><li><code>sslconfig = SSLConfig(require_ssl_verification)</code></li></ul><p>Basic Authentication options</p><ul><li>Basic authentication is detected automatically from the provided url&#39;s <code>userinfo</code> (in the form <code>scheme://user:password@host</code>) and adds the <code>Authorization: Basic</code> header</li></ul><p>AWS Authentication options</p><ul><li><code>aws_authorization = false</code>, enable AWS4 Authentication.</li><li><code>aws_service = split(url.host, &quot;.&quot;)[1]</code></li><li><code>aws_region = split(url.host, &quot;.&quot;)[2]</code></li><li><code>aws_access_key_id = ENV[&quot;AWS_ACCESS_KEY_ID&quot;]</code></li><li><code>aws_secret_access_key = ENV[&quot;AWS_SECRET_ACCESS_KEY&quot;]</code></li><li><code>aws_session_token = get(ENV, &quot;AWS_SESSION_TOKEN&quot;, &quot;&quot;)</code></li><li><code>body_sha256 = digest(MD_SHA256, body)</code>,</li><li><code>body_md5 = digest(MD_MD5, body)</code>,</li></ul><p>Cookie options</p><ul><li><code>cookies::Union{Bool, Dict{String, String}} = false</code>, enable cookies, or alternatively,      pass a <code>Dict{String, String}</code> of name-value pairs to manually pass cookies</li><li><code>cookiejar::Dict{String, Set{Cookie}}=default_cookiejar</code>,</li></ul><p>Canonicalization options</p><ul><li><code>canonicalize_headers = false</code>, rewrite request and response headers in Canonical-Camel-Dash-Format.</li></ul><p>Proxy options</p><ul><li><code>proxy = proxyurl</code>, pass request through a proxy given as a url</li></ul><p>Alternatively, HTTP.jl also respects the <code>http_proxy</code>, <code>https_proxy</code>, and <code>no_proxy</code> environment variables; if set, they will be used automatically when making requests.</p><p><strong>Request Body Examples</strong></p><p>String body:</p><pre><code class="language-julia">HTTP.request(&quot;POST&quot;, &quot;http://httpbin.org/post&quot;, [], &quot;post body data&quot;)</code></pre><p>Stream body from file:</p><pre><code class="language-julia">io = open(&quot;post_data.txt&quot;, &quot;r&quot;)
+HTTP.request(&quot;POST&quot;, &quot;http://httpbin.org/post&quot;, [], io)</code></pre><p>Generator body:</p><pre><code class="language-julia">chunks = (&quot;chunk$i&quot; for i in 1:1000)
+HTTP.request(&quot;POST&quot;, &quot;http://httpbin.org/post&quot;, [], chunks)</code></pre><p>Collection body:</p><pre><code class="language-julia">chunks = [preamble_chunk, data_chunk, checksum(data_chunk)]
+HTTP.request(&quot;POST&quot;, &quot;http://httpbin.org/post&quot;, [], chunks)</code></pre><p><code>open() do io</code> body:</p><pre><code class="language-julia">HTTP.open(&quot;POST&quot;, &quot;http://httpbin.org/post&quot;) do io
+    write(io, preamble_chunk)
+    write(io, data_chunk)
+    write(io, checksum(data_chunk))
+end</code></pre><p><strong>Response Body Examples</strong></p><p>String body:</p><pre><code class="language-julia">r = HTTP.request(&quot;GET&quot;, &quot;http://httpbin.org/get&quot;)
+println(String(r.body))</code></pre><p>Stream body to file:</p><pre><code class="language-julia">io = open(&quot;get_data.txt&quot;, &quot;w&quot;)
+r = HTTP.request(&quot;GET&quot;, &quot;http://httpbin.org/get&quot;, response_stream=io)
+close(io)
+println(read(&quot;get_data.txt&quot;))</code></pre><p>Stream body through buffer:</p><pre><code class="language-julia">io = Base.BufferStream()
+@async while !eof(io)
+    bytes = readavailable(io))
+    println(&quot;GET data: $bytes&quot;)
+end
+r = HTTP.request(&quot;GET&quot;, &quot;http://httpbin.org/get&quot;, response_stream=io)
+close(io)</code></pre><p>Stream body through <code>open() do io</code>:</p><pre><code class="language-julia">r = HTTP.open(&quot;GET&quot;, &quot;http://httpbin.org/stream/10&quot;) do io
+   while !eof(io)
+       println(String(readavailable(io)))
+   end
+end
+
+using HTTP.IOExtras
+
+HTTP.open(&quot;GET&quot;, &quot;https://tinyurl.com/bach-cello-suite-1-ogg&quot;) do http
+    n = 0
+    r = startread(http)
+    l = parse(Int, header(r, &quot;Content-Length&quot;))
+    open(`vlc -q --play-and-exit --intf dummy -`, &quot;w&quot;) do vlc
+        while !eof(http)
+            bytes = readavailable(http)
+            write(vlc, bytes)
+            n += length(bytes)
+            println(&quot;streamed $n-bytes $((100*n)÷l)%\u1b[1A&quot;)
+        end
+    end
+end</code></pre><p><strong>Request and Response Body Examples</strong></p><p>String bodies:</p><pre><code class="language-julia">r = HTTP.request(&quot;POST&quot;, &quot;http://httpbin.org/post&quot;, [], &quot;post body data&quot;)
+println(String(r.body))</code></pre><p>Interfacing with RESTful JSON APIs:</p><pre><code class="language-julia">using JSON
+params = Dict(&quot;user&quot;=&gt;&quot;RAO...tjN&quot;, &quot;token&quot;=&gt;&quot;NzU...Wnp&quot;, &quot;message&quot;=&gt;&quot;Hello!&quot;)
+base_url = &quot;http://api.domain.com&quot;
+endpoint = &quot;/1/messages.json&quot;
+url = base_url * endpoint
+r = HTTP.request(&quot;POST&quot;, url,
+             [&quot;Content-Type&quot; =&gt; &quot;application/json&quot;],
+             JSON.json(params))
+println(JSON.parse(String(r.body)))</code></pre><p>Stream bodies from and to files:</p><pre><code class="language-julia">in = open(&quot;foo.png&quot;, &quot;r&quot;)
+out = open(&quot;foo.jpg&quot;, &quot;w&quot;)
+HTTP.request(&quot;POST&quot;, &quot;http://convert.com/png2jpg&quot;, [], in, response_stream=out)</code></pre><p>Stream bodies through: <code>open() do io</code>:</p><pre><code class="language-julia">using HTTP.IOExtras
+
+HTTP.open(&quot;POST&quot;, &quot;http://music.com/play&quot;) do io
+    write(io, JSON.json([
+        &quot;auth&quot; =&gt; &quot;12345XXXX&quot;,
+        &quot;song_id&quot; =&gt; 7,
+    ]))
+    r = startread(io)
+    @show r.status
+    while !eof(io)
+        bytes = readavailable(io))
+        play_audio(bytes)
+    end
+end</code></pre></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/HTTP.jl#L33-L311">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.open" href="#HTTP.open"><code>HTTP.open</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.open(method, url, [,headers]) do io
+    write(io, body)
+    [startread(io) -&gt; HTTP.Response]
+    while !eof(io)
+        readavailable(io) -&gt; AbstractVector{UInt8}
+    end
+end -&gt; HTTP.Response</code></pre><p>The <code>HTTP.open</code> API allows the Request Body to be written to (and/or the Response Body to be read from) an <code>IO</code> stream.</p><p>e.g. Streaming an audio file to the <code>vlc</code> player:</p><pre><code class="language-julia">HTTP.open(:GET, &quot;https://tinyurl.com/bach-cello-suite-1-ogg&quot;) do http
+    open(`vlc -q --play-and-exit --intf dummy -`, &quot;w&quot;) do vlc
+        write(vlc, http)
+    end
+end</code></pre></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/HTTP.jl#L324-L345">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.get" href="#HTTP.get"><code>HTTP.get</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.get(url [, headers]; &lt;keyword arguments&gt;) -&gt; HTTP.Response</code></pre><p>Shorthand for <code>HTTP.request(&quot;GET&quot;, ...)</code>. See <a href="#HTTP.request"><code>HTTP.request</code></a>.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/HTTP.jl#L384-L388">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.put" href="#HTTP.put"><code>HTTP.put</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.put(url, headers, body; &lt;keyword arguments&gt;) -&gt; HTTP.Response</code></pre><p>Shorthand for <code>HTTP.request(&quot;PUT&quot;, ...)</code>. See <a href="#HTTP.request"><code>HTTP.request</code></a>.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/HTTP.jl#L391-L395">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.post" href="#HTTP.post"><code>HTTP.post</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.post(url, headers, body; &lt;keyword arguments&gt;) -&gt; HTTP.Response</code></pre><p>Shorthand for <code>HTTP.request(&quot;POST&quot;, ...)</code>. See <a href="#HTTP.request"><code>HTTP.request</code></a>.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/HTTP.jl#L398-L402">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.head" href="#HTTP.head"><code>HTTP.head</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.head(url; &lt;keyword arguments&gt;) -&gt; HTTP.Response</code></pre><p>Shorthand for <code>HTTP.request(&quot;HEAD&quot;, ...)</code>. See <a href="#HTTP.request"><code>HTTP.request</code></a>.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/HTTP.jl#L412-L416">source</a></section><p>Request functions may throw the following exceptions:</p><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.ExceptionRequest.StatusError" href="#HTTP.ExceptionRequest.StatusError"><code>HTTP.ExceptionRequest.StatusError</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">StatusError &lt;: Exception</code></pre><p>The <code>Response</code> has a <code>4xx</code>, <code>5xx</code> or unrecognised status code.</p><p>Fields:</p><ul><li><code>status::Int16</code>, the response status code.</li><li><code>response</code> the <a href="../internal_interface/#HTTP.Messages.Response"><code>HTTP.Response</code></a></li></ul></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/ExceptionRequest.jl#L28-L36">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Parsers.ParseError" href="#HTTP.Parsers.ParseError"><code>HTTP.Parsers.ParseError</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">ParseError &lt;: Exception</code></pre><p>Parser input was invalid.</p><p>Fields:</p><ul><li><code>code</code>, error code</li><li><code>bytes</code>, the offending input.</li></ul></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Parsers.jl#L33-L41">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.IOExtras.IOError" href="#HTTP.IOExtras.IOError"><code>HTTP.IOExtras.IOError</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">IOError &lt;: Exception</code></pre><p>The request terminated with due to an IO-related error.</p><p>Fields:</p><ul><li><code>e</code>, the error.</li></ul></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/IOExtras.jl#L45-L52">source</a></section><pre><code class="language-none">Sockets.DNSError</code></pre><h2><a class="nav-anchor" id="URIs-1" href="#URIs-1">URIs</a></h2><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.URIs.URI" href="#HTTP.URIs.URI"><code>HTTP.URIs.URI</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">HTTP.URI(; scheme=&quot;&quot;, host=&quot;&quot;, port=&quot;&quot;, etc...)
+HTTP.URI(str) = parse(HTTP.URI, str::String)</code></pre><p>A type representing a valid uri. Can be constructed from distinct parts using the various supported keyword arguments. With a raw, already-encoded uri string, use <code>parse(HTTP.URI, str)</code> to parse the <code>HTTP.URI</code> directly. The <code>HTTP.URI</code> constructors will automatically escape any provided <code>query</code> arguments, typically provided as <code>&quot;key&quot;=&gt;&quot;value&quot;::Pair</code> or <code>Dict(&quot;key&quot;=&gt;&quot;value&quot;)</code>. Note that multiple values for a single query key can provided like <code>Dict(&quot;key&quot;=&gt;[&quot;value1&quot;, &quot;value2&quot;])</code>.</p><p>The <code>URI</code> struct stores the complete URI in the <code>uri::String</code> field and the component parts in the following <code>SubString</code> fields:</p><ul><li><code>scheme</code>, e.g. <code>&quot;http&quot;</code> or <code>&quot;https&quot;</code></li><li><code>userinfo</code>, e.g. <code>&quot;username:password&quot;</code></li><li><code>host</code> e.g. <code>&quot;julialang.org&quot;</code></li><li><code>port</code> e.g. <code>&quot;80&quot;</code> or <code>&quot;&quot;</code></li><li><code>path</code> e.g <code>&quot;/&quot;</code></li><li><code>query</code> e.g. <code>&quot;Foo=1&amp;Bar=2&quot;</code></li><li><code>fragment</code></li></ul><p>The <code>HTTP.resource(::URI)</code> function returns a target-resource string for the URI <a href="https://tools.ietf.org/html/rfc7230#section-5.3">RFC7230 5.3</a>. e.g. <code>&quot;$path?$query#$fragment&quot;</code>.</p><p>The <code>HTTP.queryparams(::URI)</code> function returns a <code>Dict</code> containing the <code>query</code>.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/URIs.jl#L20-L45">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.URIs.escapeuri" href="#HTTP.URIs.escapeuri"><code>HTTP.URIs.escapeuri</code></a> — <span class="docstring-category">Function</span>.</div><div><div><p>percent-encode a string, dict, or pair for a uri</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/URIs.jl#L307">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.URIs.unescapeuri" href="#HTTP.URIs.unescapeuri"><code>HTTP.URIs.unescapeuri</code></a> — <span class="docstring-category">Function</span>.</div><div><div><p>unescape a percent-encoded uri/url</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/URIs.jl#L322">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.URIs.splitpath" href="#HTTP.URIs.splitpath"><code>HTTP.URIs.splitpath</code></a> — <span class="docstring-category">Function</span>.</div><div><div><p>Splits the path into components See: http://tools.ietf.org/html/rfc3986#section-3.3</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/URIs.jl#L344-L347">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="Base.isvalid-Tuple{HTTP.URIs.URI}" href="#Base.isvalid-Tuple{HTTP.URIs.URI}"><code>Base.isvalid</code></a> — <span class="docstring-category">Method</span>.</div><div><div><p>checks if a <code>HTTP.URI</code> is valid</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/URIs.jl#L286">source</a></section><h2><a class="nav-anchor" id="Cookies-1" href="#Cookies-1">Cookies</a></h2><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Cookies.Cookie" href="#HTTP.Cookies.Cookie"><code>HTTP.Cookies.Cookie</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">Cookie()
+Cookie(; kwargs...)
+Cookie(name, value; kwargs...)</code></pre><p>A Cookie represents an HTTP cookie as sent in the Set-Cookie header of an HTTP response or the Cookie header of an HTTP request. Supported fields (which can be set using keyword arguments) include:</p><ul><li><code>name</code>: name of the cookie</li><li><code>value</code>: value of the cookie</li><li><code>path</code>: applicable path for the cookie</li><li><code>domain</code>: applicable domain for the cookie</li><li><code>expires</code>: a <code>Dates.DateTime</code> representing when the cookie should expire</li><li><code>maxage</code>: <code>maxage == 0</code> means no max age, <code>maxage &lt; 0</code> means delete cookie now, <code>max age &gt; 0</code> means the # of seconds until expiration</li><li><code>secure::Bool</code>: secure cookie attribute</li><li><code>httponly::Bool</code>: httponly cookie attribute</li><li><code>hostonly::Bool</code>: hostonly cookie attribute</li></ul><p>See http:#tools.ietf.org/html/rfc6265 for details.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/cookies.jl#L43-L63">source</a></section><h2><a class="nav-anchor" id="Utilities-1" href="#Utilities-1">Utilities</a></h2><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.sniff" href="#HTTP.sniff"><code>HTTP.sniff</code></a> — <span class="docstring-category">Function</span>.</div><div><div><p><code>HTTP.sniff(content::Union{Vector{UInt8}, String, IO})</code> =&gt; <code>String</code> (mimetype)</p><p><code>HTTP.sniff</code> will look at the first 512 bytes of <code>content</code> to try and determine a valid mimetype. If a mimetype can&#39;t be determined appropriately, <code>&quot;application/octet-stream&quot;</code> is returned.</p><p>Supports JSON detection through the <code>HTTP.isjson(content)</code> function.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/sniff.jl#L20-L27">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Strings.escapehtml" href="#HTTP.Strings.escapehtml"><code>HTTP.Strings.escapehtml</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">escapehtml(i::String)</code></pre><p>Returns a string with special HTML characters escaped: &amp;, &lt;, &gt;, &quot;, &#39;</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Strings.jl#L8-L12">source</a></section><h2><a class="nav-anchor" id="Server-/-Handlers-1" href="#Server-/-Handlers-1">Server / Handlers</a></h2><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Servers.listen" href="#HTTP.Servers.listen"><code>HTTP.Servers.listen</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http::HTTP.Stream
+    ...
+end</code></pre><p>Listen for HTTP connections and execute the <code>do</code> function for each request.</p><p>The <code>do</code> function should be of the form <code>f(::HTTP.Stream)::Nothing</code>.</p><p>Optional keyword arguments:</p><ul><li><code>sslconfig=nothing</code>, Provide an <code>MbedTLS.SSLConfig</code> object to handle ssl  connections. Pass <code>sslconfig=MbedTLS.SSLConfig(false)</code> to disable ssl  verification (useful for testing).</li><li><code>reuse_limit = nolimit</code>, number of times a connection is allowed to be reused after the first request.</li><li><code>tcpisvalid = tcp-&gt;true</code>, function <code>f(::TCPSocket)::Bool</code> to, check accepted  connection before processing requests. e.g. to do source IP filtering.</li><li><code>readtimeout::Int=60</code>, close the connection if no data is received for this  many seconds. Use readtimeout = 0 to disable.</li><li><code>reuseaddr::Bool=false</code>, allow multiple servers to listen on the same port.</li><li><code>server::Base.IOServer=nothing</code>, provide an <code>IOServer</code> object to listen on;  allows closing the server.</li><li><code>connection_count::Ref{Int}</code>, reference to track the number of currently  open connections.</li><li><code>rate_limit::Rational{Int}=nothing&quot;</code>, number of <code>connections//second</code>  allowed per client IP address; excess connections are immediately closed.  e.g. 5//1.</li><li><code>verbose::Bool=false</code>, log connection information to <code>stdout</code>.</li></ul><p>e.g.</p><pre><code class="language-julia">HTTP.listen(&quot;127.0.0.1&quot;, 8081) do http
+    HTTP.setheader(http, &quot;Content-Type&quot; =&gt; &quot;text/html&quot;)
+    write(http, &quot;target uri: $(http.message.target)&lt;BR&gt;&quot;)
+    write(http, &quot;request body:&lt;BR&gt;&lt;PRE&gt;&quot;)
+    write(http, read(http))
+    write(http, &quot;&lt;/PRE&gt;&quot;)
+    return
+end
+
+HTTP.listen(&quot;127.0.0.1&quot;, 8081) do http
+    @show http.message
+    @show HTTP.header(http, &quot;Content-Type&quot;)
+    while !eof(http)
+        println(&quot;body data: &quot;, String(readavailable(http)))
+    end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, &quot;Foo-Header&quot; =&gt; &quot;bar&quot;)
+    startwrite(http)
+    write(http, &quot;response body&quot;)
+    write(http, &quot;more response body&quot;)
+end</code></pre><p>The <code>server=</code> option can be used to pass an already listening socket to <code>HTTP.listen</code>. This allows manual control of server shutdown.</p><p>e.g.</p><pre><code class="language-julia">using Sockets
+server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
+@async HTTP.listen(f, host, port; server=server)
+
+# Closing server will stop HTTP.listen.
+close(server)</code></pre><p>To run the following HTTP chat example, open two Julia REPL windows and paste the example code into both of them. Then in one window run <code>chat_server()</code> and in the other run <code>chat_client()</code>, then type <code>hello</code> and press return. Whatever you type on the client will be displayed on the server and vis-versa.</p><pre><code class="language-none">using HTTP
+
+function chat(io::HTTP.Stream)
+    @async while !eof(io)
+        write(stdout, readavailable(io), &quot;\n&quot;)
+    end
+    while isopen(io)
+        write(io, readline(stdin))
+    end
+end
+
+chat_server() = HTTP.listen(&quot;127.0.0.1&quot;, 8087) do io
+    write(io, &quot;HTTP.jl Chat Server. Welcome!&quot;)
+    chat(io)
+end
+
+chat_client() = HTTP.open(&quot;POST&quot;, &quot;http://127.0.0.1:8087&quot;) do io
+    chat(io)
+end</code></pre></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Servers.jl#L93-L186">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers.serve" href="#HTTP.Handlers.serve"><code>HTTP.Handlers.serve</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.serve([host=Sockets.localhost[, port=8081]]; kw...) do req::HTTP.Request
+    ...
+end
+HTTP.serve([host=Sockets.localhost[, port=8081]]; stream=true, kw...) do stream::HTTP.Stream
+    ...
+end
+HTTP.serve(handler, [host=Sockets.localhost[, port=8081]]; kw...)</code></pre><p>Listen for HTTP connections and handle each request received. The &quot;handler&quot; can be a function that operates directly on <code>HTTP.Stream</code>, <code>HTTP.Request</code>, or any kind of <code>HTTP.Handler</code> instance. For functions like <code>f(::HTTP.Stream)</code>, also pass <code>stream=true</code> to signal a streaming handler.</p><p>Optional keyword arguments:</p><ul><li><code>sslconfig=nothing</code>, Provide an <code>MbedTLS.SSLConfig</code> object to handle ssl connections.  Pass <code>sslconfig=MbedTLS.SSLConfig(false)</code> to disable ssl verification (useful for testing)</li><li><code>reuse_limit = nolimit</code>, number of times a connection is allowed to be reused  after the first request.</li><li><code>tcpisvalid::Function (::TCPSocket) -&gt; Bool</code>, check accepted connection before  processing requests. e.g. to implement source IP filtering, rate-limiting, etc.</li><li><code>readtimeout::Int=60</code>, close the connection if no data is received for this  many seconds. Use readtimeout = 0 to disable.</li><li><code>reuseaddr::Bool=false</code>, allow multiple server processes to listen on the same port. Only fully supported on linux; OSX will allow multiple server processes to listen, but only one will accept connections</li><li><code>server::Base.IOServer=nothing</code>, provide an <code>IOServer</code> object to listen on;  allows manual control over closing the server.</li><li><code>connection_count::Ref{Int}</code>, reference to track the # of currently open connections.</li><li><code>rate_limit::Rational{Int}=nothing&quot;</code>, number of <code>connections//second</code> allowed  per client IP address; excess connections are immediately closed. e.g. 5//1.</li><li><code>stream::Bool=false</code>, the handler will operate on an <code>HTTP.Stream</code> instead of <code>HTTP.Request</code></li><li><code>verbose::Bool=false</code>, log connection information to <code>stdout</code>.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia">HTTP.serve(; stream=true) do http::HTTP.Stream
+    @show http.message
+    @show HTTP.header(http, &quot;Content-Type&quot;)
+    while !eof(http)
+        println(&quot;body data: &quot;, String(readavailable(http)))
+    end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, &quot;Foo-Header&quot; =&gt; &quot;bar&quot;)
+    startwrite(http)
+    write(http, &quot;response body&quot;)
+    write(http, &quot;more response body&quot;)
+    return
+end
+
+# pass in own server socket to control shutdown
+using Sockets
+server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
+@async HTTP.serve(f, host, port; server=server)
+# close server which will stop HTTP.serve
+close(server)</code></pre></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L286-L340">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers" href="#HTTP.Handlers"><code>HTTP.Handlers</code></a> — <span class="docstring-category">Module</span>.</div><div><div><p><strong>Examples</strong></p><p>Let&#39;s put together an example http REST server for our hypothetical &quot;ZooApplication&quot; that utilizes various parts of the Servers &amp; Handler frameworks.</p><p>Our application allows users to interact with custom &quot;animal&quot; JSON objects.</p><p>First we have our &quot;model&quot; or data structures:</p><pre><code class="language-julia">mutable struct Animal
+    id::Int
+    type::String
+    name::String
+end</code></pre><p>Now we want to define our REST api, or how do we allow users to create, update, retrieve and delete animals:</p><pre><code class="language-julia"># use a plain `Dict` as a &quot;data store&quot;
+const ANIMALS = Dict{Int, Animal}()
+const NEXT_ID = Ref(0)
+function getNextId()
+    id = NEXT_ID[]
+    NEXT_ID[] += 1
+    return id
+end
+
+# &quot;service&quot; functions to actually do the work
+function createAnimal(req::HTTP.Request)
+    animal = JSON2.read(IOBuffer(HTTP.payload(req)), Animal)
+    animal.id = getNextId()
+    ANIMALS[animal.id] = animal
+    return HTTP.Response(200, JSON2.write(animal))
+end
+
+function getAnimal(req::HTTP.Request)
+    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
+    animal = ANIMALS[parse(Int, animalId)]
+    return HTTP.Response(200, JSON2.write(animal))
+end
+
+function updateAnimal(req::HTTP.Request)
+    animal = JSON2.read(IOBuffer(HTTP.payload(req)), Animal)
+    ANIMALS[animal.id] = animal
+    return HTTP.Response(200, JSON2.write(animal))
+end
+
+function deleteAnimal(req::HTTP.Request)
+    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
+    delete!(ANIMALS, parse(Int, animal.id))
+    return HTTP.Response(200)
+end
+
+# define REST endpoints to dispatch to &quot;service&quot; functions
+const ANIMAL_ROUTER = HTTP.Router()
+HTTP.@register(ANIMAL_ROUTER, &quot;POST&quot;, &quot;/api/zoo/v1/animals&quot;, createAnimal)
+# note the use of `*` to capture the path segment &quot;variable&quot; animal id
+HTTP.@register(ANIMAL_ROUTER, &quot;GET&quot;, &quot;/api/zoo/v1/animals/*&quot;, getAnimal)
+HTTP.@register(ANIMAL_ROUTER, &quot;PUT&quot;, &quot;/api/zoo/v1/animals&quot;, updateAnimal)
+HTTP.@register(ANIMAL_ROUTER, &quot;DELETE&quot;, &quot;/api/zoo/v1/animals/*&quot;, deleteAnimal)</code></pre><p>Great! At this point, we could spin up our server and let users start managing their animals:</p><pre><code class="language-julia">HTTP.serve(ANIMAL_ROUTER, Sockets.localhost, 8081)</code></pre><p>Now, you may have noticed that there was a bit of repetition in our &quot;service&quot; functions, particularly with regards to the JSON serialization/deserialization. Perhaps we can simplify things by writing a custom &quot;JSONHandler&quot; to do some of the repetitive work for us.</p><pre><code class="language-julia">function JSONHandler(req::HTTP.Request)
+    # first check if there&#39;s any request body
+    body = IOBuffer(HTTP.payload(req))
+    if eof(body)
+        # no request body
+        response_body = handle(ANIMAL_ROUTER, req)
+    else
+        # there&#39;s a body, so pass it on to the handler we dispatch to
+        response_body = handle(ANIMAL_ROUTER, req, JSON2.read(body, Animal))
+    end
+    return HTTP.Response(200, JSON2.write(response_body))
+end
+
+# **simplified** &quot;service&quot; functions
+function createAnimal(req::HTTP.Request, animal)
+    animal.id = getNextId()
+    ANIMALS[animal.id] = animal
+    return animal
+end
+
+function getAnimal(req::HTTP.Request)
+    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
+    return ANIMALS[animalId]
+end
+
+function updateAnimal(req::HTTP.Request, animal)
+    ANIMALS[animal.id] = animal
+    return animal
+end
+
+function deleteAnimal(req::HTTP.Request)
+    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
+    delete!(ANIMALS, animal.id)
+    return &quot;&quot;
+end</code></pre><p>And we modify slightly how we run our server, letting our new <code>JSONHandler</code> be the entry point instead of our router:</p><pre><code class="language-julia">HTTP.serve(JSONHandler, Sockets.localhost, 8081)</code></pre><p>Our <code>JSONHandler</code> is nice because it saves us a bunch of repetition: if a request body comes in, we automatically deserialize it and pass it on to the service function. And each service function doesn&#39;t need to worry about returning <code>HTTP.Response</code>s anymore, but can just focus on returning plain Julia objects/strings. The other huge advantage is it provides a clean separation of concerns between the &quot;service&quot; layer, which should really concern itself with application logic, and the &quot;REST API&quot; layer, which should take care of translating between our model and a web data format (JSON).</p><p>Let&#39;s take this one step further and allow multiple users to manage users, and add in one more custom handler to provide an authentication layer to our application. We can&#39;t just let anybody be modifying another user&#39;s animals!</p><pre><code class="language-julia"># modified Animal struct to associate with specific user
+mutable struct Animal
+    id::Int
+    userId::Base.UUID
+    type::String
+    name::String
+end
+
+# modify our data store to allow for multiple users
+const ANIMALS = Dict{Base.UUID, Dict{Int, Animal}}()
+
+# creating a user returns a new UUID key unique to the user
+createUser(req) = Base.UUID(rand(UInt128))
+
+# add an additional endpoint for user creation
+HTTP.@register(ANIMAL_ROUTER, &quot;POST&quot;, &quot;/api/zoo/v1/users&quot;, createUser)
+# modify service endpoints to have user pass UUID in
+HTTP.@register(ANIMAL_ROUTER, &quot;GET&quot;, &quot;/api/zoo/v1/users/*/animals/*&quot;, getAnimal)
+HTTP.@register(ANIMAL_ROUTER, &quot;DELETE&quot;, &quot;/api/zoo/v1/users/*/animals/*&quot;, deleteAnimal)
+
+# modified service functions to account for multiple users
+function createAnimal(req::HTTP.Request, animal)
+    animal.id = getNextId()
+    ANIMALS[animal.userId][animal.id] = animal
+    return animal
+end
+
+function getAnimal(req::HTTP.Request)
+    paths = HTTP.URIs.splitpath(req.target)
+    userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
+    animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
+    return ANIMALS[userId][parse(Int, animalId)]
+end
+
+function updateAnimal(req::HTTP.Request, animal)
+    ANIMALS[animal.userId][animal.id] = animal
+    return animal
+end
+
+function deleteAnimal(req::HTTP.Request)
+    paths = HTTP.URIs.splitpath(req.target)
+    userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
+    animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
+    delete!(ANIMALS[userId], parse(Int, animal.id))
+    return &quot;&quot;
+end
+
+# AuthHandler to reject any unknown users
+function AuthHandler(req)
+    if HTTP.hasheader(req, &quot;Animal-UUID&quot;)
+        uuid = HTTP.header(req, &quot;Animal-UUID&quot;)
+        if haskey(ANIMALS, uuid)
+            return JSONHandler(req)
+        end
+    end
+    return HTTP.Response(401, &quot;unauthorized&quot;)
+end</code></pre><p>And our modified server invocation:</p><pre><code class="language-julia">HTTP.serve(AuthHandler, Sockets.localhost, 8081)</code></pre><p>Let&#39;s review what&#39;s going on here:</p><ul><li>Each <code>Animal</code> object now includes a <code>UUID</code> object unique to a user</li><li>We added a <code>/api/zoo/v1/users</code> endpoint for creating a new user</li><li>Each of our service functions now account for individual users</li><li>We made a new <code>AuthHandler</code> as the very first entry point in our middleware stack, this means that every single request must first pass through this authentication layer before reaching the service layer. Our <code>AuthHandler</code> checks that the user provided our security request header <code>Animal-UUID</code> and if so, ensures the provided UUID corresponds to a valid user. If not, the <code>AuthHandler</code> returns a 401 HTTP response, signalling that the request is unauthorized</li></ul><p>Voila, hopefully that helps provide a slightly-more-than-trivial example of utilizing the HTTP.Handler framework in conjunction with running an HTTP server.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L1-L204">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers.handle" href="#HTTP.Handlers.handle"><code>HTTP.Handlers.handle</code></a> — <span class="docstring-category">Function</span>.</div><div><div><pre><code class="language-julia">HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) =&gt; HTTP.Response
+HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)</code></pre><p>Dispatch function used to handle incoming requests to a server. Can be overloaded by custom <code>HTTP.Handler</code> subtypes to implement custom &quot;handling&quot; behavior.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L213-L220">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers.RequestHandlerFunction" href="#HTTP.Handlers.RequestHandlerFunction"><code>HTTP.Handlers.RequestHandlerFunction</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">RequestHandlerFunction(f)</code></pre><p>A function-wrapper type that is a subtype of <code>RequestHandler</code>. Takes a single function as an argument that should be of the form <code>f(::HTTP.Request) =&gt; HTTP.Response</code></p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L243-L248">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers.StreamHandlerFunction" href="#HTTP.Handlers.StreamHandlerFunction"><code>HTTP.Handlers.StreamHandlerFunction</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">StreamHandlerFunction(f)</code></pre><p>A function-wrapper type that is a subtype of <code>StreamHandler</code>. Takes a single function as an argument that should be of the form <code>f(::HTTP.Stream) =&gt; Nothing</code>, i.e. it accepts a raw <code>HTTP.Stream</code>, handles the incoming request, writes a response back out to the stream directly, then returns.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L258-L264">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers.Router" href="#HTTP.Handlers.Router"><code>HTTP.Handlers.Router</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-julia">HTTP.Router(h::Handler)
+HTTP.Router(f::Function)
+HTTP.Router()</code></pre><p>An <code>HTTP.Handler</code> type that supports pattern matching request url paths to registered <code>HTTP.Handler</code>s. Can accept a default <code>Handler</code> or <code>Function</code> that will be used in case no other handlers match; by default, a 404 response handler is used. Paths can be mapped to a handler via <code>HTTP.@register(r::Router, path, handler)</code>, see <code>?HTTP.@register</code> for more details.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L357-L366">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="HTTP.Handlers.@register" href="#HTTP.Handlers.@register"><code>HTTP.Handlers.@register</code></a> — <span class="docstring-category">Macro</span>.</div><div><div><pre><code class="language-julia">HTTP.@register(r::Router, path, handler)
+HTTP.@register(r::Router, method::String, path, handler)
+HTTP.@register(r::Router, method::String, scheme::String, host::String, path, handler)</code></pre><p>Function to map request urls matching <code>path</code> and optional method, scheme, host to another <code>handler::HTTP.Handler</code>. URL paths are registered one at a time, and multiple urls can map to the same handler. The URL can be passed as a String. Requests can be routed based on: method, scheme, hostname, or path. The following examples show how various urls will direct how a request is routed by a server:</p><ul><li><code>&quot;http://*&quot;</code>: match all HTTP requests, regardless of path</li><li><code>&quot;https://*&quot;</code>: match all HTTPS requests, regardless of path</li><li><code>&quot;/gmail&quot;</code>: regardless of scheme or host, match any request with a path starting with &quot;gmail&quot;</li><li><code>&quot;/gmail/userId/*/inbox</code>: match any request matching the path pattern, &quot;*&quot; is used as a wildcard that matches any value between the two &quot;/&quot;</li></ul><p>Note that due to being a macro (and the internal routing functionality), routes can only be registered statically, i.e. at the top level of a module, and not dynamically, i.e. inside a function.</p></div></div><a class="source-link" target="_blank" href="https://github.com/JuliaWeb/HTTP.jl/blob/d5e2561d17cb7c8408d644caba8817188ff33c31/src/Handlers.jl#L422-L439">source</a></section><footer><hr/><a class="previous" href="../"><span class="direction">Previous</span><span class="title">Home</span></a><a class="next" href="../internal_architecture/"><span class="direction">Next</span><span class="title">Internal Architecture</span></a></footer></article></body></html>
