@@ -1,6 +1,6 @@
 # HTTP.jl documentation
 
-> Complete documentation for HTTP.jl v2.8.0 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+> Complete documentation for HTTP.jl v2.9.0 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
 
 ---
 
@@ -796,8 +796,10 @@ returns or calls `closewrite`. Until then nothing is sent, so if the handler
 throws or writes the wrong number of bytes, the client gets an error response
 instead.
 
-To stream a large body, call `HTTP.startwrite` first. It sends the head at
-once, and each `write` goes straight to the connection:
+To stream a large body, call `HTTP.startwrite` first. The server still holds
+the first 4 KiB, so a small response goes out in one write with its head. Once
+the body passes 4 KiB, the head and the held bytes are sent, and each later
+`write` goes straight to the connection:
 
 ```julia
 HTTP.listen!("127.0.0.1", 8080) do stream
@@ -807,7 +809,7 @@ HTTP.listen!("127.0.0.1", 8080) do stream
 end
 ```
 
-After `startwrite`, a failure can only close the connection. Either way,
+Once the head is sent, a failure can only close the connection. Either way,
 writing more than `Content-Length` bytes throws. `HTTP.streamhandler` streams
 a response body this way when it is not already in memory, such as a
 `fileserver` file.
@@ -3729,14 +3731,16 @@ attached to `stream` itself, so handlers should read it with `read(stream)` or
 
     startwrite(stream) -> Response
 
-Send the response head of a server-side `Stream` and return the response
-metadata; later writes go straight to the connection.
+Start the response of a server-side `Stream` and return the response metadata.
+`write(stream, data)` starts it too.
 
-`write(stream, data)` also starts the response, but a fixed-length
-(`Content-Length`) HTTP/1 response started that way is held in memory until
-`closewrite`, so the server can still send an error response if the handler
-throws or writes the wrong number of bytes. Call `startwrite` first to stream a
-large fixed-length body; a failure after that closes the connection instead.
+Chunked and HTTP/2 responses send their head here. A fixed-length
+(`Content-Length`) HTTP/1 response holds its head and body so that a small
+response goes out in one write. Without an explicit `startwrite`, the whole
+body is held until `closewrite`, so the server can still send an error response
+if the handler throws or writes the wrong number of bytes. After `startwrite`,
+a body that grows past 4 KiB is sent as it is written, and a later failure
+closes the connection instead.
 
 ### `HTTP.setstatus` — Function
 
