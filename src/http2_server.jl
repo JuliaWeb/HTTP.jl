@@ -87,16 +87,6 @@ end
     return ProtocolError("HTTP/2 connection is closed")
 end
 
-mutable struct _H2ServerConnControl
-    @atomic shutdown_requested::Bool
-    @atomic goaway_sent::Bool
-    @atomic graceful_last_stream_id::UInt32
-end
-
-function _H2ServerConnControl()
-    return _H2ServerConnControl(false, false, UInt32(0))
-end
-
 mutable struct _H2ServerBody <: AbstractBody
     conn::Union{TCP.Conn,TLS.Conn}
     write_lock::ReentrantLock
@@ -1541,12 +1531,18 @@ function _handle_h2_stream!(
             end
             response_obj = response::Response
             try
-                _check_response_body_unsent(response_obj, handler_request)
+                let buffered_request = handler_request
+                    _with_response_narrowed(r -> _check_response_body_unsent(r, buffered_request), response_obj)
+                end
             catch err
                 @error "h2 server handler returned an unusable response body" exception = err
                 response_obj = Response(500; proto_major=2, proto_minor=0, request=handler_request)
             end
-            _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
+            let buffered_request = handler_request
+                _with_response_narrowed(response_obj) do r
+                    _write_h2_response!(conn, write_lock, send_state, stream_id, buffered_request, r, _server_write_deadline_ns(server))
+                end
+            end
         end
         _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
@@ -1743,7 +1739,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
         end
         _clear_deadlines!(conn)
-        _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
+        _set_conn_shutdown_hook!(tracked, _H2ServerShutdownHook(write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
         while true
             _server_shutting_down(server) && return nothing

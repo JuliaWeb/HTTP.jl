@@ -30,6 +30,37 @@ end
 
 _router_hello_request(req) = _response_with_text("hello:" * HT.getparam(req, "name"))
 
+function _captured_router_handler()
+    value = Ref("captured")
+    handler = function (request::HT.Request)
+        GC.gc()
+        return value[]
+    end
+    return handler, WeakRef(value)
+end
+
+@testset "HTTP router retains captured handlers and propagates failures" begin
+    router, captured = let
+        handler, captured = _captured_router_handler()
+        router = HT.Router()
+        HT.register!(router, "GET", "/captured", handler)
+        router, captured
+    end
+    GC.gc()
+    @test captured.value !== nothing
+    @test router(HT.Request("GET", "/captured")) == "captured"
+    HT.register!(router, "GET", "/throw", _ -> error("routed failure"))
+    @test_throws ErrorException("routed failure") router(HT.Request("GET", "/throw"))
+    HT.register!(router, "GET", "/throw-value", _ -> throw(:routed_failure))
+    failure = try
+        router(HT.Request("GET", "/throw-value"))
+        nothing
+    catch err
+        err
+    end
+    @test failure === :routed_failure
+end
+
 function _router_echo_request(req)
     payload = String(_read_all_handler_bytes(req.body))
     return _response_with_text("echo:" * HT.getparam(req, "name") * ":" * payload)

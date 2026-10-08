@@ -45,6 +45,32 @@ A non-yielding handler can still monopolize the interactive pool. The separate
 pool protects HTTP work from compute tasks assigned to `:default`; it cannot
 make non-yielding handler code cooperative.
 
+## Native Builds
+
+For JuliaC builds with `--trim=safe`, add `Preferences` to the build project and
+enable the constrained server dispatch before compiling:
+
+```julia
+using HTTP, Preferences
+Preferences.set_preferences!(HTTP, "trim_strict_bodies" => true)
+```
+
+This preference closes dispatch over buffered response bodies to `String`,
+`SubString{String}`, `Vector{UInt8}`, `Nothing`, `HTTP.EmptyBody`, and
+`HTTP.BytesBody` backed by a byte vector or `codeunits(::String)`. Other response
+body types raise `ArgumentError` in this mode. Routers accept the request and
+stream body types constructed by HTTP's server. Custom request bodies passed
+directly to a router are unsupported in this mode.
+
+The built-in precompile workload is disabled in this mode because it includes
+custom streaming file responses.
+
+The default is `false`, which retains ordinary dispatch for custom handlers and
+body types. Changing the preference invalidates the relevant precompile cache.
+Applications must still pass JuliaC's verifier and validate their executable on
+the target Julia runtime; this preference does not guarantee that arbitrary
+application code can be trimmed.
+
 ## Request Handlers
 
 Use `HTTP.serve!` or `HTTP.serve` when your application naturally maps

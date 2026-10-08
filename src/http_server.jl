@@ -30,10 +30,27 @@ end
     IDENTITY = 4
 end
 
+mutable struct _H2ServerConnControl
+    @atomic shutdown_requested::Bool
+    @atomic goaway_sent::Bool
+    @atomic graceful_last_stream_id::UInt32
+end
+
+function _H2ServerConnControl()
+    return _H2ServerConnControl(false, false, UInt32(0))
+end
+
+# HTTP/2 is the only protocol with a shutdown notification. Store its concrete
+# state rather than an erased closure so shutdown is callable in native builds.
+struct _H2ServerShutdownHook
+    write_lock::ReentrantLock
+    control::_H2ServerConnControl
+end
+
 mutable struct _ServerConn
     conn::Union{TCP.Conn,TLS.Conn}
     lock::ReentrantLock
-    shutdown_hook::Union{Nothing,Function}
+    shutdown_hook::Union{Nothing,_H2ServerShutdownHook}
     @atomic state::_ConnState.T
     @atomic state_unix_sec::Int64
 end
@@ -425,7 +442,7 @@ end
     return nothing
 end
 
-function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,Function})::Nothing
+function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_H2ServerShutdownHook})::Nothing
     lock(conn.lock)
     try
         conn.shutdown_hook = hook
@@ -444,7 +461,7 @@ function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
         unlock(conn.lock)
     end
     hook === nothing && return nothing
-    hook()
+    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control)
     return nothing
 end
 
@@ -1248,9 +1265,9 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 # serialized again. Answer 500 before any bytes go out instead
                 # of failing mid-response and dropping the connection (#1333).
                 try
-                    _check_response_body_unsent(response_obj)
+                    _with_response_narrowed(_check_response_body_unsent, response_obj)
                 catch err
-                    @error "server handler returned a response whose body was already sent or closed" exception = err
+                    @error "server handler returned an unusable response body" exception = err
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
@@ -1261,7 +1278,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     end
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj)
+                _with_response_narrowed(r -> _write_all_response!(tracked.conn, r), response_obj)
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)

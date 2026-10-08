@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using TOML
 
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
@@ -118,12 +119,37 @@ function _trim_run_task_backed_executables()::Bool
     return get(ENV, "HTTP_TRIM_RUN_TASK_EXECUTABLES", "0") == "1"
 end
 
+function _strict_trim_project(project_path::String, tmpdir::String)::String
+    strict_project = joinpath(tmpdir, "strict-project")
+    mkpath(strict_project)
+    cp(joinpath(project_path, "Project.toml"), joinpath(strict_project, "Project.toml"))
+    manifest = TOML.parsefile(joinpath(project_path, "Manifest.toml"))
+    for entries in values(manifest["deps"]), entry in entries
+        haskey(entry, "path") || continue
+        entry["path"] = abspath(joinpath(project_path, entry["path"]))
+    end
+    open(joinpath(strict_project, "Manifest.toml"), "w") do io
+        TOML.print(io, manifest)
+    end
+    write(joinpath(strict_project, "LocalPreferences.toml"), "[HTTP]\ntrim_strict_bodies = true\n")
+    return strict_project
+end
+
 function _run_trim_case(project_path::String, script_file::String, output_name::String; run_executable = _run_trim_executable)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
     println("[trim] compile START $(script_file)")
     mktempdir() do tmpdir
         cd(tmpdir) do
+            if script_file == "http_trim_router_server.jl"
+                project_path = _strict_trim_project(project_path, tmpdir)
+                # Exercise the same public router tests in the isolated strict
+                # project before compiling. Keep the parent suite's mode intact.
+                julia_exe = joinpath(Sys.BINDIR, Base.julia_exename())
+                tests = joinpath(@__DIR__, "http_handlers_tests.jl")
+                expr = "using HTTP; @assert HTTP._TRIM_STRICT_BODIES; include($(repr(tests)))"
+                @test success(`$julia_exe --startup-file=no --project=$project_path -e $expr`)
+            end
             bundle_dir = _trim_use_bundle() ? joinpath(tmpdir, "bundle") : nothing
             exit_code, output = _run_trim_compile(project_path, script_path, output_name; bundle_dir = bundle_dir)
             totals = _parse_trim_verify_totals(output)
@@ -200,6 +226,7 @@ end
             ("http_trim_client_h2_tcp_roundtrip.jl", "http_trim_client_h2_tcp_roundtrip"),
             ("http_trim_client_h2_roundtrip.jl", "http_trim_client_h2_roundtrip"),
             ("http_trim_client_server.jl", "http_trim_client_server"),
+            ("http_trim_router_server.jl", "http_trim_router_server"),
             ("http_trim_cookies.jl", "http_trim_cookies"),
             ("http_trim_open_fileserver.jl", "http_trim_open_fileserver"),
             ("http_trim_http2.jl", "http_trim_http2"),

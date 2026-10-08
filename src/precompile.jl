@@ -433,7 +433,9 @@ function _precompile_host_resolver_available()::Bool
     end
 end
 
-if _precompile_workload_enabled()
+# The built-in workload includes file responses with custom streaming bodies,
+# which are outside the buffered response set enabled by strict native builds.
+if _precompile_workload_enabled() && !_TRIM_STRICT_BODIES
     try
         _precompile_trace("enabled")
         @setup_workload begin
