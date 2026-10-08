@@ -148,7 +148,9 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
                 julia_exe = joinpath(Sys.BINDIR, Base.julia_exename())
                 tests = joinpath(@__DIR__, "http_handlers_tests.jl")
                 expr = "using HTTP; @assert HTTP._TRIM_STRICT_BODIES; include($(repr(tests)))"
-                @test success(`$julia_exe --startup-file=no --project=$project_path -e $expr`)
+                # Coverage must include the strict mode exercised in the child.
+                coverage = Base.JLOptions().code_coverage == 0 ? "none" : "user"
+                @test success(`$julia_exe --startup-file=no --code-coverage=$coverage --project=$project_path -e $expr`)
             end
             bundle_dir = _trim_use_bundle() ? joinpath(tmpdir, "bundle") : nothing
             exit_code, output = _run_trim_compile(project_path, script_path, output_name; bundle_dir = bundle_dir)
