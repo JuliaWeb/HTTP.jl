@@ -38,8 +38,6 @@ import .._server_error_status
 import ..@_spawn_interactive
 import ..@try_ignore
 import ..EmptyBody
-import ..H1Body
-import .._H2ServerBody
 import .._TRIM_STRICT_BODIES
 
 using Logging: Logging, AbstractLogger, LogLevel, with_logger, @logmsg
@@ -105,17 +103,8 @@ function _call_handler_narrowed(f::F, @nospecialize(x)) where {F}
         return f(x)
     elseif x isa Request{BytesBody{Vector{UInt8}}}
         return f(x)
-    elseif x isa Request{H1Body}
-        return f(x)
-    elseif x isa Request{_H2ServerBody}
-        return f(x)
     elseif x isa Stream{false, Request{EmptyBody}}
-        return f(x)
-    elseif x isa Stream{false, Request{BytesBody{Vector{UInt8}}}}
-        return f(x)
-    elseif x isa Stream{false, Request{H1Body}}
-        return f(x)
-    elseif x isa Stream{false, Request{_H2ServerBody}}
+        # Server streams keep live bytes separately from their bodyless metadata.
         return f(x)
     else
         throw(ArgumentError("unsupported request type for a routed handler"))

@@ -1983,11 +1983,7 @@ const _TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
 @inline function _with_response_narrowed(f::F, @nospecialize(response::Response)) where {F}
     if response isa Response{String}
         return f(response)
-    elseif response isa Response{SubString{String}}
-        return f(response)
     elseif response isa Response{Vector{UInt8}}
-        return f(response)
-    elseif response isa Response{Nothing}
         return f(response)
     elseif response isa Response{EmptyBody}
         return f(response)
