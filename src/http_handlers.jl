@@ -89,9 +89,7 @@ end
 # A router stores unrelated callable types in one trie. In strict native builds,
 # call through a per-callable C entrypoint instead of runtime specialization.
 # Ref boxes carry arguments/results across a primitive-only C signature.
-struct _HandlerCallWrapper <: Function end
-
-function (::_HandlerCallWrapper)(f::F, xptr::Ptr{Cvoid}, outptr::Ptr{Cvoid}) where {F}
+function _handler_entry(f::F, xptr::Ptr{Cvoid}, outptr::Ptr{Cvoid}) where {F}
     xref = unsafe_pointer_to_objref(xptr)::Base.RefValue{Any}
     out = unsafe_pointer_to_objref(outptr)::Base.RefValue{Any}
     out[] = _call_handler_narrowed(f, xref[])
@@ -111,12 +109,6 @@ function _call_handler_narrowed(f::F, @nospecialize(x)) where {F}
     end
 end
 
-@generated function _handler_gen_fptr(::Type{F}) where F
-    quote
-        @cfunction($(_HandlerCallWrapper()), Cvoid, (Ref{$F}, Ptr{Cvoid}, Ptr{Cvoid}))
-    end
-end
-
 struct _HandlerFn
     ptr::Ptr{Cvoid}       # @cfunction pointer (specialized per callable type F)
     objptr::Ptr{Cvoid}    # pointer to the callable object
@@ -124,13 +116,11 @@ struct _HandlerFn
 end
 
 function _HandlerFn(callable::F) where F
-    ptr = _handler_gen_fptr(F)
+    ptr = @cfunction(_handler_entry, Cvoid, (Ref{F}, Ptr{Cvoid}, Ptr{Cvoid}))
     objref = Base.cconvert(Ref{F}, callable)
     objptr = Ptr{Cvoid}(Base.unsafe_convert(Ref{F}, objref))
     return _HandlerFn(ptr, objptr, objref)
 end
-
-_HandlerFn(callable::_HandlerFn) = callable
 
 @inline function (h::_HandlerFn)(x)
     xref = Ref{Any}(x)

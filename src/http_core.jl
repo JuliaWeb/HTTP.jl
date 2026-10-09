@@ -1977,10 +1977,11 @@ end
 
 # Native builds cannot dispatch over an open set of Response{B} types after a
 # handler or middleware returns an inference-widened response. This preference
-# closes that boundary to buffered body types; ordinary builds retain the fallback.
+# closes that boundary to buffered body types; ordinary builds dispatch normally.
 const _TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
 
 @inline function _with_response_narrowed(f::F, @nospecialize(response::Response)) where {F}
+    _TRIM_STRICT_BODIES || return f(response)
     if response isa Response{String}
         return f(response)
     elseif response isa Response{Vector{UInt8}}
@@ -1989,13 +1990,13 @@ const _TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
         return f(response)
     elseif response isa Response{BytesBody{Vector{UInt8}}}
         return f(response)
-    elseif response isa Response{BytesBody{Base.CodeUnits{UInt8, String}}}
-        # Response(status, ::String) stores the body as codeunits
+    elseif response isa Response{BytesBody{Base.CodeUnits{UInt8,String}}}
         return f(response)
-    else
-        _TRIM_STRICT_BODIES && throw(ArgumentError("unhandled response body type in strict trim mode"))
+    elseif response isa Response{BytesBody{SubArray{UInt8,1,Vector{UInt8},Tuple{UnitRange{Int}},true}}}
+        # `servecontent` range responses over a byte vector
         return f(response)
     end
+    throw(ArgumentError("unsupported response body type with trim_strict_bodies enabled"))
 end
 
 # Check single-use bodies before committing a response head to the wire.

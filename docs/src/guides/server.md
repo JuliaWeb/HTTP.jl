@@ -47,32 +47,28 @@ make non-yielding handler code cooperative.
 
 ## Native Builds
 
-For JuliaC builds with `--trim=safe`, add `Preferences` to the build project and
-enable the constrained server dispatch before compiling:
+For JuliaC `--trim=safe` builds of a server, enable the `trim_strict_bodies`
+preference before compiling:
 
 ```julia
 using HTTP, Preferences
 Preferences.set_preferences!(HTTP, "trim_strict_bodies" => true)
 ```
 
-This preference closes dispatch over buffered response bodies to `String`,
-`Vector{UInt8}`, `HTTP.EmptyBody`, and `HTTP.BytesBody` backed by a byte vector or
-`codeunits(::String)`. Public constructors normalize substring and `nothing`
-arguments to `String` and `HTTP.EmptyBody`, respectively. Other response
-body types raise `ArgumentError` in this mode. Routers accept the request and
-stream types delivered by `serve!`, `streamhandler`, and `listen!`: requests
-with an empty body or a buffered byte vector, and server streams with bodyless
-request metadata. Custom or unbuffered request bodies passed directly to a
-router are unsupported in this mode.
+With it enabled:
 
-The built-in precompile workload is disabled in this mode because it includes
-custom streaming file responses.
+- Handler responses must have a `String`, `Vector{UInt8}`, or `HTTP.EmptyBody`
+  body, or an `HTTP.BytesBody` over a byte vector, `codeunits(::String)`, or a
+  contiguous view of a byte vector (what `servecontent` returns for a range of a
+  byte vector). Constructors convert substring and `nothing` bodies to `String`
+  and `HTTP.EmptyBody`. The server answers other body types, including
+  `servecontent` over an `IO`, with a 500.
+- `Router` handlers accept the requests and streams that `serve!`,
+  `streamhandler`, and `listen!` deliver. Calling a router directly with another
+  request body type throws `ArgumentError`.
+- HTTP's precompile workload is skipped.
 
-The default is `false`, which retains ordinary dispatch for custom handlers and
-body types. Changing the preference invalidates the relevant precompile cache.
-Applications must still pass JuliaC's verifier and validate their executable on
-the target Julia runtime; this preference does not guarantee that arbitrary
-application code can be trimmed.
+The default, `false`, places no limits on handler or body types.
 
 ## Request Handlers
 
