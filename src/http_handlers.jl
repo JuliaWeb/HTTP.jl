@@ -37,6 +37,8 @@ import ..peeraddr
 import .._server_error_status
 import ..@_spawn_interactive
 import ..@try_ignore
+import ..EmptyBody
+import .._TRIM_STRICT_BODIES
 
 using Logging: Logging, AbstractLogger, LogLevel, with_logger, @logmsg
 
@@ -84,6 +86,51 @@ function _route_variable_matches(pattern::Regex, segment::AbstractString)
     return m !== nothing && m.match == segment
 end
 
+# A router stores unrelated callable types in one trie. In strict native builds,
+# call through a per-callable C entrypoint instead of runtime specialization.
+# Ref boxes carry arguments/results across a primitive-only C signature.
+function _handler_entry(f::F, xptr::Ptr{Cvoid}, outptr::Ptr{Cvoid}) where {F}
+    xref = unsafe_pointer_to_objref(xptr)::Base.RefValue{Any}
+    out = unsafe_pointer_to_objref(outptr)::Base.RefValue{Any}
+    out[] = _call_handler_narrowed(f, xref[])
+    return nothing
+end
+
+function _call_handler_narrowed(f::F, @nospecialize(x)) where {F}
+    if x isa Request{EmptyBody}
+        return f(x)
+    elseif x isa Request{BytesBody{Vector{UInt8}}}
+        return f(x)
+    elseif x isa Stream{false, Request{EmptyBody}}
+        # Server streams keep live bytes separately from their bodyless metadata.
+        return f(x)
+    else
+        throw(ArgumentError("unsupported request type for a routed handler"))
+    end
+end
+
+struct _HandlerFn
+    ptr::Ptr{Cvoid}       # @cfunction pointer (specialized per callable type F)
+    objptr::Ptr{Cvoid}    # pointer to the callable object
+    _root::Any           # Retain the callable storage throughout the leaf lifetime.
+end
+
+function _HandlerFn(callable::F) where F
+    ptr = @cfunction(_handler_entry, Cvoid, (Ref{F}, Ptr{Cvoid}, Ptr{Cvoid}))
+    objref = Base.cconvert(Ref{F}, callable)
+    objptr = Ptr{Cvoid}(Base.unsafe_convert(Ref{F}, objref))
+    return _HandlerFn(ptr, objptr, objref)
+end
+
+@inline function (h::_HandlerFn)(x)
+    xref = Ref{Any}(x)
+    out = Ref{Any}(nothing)
+    GC.@preserve h xref out begin
+        ccall(h.ptr, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}), h.objptr, pointer_from_objref(xref), pointer_from_objref(out))
+    end
+    return out[]
+end
+
 struct Leaf{H}
     method::String
     variables::Vector{Tuple{Int,String}}
@@ -116,7 +163,7 @@ segment(x) = isvariable(x) ? Variable(x) : String(x)
 Node(x) = Node(x, Node[], Node[], nothing, nothing, Leaf[])
 Node() = Node("*")
 
-function find(y, itr; by=identity, eq=(==))
+function find(y, itr; by::B=identity, eq::E=(==)) where {B,E}
     for (i, x) in enumerate(itr)
         eq(by(x), y) && return i
     end
@@ -138,19 +185,19 @@ function insert!(node::Node, leaf, segments, i)
     if segment_value isa Variable
         push!(leaf.variables, (i, segment_value.name))
     end
-    if segment_value == "*" || (segment_value isa Variable && segment_value.pattern === nothing)
+    if (segment_value isa String && segment_value == "*") || (segment_value isa Variable && segment_value.pattern === nothing)
         if node.wildcard === nothing
             node.wildcard = Node(segment_value)
         end
         return insert!(node.wildcard::Node, leaf, segments, i + 1)
-    elseif segment_value == "**"
+    elseif segment_value isa String && segment_value == "**"
         if node.doublestar === nothing
             node.doublestar = Node(segment_value)
         end
         i < length(segments) && error("/** double wildcard must be last segment in path")
         return insert!(node.doublestar::Node, leaf, segments, i + 1)
     elseif segment_value isa Variable
-        j = find(segment_value.pattern, node.conditional; by=x -> x.segment.pattern)
+        j = find(segment_value.pattern, node.conditional; by=x -> (x.segment::Variable).pattern)
         if j === nothing
             n = Node(segment_value)
             push!(node.conditional, n)
@@ -159,11 +206,11 @@ function insert!(node::Node, leaf, segments, i)
         end
         return insert!(n, leaf, segments, i + 1)
     else
-        j = find(segment_value, node.exact; by=x -> x.segment)
+        j = find(segment_value, node.exact; by=x -> (x.segment::String))
         if j === nothing
             n = Node(segment_value)
             push!(node.exact, n)
-            sort!(node.exact; by=x -> x.segment)
+            sort!(node.exact; by=x -> (x.segment::String))
             return insert!(n, leaf, segments, i + 1)
         end
         return insert!(node.exact[j], leaf, segments, i + 1)
@@ -178,7 +225,7 @@ function match(node::Node, method, segments, i)
     end
     segment_value = segments[i]
     anymissing = false
-    j = find(segment_value, node.exact; by=x -> x.segment)
+    j = find(segment_value, node.exact; by=x -> (x.segment::String))
     if j !== nothing
         m = match(node.exact[j], method, segments, i + 1)
         anymissing = m === missing
@@ -186,7 +233,7 @@ function match(node::Node, method, segments, i)
         m !== nothing && return m
     end
     for conditional_node in node.conditional
-        if _route_variable_matches(conditional_node.segment.pattern, segment_value)
+        if _route_variable_matches((conditional_node.segment::Variable).pattern::Regex, segment_value)
             m = match(conditional_node, method, segments, i + 1)
             anymissing = m === missing
             m = coalesce(m, nothing)
@@ -238,7 +285,7 @@ default405(::Request) = Response(405)
 default404(stream::Stream) = setstatus(stream, 404)
 default405(stream::Stream) = setstatus(stream, 405)
 
-Router(_404=default404, _405=default405, middleware=nothing) = Router(_404, _405, Node(), middleware)
+Router(_404::T=default404, _405::S=default405, middleware::F=nothing) where {T,S,F} = Router(_404, _405, Node(), middleware)
 
 """
     register!(router, method, path, handler) -> Nothing
@@ -266,19 +313,19 @@ end
 """
 function register! end
 
-function register!(r::Router, method, path, handler)
-    segments = map(segment, split(path, '/'; keepempty=false))
+function register!(r::Router, method, path, handler::F) where {F}
+    segments = Union{String,Variable}[segment(part) for part in split(path, '/'; keepempty=false)]
     if r.middleware !== nothing
         handler = r.middleware(handler)
     end
-    insert!(r.routes, Leaf(method, Tuple{Int,String}[], path, handler), segments, 1)
+    insert!(r.routes, Leaf(method, Tuple{Int,String}[], path, _TRIM_STRICT_BODIES ? _HandlerFn(handler) : handler), segments, 1)
     return nothing
 end
 
-register!(r::Router, path, handler) = register!(r, "*", path, handler)
+register!(r::Router, path, handler::F) where {F} = register!(r, "*", path, handler)
 
-register!(handler, r::Router, method, path) = register!(r, method, path, handler)
-register!(handler, r::Router, path) = register!(r, "*", path, handler)
+register!(handler::F, r::Router, method, path) where {F} = register!(r, method, path, handler)
+register!(handler::F, r::Router, path) where {F} = register!(r, "*", path, handler)
 
 const Params = Dict{String,String}
 
@@ -314,7 +361,8 @@ function gethandler(r::Router, req::Request)
                 params[v] = segments[i]
             end
         end
-        return leaf.handler, leaf.path, params
+        handler = _TRIM_STRICT_BODIES ? (leaf::Leaf{_HandlerFn}).handler : leaf.handler
+        return handler, leaf.path, params
     end
     return leaf, "", params
 end
@@ -370,6 +418,7 @@ Retrieve a matched path parameter with name `name` from request context.
 function getparam(req, name, default=nothing)
     params = getparams(req)
     params === nothing && return default
+    _TRIM_STRICT_BODIES && (params = params::Params)
     return get(params, name, default)
 end
 

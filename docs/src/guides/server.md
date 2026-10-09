@@ -45,6 +45,31 @@ A non-yielding handler can still monopolize the interactive pool. The separate
 pool protects HTTP work from compute tasks assigned to `:default`; it cannot
 make non-yielding handler code cooperative.
 
+## Native Builds
+
+For JuliaC `--trim=safe` builds of a server, enable the `trim_strict_bodies`
+preference before compiling:
+
+```julia
+using HTTP, Preferences
+Preferences.set_preferences!(HTTP, "trim_strict_bodies" => true)
+```
+
+With it enabled:
+
+- Handler responses must have a `String`, `Vector{UInt8}`, or `HTTP.EmptyBody`
+  body, or an `HTTP.BytesBody` over a byte vector, `codeunits(::String)`, or a
+  contiguous view of a byte vector (what `servecontent` returns for a range of a
+  byte vector). Constructors convert substring and `nothing` bodies to `String`
+  and `HTTP.EmptyBody`. The server answers other body types, including
+  `servecontent` over an `IO`, with a 500.
+- `Router` handlers accept the requests and streams that `serve!`,
+  `streamhandler`, and `listen!` deliver. Calling a router directly with another
+  request body type throws `ArgumentError`.
+- HTTP's precompile workload is skipped.
+
+The default, `false`, places no limits on handler or body types.
+
 ## Request Handlers
 
 Use `HTTP.serve!` or `HTTP.serve` when your application naturally maps

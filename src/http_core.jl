@@ -1,4 +1,5 @@
 # Core HTTP request/response/header/body types and errors.
+using Preferences: @load_preference
 using Reseau.TCP
 using Reseau.TLS
 using Reseau.IOPoll
@@ -1972,6 +1973,31 @@ mutable struct Response{B}
     request_url::Union{Nothing,String}
     previous::Union{Nothing,Response}
     redirect_count::Int
+end
+
+# Native builds cannot dispatch over an open set of Response{B} types after a
+# handler or middleware returns an inference-widened response. This preference
+# closes that boundary to buffered body types; ordinary builds fall back to
+# dynamic dispatch for other body types.
+const _TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
+
+@inline function _with_response_narrowed(f::F, @nospecialize(response::Response)) where {F}
+    if response isa Response{String}
+        return f(response)
+    elseif response isa Response{Vector{UInt8}}
+        return f(response)
+    elseif response isa Response{EmptyBody}
+        return f(response)
+    elseif response isa Response{BytesBody{Vector{UInt8}}}
+        return f(response)
+    elseif response isa Response{BytesBody{Base.CodeUnits{UInt8,String}}}
+        return f(response)
+    elseif response isa Response{BytesBody{SubArray{UInt8,1,Vector{UInt8},Tuple{UnitRange{Int}},true}}}
+        # `servecontent` range responses over a byte vector
+        return f(response)
+    end
+    _TRIM_STRICT_BODIES && throw(ArgumentError("unsupported response body type with trim_strict_bodies enabled"))
+    return f(response)
 end
 
 # Check single-use bodies before committing a response head to the wire.

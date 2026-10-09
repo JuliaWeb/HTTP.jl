@@ -30,6 +30,37 @@ end
 
 _router_hello_request(req) = _response_with_text("hello:" * HT.getparam(req, "name"))
 
+function _captured_router_handler()
+    value = Ref("captured")
+    handler = function (request::HT.Request)
+        GC.gc()
+        return value[]
+    end
+    return handler, WeakRef(value)
+end
+
+@testset "HTTP router retains captured handlers and propagates failures" begin
+    router, captured = let
+        handler, captured = _captured_router_handler()
+        router = HT.Router()
+        HT.register!(router, "GET", "/captured", handler)
+        router, captured
+    end
+    GC.gc()
+    @test captured.value !== nothing
+    @test router(HT.Request("GET", "/captured")) == "captured"
+    HT.register!(router, "GET", "/throw", _ -> error("routed failure"))
+    @test_throws ErrorException("routed failure") router(HT.Request("GET", "/throw"))
+    HT.register!(router, "GET", "/throw-value", _ -> throw(:routed_failure))
+    failure = try
+        router(HT.Request("GET", "/throw-value"))
+        nothing
+    catch err
+        err
+    end
+    @test failure === :routed_failure
+end
+
 function _router_echo_request(req)
     payload = String(_read_all_handler_bytes(req.body))
     return _response_with_text("echo:" * HT.getparam(req, "name") * ":" * payload)
@@ -42,6 +73,71 @@ function _router_stream_request(stream)
     HT.setheader(stream, "Content-Type", "text/plain")
     write(stream, "stream:" * HT.getparam(req, "name") * ":" * payload)
     return nothing
+end
+
+@testset "HTTP router custom request body support" begin
+    router = HT.Router()
+    HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
+    request = HT.Request("POST", "/echo/raw"; body = "ping")
+    if HT._TRIM_STRICT_BODIES
+        @test_throws ArgumentError("unsupported request type for a routed handler") router(request)
+    else
+        @test String(_read_all_handler_bytes(router(request).body)) == "echo:raw:ping"
+    end
+end
+
+@testset "HTTP router unbuffered request body support" begin
+    router = HT.Router()
+    HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
+    # A stream handler can forward its live request body to a request router
+    # without the buffering performed by serve! or streamhandler.
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        metadata = HT.startread(stream)
+        request = HT.Request(metadata.method, metadata.target;
+            body = stream.request_body, context = HT.get_request_context(metadata))
+        response = router(request)
+        HT.setstatus(stream, response.status)
+        write(stream, _read_all_handler_bytes(response.body))
+        return nothing
+    end
+    client = HT.Client()
+    try
+        for protocol in (:h1, :h2)
+            response = HT.post(client, "http://$(HT.server_addr(server))/echo/raw";
+                body = "ping", protocol = protocol, status_exception = false, retry = false)
+            if HT._TRIM_STRICT_BODIES
+                @test response.status == 500
+            else
+                @test response.status == 200
+                @test String(_read_all_handler_bytes(response.body)) == "echo:raw:ping"
+            end
+        end
+    finally
+        close(client)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
+@testset "HTTP server custom response body support" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        data = IOBuffer("callback")
+        body = HT.CallbackBody(buf -> readbytes!(data, buf), () -> nothing)
+        return HT.Response(200, body; content_length = 8)
+    end
+    try
+        response = HT.get("http://$(HT.server_addr(server))/";
+            status_exception = false, retry = false)
+        if HT._TRIM_STRICT_BODIES
+            @test response.status == 500
+        else
+            @test response.status == 200
+            @test String(_read_all_handler_bytes(response.body)) == "callback"
+        end
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
 end
 
 @testset "HTTP handlers router direct matching" begin
@@ -538,12 +634,14 @@ end
     server = HT.listen!(router, "127.0.0.1", 0; listenany = true)
     address = HT.server_addr(server)
     try
-        resp = HT.post("http://$(address)/stream/sam"; body = "pong")
-        @test resp.status == 200
-        @test String(_read_all_handler_bytes(resp.body)) == "stream:sam:pong"
+        for protocol in (:h1, :h2)
+            resp = HT.post("http://$(address)/stream/sam"; body = "pong", protocol = protocol)
+            @test resp.status == 200
+            @test String(_read_all_handler_bytes(resp.body)) == "stream:sam:pong"
 
-        wrong_method = HT.get("http://$(address)/stream/sam"; status_exception = false)
-        @test wrong_method.status == 405
+            wrong_method = HT.get("http://$(address)/stream/sam"; status_exception = false, protocol = protocol)
+            @test wrong_method.status == 405
+        end
     finally
         HT.forceclose(server)
         wait(server)
