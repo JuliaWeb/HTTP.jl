@@ -32,6 +32,12 @@ function run_http_trim_open_fileserver()::Nothing
         sniffed = HT.servecontent(HT.Request("GET", "/"), collect(codeunits("<html><p>hi</p></html>")))
         HT.header(sniffed, "Content-Type") == "text/html; charset=utf-8" || error("unexpected sniffed content type")
         HT.sniff("{\"ok\":true}") == "application/json; charset=utf-8" || error("unexpected sniffed JSON content type")
+
+        # servecontent returns concrete response types, so callers can read the
+        # body (here a byte range) without dynamic dispatch.
+        ranged = HT.servecontent(HT.Request("GET", "/", ["Range" => "bytes=0-3"]), collect(codeunits("<html>")))
+        ranged.status == 206 || error("expected range response status 206")
+        trim_body_string(ranged.body) == "<htm" || error("unexpected range response body")
     finally
         trim_shutdown_runtime()
     end

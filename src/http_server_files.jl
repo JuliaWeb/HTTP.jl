@@ -388,7 +388,9 @@ function servecontent(
     etag::Union{Nothing,AbstractString}=nothing,
     headers=Headers(),
     allow_ranges::Bool=true,
-)::Response
+)
+    # No `::Response` return annotation: it widens every caller to the abstract
+    # type, which juliac --trim cannot dispatch on when writing the response.
     response_headers = copy(mkheaders(headers))
     modtime_value = modtime === nothing ? nothing : _servecontent_modtime(modtime::DateTime)
     etag === nothing || setheader(response_headers, "ETag", String(etag))
