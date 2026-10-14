@@ -1,4 +1,4 @@
-# Content sniffing helpers used by multipart/form request bodies.
+# Content sniffing for `sniff`, multipart/form request bodies, and `servecontent`.
 
 const _SNIFF_MAX_LENGTH = 512
 const _SNIFF_WHITESPACE = Set{UInt8}([UInt8('\t'), UInt8('\n'), UInt8('\u000c'), UInt8('\r'), UInt8(' ')])
@@ -258,7 +258,10 @@ function _sniff_match(::_SniffJSONSig, data::AbstractVector{UInt8}, firstnonws::
     return true
 end
 
-const _SNIFF_SIGNATURES = Any[
+# Checked in order before `_SNIFF_FALLBACK_SIGNATURES`. Keep each list to at
+# most four concrete types so inference union-splits the `_sniff_match` and
+# `_sniff_content_type` calls into static dispatch (required by `juliac --trim`).
+const _SNIFF_SIGNATURES = Union{_SniffHTMLSig,_SniffMasked,_SniffExact}[
     _SniffHTMLSig(collect(codeunits("<!DOCTYPE HTML"))),
     _SniffHTMLSig(collect(codeunits("<HTML"))),
     _SniffHTMLSig(collect(codeunits("<HEAD"))),
@@ -316,10 +319,9 @@ const _SNIFF_SIGNATURES = Any[
     _SniffExact(UInt8[0x52, 0x61, 0x72, 0x20, 0x1A, 0x07, 0x00], "application/x-rar-compressed"),
     _SniffExact(UInt8[0x50, 0x4B, 0x03, 0x04], "application/zip"),
     _SniffExact(UInt8[0x1F, 0x8B, 0x08], "application/x-gzip"),
-    _SniffMP4Sig(),
-    _SniffJSONSig(),
-    _SniffTextSig(),
 ]
+
+const _SNIFF_FALLBACK_SIGNATURES = (_SniffMP4Sig(), _SniffJSONSig(), _SniffTextSig())
 
 function sniff(data::AbstractString)::String
     bytes = collect(codeunits(String(data)))
@@ -342,6 +344,9 @@ function sniff(data::AbstractVector{UInt8})::String
         firstnonws += 1
     end
     for sig in _SNIFF_SIGNATURES
+        _sniff_match(sig, bytes, firstnonws) && return _sniff_content_type(sig)
+    end
+    for sig in _SNIFF_FALLBACK_SIGNATURES
         _sniff_match(sig, bytes, firstnonws) && return _sniff_content_type(sig)
     end
     return "application/octet-stream"

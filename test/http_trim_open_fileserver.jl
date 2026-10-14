@@ -27,6 +27,11 @@ function run_http_trim_open_fileserver()::Nothing
 
         dotted_route = handler(HT.Request("GET", "/gallery.v2"))
         dotted_route.status == 404 || error("expected dotted route status 404")
+
+        # Without `content_type` or a typed `name`, servecontent sniffs the body.
+        sniffed = HT.servecontent(HT.Request("GET", "/"), collect(codeunits("<html><p>hi</p></html>")))
+        HT.header(sniffed, "Content-Type") == "text/html; charset=utf-8" || error("unexpected sniffed content type")
+        HT.sniff("{\"ok\":true}") == "application/json; charset=utf-8" || error("unexpected sniffed JSON content type")
     finally
         trim_shutdown_runtime()
     end

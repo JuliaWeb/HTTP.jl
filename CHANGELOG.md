@@ -86,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
+  `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
