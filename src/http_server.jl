@@ -30,10 +30,28 @@ end
     IDENTITY = 4
 end
 
+mutable struct _H2ServerConnControl
+    @atomic shutdown_requested::Bool
+    @atomic goaway_sent::Bool
+    @atomic graceful_last_stream_id::UInt32
+end
+
+function _H2ServerConnControl()
+    return _H2ServerConnControl(false, false, UInt32(0))
+end
+
+# HTTP/2 is the only protocol with a shutdown notification. Store its concrete
+# state rather than a closure, so graceful shutdown is statically dispatched
+# under juliac --trim.
+struct _H2ShutdownHook
+    write_lock::ReentrantLock
+    control::_H2ServerConnControl
+end
+
 mutable struct _ServerConn
     conn::Union{TCP.Conn,TLS.Conn}
     lock::ReentrantLock
-    shutdown_hook::Union{Nothing,Function}
+    shutdown_hook::Union{Nothing,_H2ShutdownHook}
     @atomic state::_ConnState.T
     @atomic state_unix_sec::Int64
 end
@@ -425,7 +443,7 @@ end
     return nothing
 end
 
-function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,Function})::Nothing
+function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_H2ShutdownHook})::Nothing
     lock(conn.lock)
     try
         conn.shutdown_hook = hook
@@ -444,7 +462,7 @@ function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
         unlock(conn.lock)
     end
     hook === nothing && return nothing
-    hook()
+    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control)
     return nothing
 end
 
