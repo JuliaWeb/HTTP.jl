@@ -2010,10 +2010,15 @@ struct _IncomingResponse{B<:AbstractBody}
     rawbody::B
 end
 
+# Default for `Response`'s `body` keyword. A singleton (rather than the
+# `nobody` vector) lets inference fold the "no keyword body" check, so a
+# response built from a positional body has one concrete type.
+struct _NoBodyKeyword end
+
 function Response(
     status::Integer,
     response_body::B=EmptyBody();
-    body=nobody,
+    body=_NoBodyKeyword(),
     reason::AbstractString="",
     headers=Headers(),
     trailers=Headers(),
@@ -2026,9 +2031,10 @@ function Response(
     previous::Union{Nothing,Response}=nothing,
     redirect_count::Integer=0,
 ) where {B}
-    actual_body = body === nobody ? _response_body_arg(response_body) : _response_body_arg(body)
+    positional = body isa _NoBodyKeyword || body === nobody
+    actual_body = positional ? _response_body_arg(response_body) : _response_body_arg(body)
     actual_content_length = if content_length < 0
-        body === nobody ? _compat_body_length(response_body) : _compat_body_length(body)
+        positional ? _compat_body_length(response_body) : _compat_body_length(body)
     else
         Int64(content_length)
     end

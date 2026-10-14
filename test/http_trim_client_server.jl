@@ -19,7 +19,8 @@ function run_http_trim_client_server()::Nothing
         startswith(response, "HTTP/1.1 200 OK\r\n") || error("expected 200 response, got $(repr(response))")
         occursin("\r\n\r\nhello", response) || error("unexpected response body: $(repr(response))")
     finally
-        server === nothing || trim_close_http_server(server::HT.Server)
+        # graceful close: also notifies open HTTP/2 connections to shut down
+        server === nothing || close(server::HT.Server)
         yield()
         GC.gc()
         HTTP.@try_ignore Reseau.IOPoll.shutdown!()
