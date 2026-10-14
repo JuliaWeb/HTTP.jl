@@ -87,6 +87,15 @@ end
     return ProtocolError("HTTP/2 connection is closed")
 end
 
+# A bodyless HTTP/2 status response. The request is set after construction:
+# callers pass a Union of request types, and a Union-typed keyword argument
+# makes the keyword call dynamically dispatched under juliac --trim.
+function _h2_status_response(status::Int, request::Request)
+    response = Response(status; proto_major=2, proto_minor=0)
+    response.request = request
+    return response
+end
+
 mutable struct _H2ServerBody <: AbstractBody
     conn::Union{TCP.Conn,TLS.Conn}
     write_lock::ReentrantLock
@@ -1479,12 +1488,7 @@ function _handle_h2_stream!(
                 else
                     status = _server_error_status(err)
                     stream.request_buffer = IOBuffer()
-                    stream.response = Response(
-                        status === nothing ? 500 : status::Int;
-                        proto_major=2,
-                        proto_minor=0,
-                        request=request,
-                    )
+                    stream.response = _h2_status_response(status === nothing ? 500 : status::Int, request)
                     @atomic :release stream.response_started = false
                     @atomic :release stream.write_closed = false
                     @atomic :release stream.read_closed = false
@@ -1505,12 +1509,7 @@ function _handle_h2_stream!(
                     send_state,
                     stream_id,
                     request,
-                    Response(
-                        status === nothing ? 500 : status::Int;
-                        proto_major=2,
-                        proto_minor=0,
-                        request=request,
-                    ),
+                    _h2_status_response(status === nothing ? 500 : status::Int, request),
                     _server_write_deadline_ns(server),
                 )
                 @try_ignore body_close!(request.body)
@@ -1524,7 +1523,7 @@ function _handle_h2_stream!(
                     send_state,
                     stream_id,
                     request,
-                    Response(500; proto_major=2, proto_minor=0, request=request),
+                    _h2_status_response(500, request),
                     _server_write_deadline_ns(server),
                 )
                 return nothing
@@ -1534,7 +1533,7 @@ function _handle_h2_stream!(
                 _check_response_body_unsent(response_obj, handler_request)
             catch err
                 @error "h2 server handler returned an unusable response body" exception = err
-                response_obj = Response(500; proto_major=2, proto_minor=0, request=handler_request)
+                response_obj = _h2_status_response(500, handler_request)
             end
             _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
         end
