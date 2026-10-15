@@ -20,9 +20,9 @@ const LLMS_SUMMARY = "HTTP client and server library for Julia: HTTP/1.1 and HTT
 # the list of its `##` section headings (and a warning is printed).
 const LLMS_PAGE_NOTES = Dict{String,String}(
     "index.md" => "package overview, quick start, and the documentation map.",
-    "guides/client.md" => "request construction, verb helpers, streaming with `HTTP.open`, reusable `HTTP.Client` bundles, request bodies, timeouts, retries, proxies, cookies, and HTTP/2 on the client side.",
-    "guides/server.md" => "request handlers, stream handlers, server lifecycle, the interactive thread pool, routing and middleware, static files, and server-sent events.",
-    "guides/protocols.md" => "WebSocket client and server usage and where HTTP/2 fits into the normal client/server APIs.",
+    "guides/client.md" => "requests and the verb helpers, request bodies, query parameters, streaming with `HTTP.open`, reusable `HTTP.Client` settings, proxies, timeouts, retries, cancellation, and debugging.",
+    "guides/server.md" => "request and stream handlers, the interactive thread pool, server lifecycle, timeouts, TLS, routing and middleware, request logging, static files, and server-sent events.",
+    "guides/protocols.md" => "WebSocket clients and servers, message compression, and HTTP/2 on clients and servers.",
     "guides/migration-1x.md" => "what changed from HTTP.jl 1.x to 2.0 and how to update client, server, header, body, WebSocket, SSE, and streaming code.",
     "api/reference.md" => "the top-level `HTTP` module docstring and the map of the API reference pages.",
     "api/core.md" => "docstrings for `Request`, `Response`, `Headers`, `RequestContext`, error types, header helpers, body types, cookies, forms, multipart parsing, proxy configuration, and `HTTP2Settings`.",
