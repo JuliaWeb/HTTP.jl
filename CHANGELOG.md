@@ -102,6 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
   waits also propagate failed writer tasks instead of waiting indefinitely.
   ([#1390])
+- A byte-buffer `response_stream` receives only a 2xx body. A redirect that is
+  not followed, such as S3's 301 for the wrong region (it has no `Location`),
+  went into the buffer, and a body larger than the buffer raised `ArgumentError:
+  Unable to grow response stream` instead of returning the 301. A body kept out
+  of the buffer is read up to 1 MiB, or `max_decompressed_size` if smaller; it
+  was read in full, however large.
 - An empty `write` to a server stream (`write(stream, UInt8[])`, an empty
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the

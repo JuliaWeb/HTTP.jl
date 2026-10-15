@@ -588,8 +588,8 @@ Pass a byte vector or a writable byte view as `response_stream` to receive the
 body into existing storage. Built-in HTTP/1 and HTTP/2 bodies read directly into
 it. The destination must be large enough for the whole body; a larger body
 throws an `ArgumentError`. A `Vector{UInt8}` destination is resized to the body
-length. A failing status (300 or above, other than a 301, 302, 303, 307, or 308
-redirect) leaves the destination untouched: the error body is returned in
+length. A status of 300 or above, including a redirect that is not followed,
+leaves the destination untouched: up to 1 MiB of that body is returned in
 `response.body` instead, so a `StatusError` still carries it.
 
 HTTP/2 uploads reuse one 16 KiB DATA-frame buffer per request body instead of
