@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
+  `StringIndexError`, an empty port (`http://host:/`) means the default port,
+  and an empty host (`http://:8080/`) is rejected instead of dialing the local
+  machine. A redirect `Location` without a valid host, such as `//:` or
+  `http:g`, throws a `ProtocolError` that names it. ([#1400])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
 - Requests with a zero-length streaming body can be copied for retries and
@@ -1046,3 +1051,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1385]: https://github.com/JuliaWeb/HTTP.jl/issues/1385
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
+[#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400

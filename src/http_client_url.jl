@@ -167,7 +167,7 @@ function _urlparts_host_header!(parts::_URLParts)::String
     getfield(parts, :has_explicit_port) && return _urlparts_address!(parts)
     address = _urlparts_address!(parts)
     suffix = string(':', Int(getfield(parts, :default_port)))
-    return endswith(address, suffix) ? address[1:(end - length(suffix))] : address
+    return String(chopsuffix(address, suffix))
 end
 
 function _urlparts_authorization!(parts::_URLParts)::Union{Nothing,String}
@@ -333,6 +333,10 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
         has_userinfo = !_text_range_empty(userinfo_range)
         authority_range = _text_range(nextind(s, at_idx), authority_range.last)
     end
+    # An empty port (`host:`) means the scheme's default port (RFC 3986 §3.2.3).
+    if !_text_range_empty(authority_range) && @inbounds(bytes[authority_range.last] == UInt8(':'))
+        authority_range = _text_range(authority_range.first, prevind(s, authority_range.last))
+    end
 
     _text_range_empty(authority_range) && throw(ArgumentError("URL missing host: $s"))
 
@@ -347,9 +351,15 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
             has_explicit_port = next_after_close <= authority_range.last && @inbounds(bytes[next_after_close] == UInt8(':'))
         end
     else
-        has_explicit_port = _find_last_url_byte(bytes, authority_range.first, authority_range.last, UInt8(':')) !== nothing
-        has_explicit_port || (host_range = authority_range)
+        colon_idx = _find_last_url_byte(bytes, authority_range.first, authority_range.last, UInt8(':'))
+        if colon_idx !== nothing
+            has_explicit_port = true
+            host_range = _text_range(authority_range.first, prevind(s, colon_idx))
+        end
     end
+    # RFC 9110 §4.2.1: an http(s) URI with an empty host is invalid. Dialing
+    # one (`http://:8080/`) would reach the local machine.
+    _text_range_empty(host_range) && throw(ArgumentError("URL missing host: $s"))
 
     query_suffix = query === nothing ? "" : _query_string(query)
     default_port = secure ? UInt16(443) : UInt16(80)
@@ -390,7 +400,8 @@ function _parse_http_url(url::URI, query=nothing)::_URLParts
     isempty(host) && throw(ArgumentError("URL missing host: $source"))
 
     default_port = secure ? UInt16(443) : UInt16(80)
-    has_explicit_port = _uri_component_present(url.port)
+    # An absent or empty port means the scheme's default port.
+    has_explicit_port = !isempty(url.port)
     address = if has_explicit_port
         string(URIs.hoststring(host), ":", String(url.port))
     else

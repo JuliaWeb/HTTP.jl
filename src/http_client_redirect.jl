@@ -168,31 +168,6 @@ function _strip_sensitive_redirect_headers!(headers::Headers)
     return nothing
 end
 
-function _normalize_redirect_authority(authority::String, secure::Bool)::String
-    at_idx = _find_last_ascii_delim(authority, UInt8('@'))
-    if at_idx != 0
-        authority = String(SubString(authority, nextind(authority, at_idx), lastindex(authority)))
-    end
-    isempty(authority) && throw(ProtocolError("redirect location is missing host"))
-    if startswith(authority, "[")
-        if occursin("]:", authority)
-            return authority
-        end
-        close_idx = findfirst(']', authority)
-        close_idx === nothing && throw(ProtocolError("invalid IPv6 host authority in redirect location: $authority"))
-        host = String(SubString(authority, nextind(authority, firstindex(authority)), prevind(authority, close_idx)))
-        return HostResolvers.join_host_port(host, secure ? 443 : 80)
-    end
-    colon_count = count(==(':'), authority)
-    if colon_count == 0
-        return HostResolvers.join_host_port(authority, secure ? 443 : 80)
-    end
-    if colon_count == 1
-        return authority
-    end
-    return HostResolvers.join_host_port(authority, secure ? 443 : 80)
-end
-
 # Returns `(address, secure, target, host_header)` for the next hop. `address`
 # is the dial target (always carries a port); `host_header` is the authority as
 # written for the `Host` header (default port never synthesized) — see
@@ -212,17 +187,24 @@ function _resolve_redirect_target(current_address::String, current_secure::Bool,
     if scheme_match !== nothing
         scheme = lowercase(String(scheme_match.captures[1]))
         (scheme == "http" || scheme == "https") || throw(ProtocolError("unsupported redirect location scheme '$scheme'"))
-        parsed = _parse_http_url(location)
-        target = _resolve_relative_redirect_request_target("/", parsed.target)
-        return parsed.address, parsed.secure, target, parsed.host_header
+        # Strict RFC 3986 §5.2.2 parsing, as in Go and curl: `http:g` is an
+        # absolute URL without a host, not the relative reference `g`.
+        url = location
+    elseif startswith(location, "//")
+        url = string(current_secure ? "https:" : "http:", location)
+    else
+        next_host_header = current_host_header === nothing ? current_address : current_host_header
+        return current_address, current_secure, _resolve_relative_redirect_request_target(current_target, location), next_host_header
     end
-    if startswith(location, "//")
-        parsed = _parse_http_url(string(current_secure ? "https:" : "http:", location))
-        target = _resolve_relative_redirect_request_target("/", parsed.target)
-        return parsed.address, parsed.secure, target, parsed.host_header
+    # A Location that is not an http(s) URL with a host is the server's error.
+    parsed = try
+        _parse_http_url(url)
+    catch err
+        err isa ArgumentError || rethrow()
+        throw(ProtocolError(string("invalid redirect location: ", location), err))
     end
-    next_host_header = current_host_header === nothing ? current_address : current_host_header
-    return current_address, current_secure, _resolve_relative_redirect_request_target(current_target, location), next_host_header
+    target = _resolve_relative_redirect_request_target("/", parsed.target)
+    return parsed.address, parsed.secure, target, parsed.host_header
 end
 
 function _rewrite_method_for_redirect(method::String, status::Int, policy::_RedirectPolicy)::String
