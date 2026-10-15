@@ -298,9 +298,12 @@ llms_module(ex, m::Module) = Documenter.DocSystem.getmod(m, ex)::Module
 llms_binding(entry::AbstractString, current::Module) =
     Documenter.DocSystem.binding(current, Meta.parse(entry))
 
-# Reuse Documenter's alias-aware lookup, including every method's docstring.
+# Reuse Documenter's alias-aware lookup, including every method's docstring. Keep
+# only docstrings written in HTTP, as `makedocs(modules = ...)` does, so that
+# `HTTP.get` (a method of `Base.get`) does not pull in Base's docstrings.
 llms_docstrings(binding::Base.Docs.Binding) =
-    Documenter.DocSystem.getdocs(binding, Union{}; compare = (<:))
+    filter(d -> Base.moduleroot(d.data[:module]) === HTTP,
+        Documenter.DocSystem.getdocs(binding, Union{}; compare = (<:)))
 
 # The raw markdown source of a docstring, exactly as written (no re-rendering).
 function llms_docstring_text(d::Base.Docs.DocStr)

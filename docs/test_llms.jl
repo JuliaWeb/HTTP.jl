@@ -5,6 +5,10 @@ using Test
     for entry in ("HTTP.WebSockets", "HTTP.@client", "HTTP.Request", "HTTP.request")
         @test !isempty(llms_docstrings(llms_binding(entry, Main)))
     end
+    # `HTTP.get` extends `Base.get`; only HTTP's own docstrings are included.
+    get_docs = llms_docstrings(llms_binding("HTTP.get", Main))
+    @test !isempty(get_docs)
+    @test all(d -> d.data[:module] === HTTP, get_docs)
     full = read(joinpath(@__DIR__, "build", "llms-full.txt"), String)
     @test occursin("### `HTTP.request`", full)
     @test occursin("### `HTTP.WebSockets`", full)

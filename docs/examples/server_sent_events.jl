@@ -57,7 +57,7 @@ using HTTP, JSON
 
 # Simple SSE server using the HTTP.sse_stream helper
 function simple_sse_server()
-    server = HTTP.serve!("127.0.0.1", 8080; listenany=true) do request
+    server = HTTP.serve!("127.0.0.1", 8080) do request
         # Create SSE stream - automatically sets Content-Type and Cache-Control
         HTTP.sse_stream(200; headers = ["Access-Control-Allow-Origin" => "*"]) do stream
             for i in 1:10
@@ -138,7 +138,7 @@ HTTP.register!(ROUTER, "GET", "/api/events", events_handler)
 server = HTTP.serve!(ROUTER, "127.0.0.1", 8080)
 
 # To run the manual stream-handler variant instead, start a separate server:
-# stream_server = HTTP.serve!(events_stream, "127.0.0.1", 8081; stream=true)
+# stream_server = HTTP.listen!(events_stream, "127.0.0.1", 8081)
 
 # Julia client usage with sse_callback
 stop = Ref(false)
