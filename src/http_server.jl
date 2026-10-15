@@ -1154,7 +1154,8 @@ function _serve_conn!(server::Server, tracked::_ServerConn)::Nothing
         if use_h2
             return _serve_h2_conn!(server, tracked, reader_source)
         end
-        return _serve_h1_conn!(server, tracked, reader_source)
+        # With h2c on, the probe already armed the first request's header deadline.
+        return _serve_h1_conn!(server, tracked, reader_source, server.allow_h2c)
     catch err
         action = _classify_server_conn_error(err::Exception)
         if action == _SERVER_CONN_ERR_TIMEOUT
@@ -1172,12 +1173,13 @@ function _serve_conn!(server::Server, tracked::_ServerConn)::Nothing
     end
 end
 
-function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::Nothing
+function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, header_deadline_armed::Bool=false)::Nothing
     reader = _ConnReader(reader_source)
     try
         while true
             _server_shutting_down(server) && return nothing
-            _set_read_deadline_for_header!(server, tracked.conn)
+            header_deadline_armed || _set_read_deadline_for_header!(server, tracked.conn)
+            header_deadline_armed = false
             request = try
                 read_request(reader; max_header_bytes=server.max_header_bytes)
             catch err

@@ -1165,6 +1165,35 @@ end
     end
 end
 
+@testset "HTTP server keeps the h2c probe's deadline for the first request head" begin
+    server = HT.serve!(_ -> HT.Response(200, "ok"), "127.0.0.1", 0;
+        listenany = true, read_header_timeout_ns = typemax(Int64) ÷ 4)
+    sock = NC.connect(NC.loopback_addr(HT.port(server)))
+    try
+        conns = HT._server_conns(server)
+        while isempty(conns)
+            yield()
+            conns = HT._server_conns(server)
+        end
+        pd = only(conns).conn.fd.pfd.pd
+        waiter = IOP._poll_registration(pd).read_waiter
+        # Nothing has been sent, so this is the h2c probe waiting for a byte.
+        while !((@atomic :acquire waiter.state) isa Task)
+            yield()
+        end
+        @test (@atomic :acquire pd.rd_ns) != 0
+        # A header deadline armed after the probe's would already be expired.
+        server.read_header_timeout_ns = 1
+        write(sock, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        response = HT._read_response(HT._ConnReader(sock))
+        @test response.status == 200
+    finally
+        close(sock)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 @testset "HTTP server separates body, idle, and next-header reads" begin
     for tls in (false, true), ending in (:partial_header, :idle_timeout, :idle_eof)
         far_future = typemax(Int64) ÷ 4
