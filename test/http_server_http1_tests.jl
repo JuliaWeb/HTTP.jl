@@ -1217,15 +1217,47 @@ end
                     closewrite(sock)
                 end
             end
-            # TLS wraps its read timeout in TLSError and retains the existing
-            # close-only error path; raw TCP sends the request-timeout response.
-            if ending == :partial_header && !tls
+            if ending == :partial_header
                 response = HT._read_response(reader)
                 @test response.status == 408
                 @test response.close
                 @test response.content_length == 0
             end
             @test readbytes!(reader, Vector{UInt8}(undef, 256)) == 0
+        finally
+            close(sock)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
+@testset "HTTP server answers request body read timeouts with 408" begin
+    for stream in (false, true), tls in (false, true)
+        listener = if tls
+            Reseau.TLS.listen("tcp", "127.0.0.1:0", Reseau.TLS.Config(
+                verify_peer = false,
+                cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt"),
+                key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            ))
+        else
+            NC.listen("tcp", "127.0.0.1:0")
+        end
+        start = stream ? HT.listen! : HT.serve!
+        # The handshake and head get a far deadline; the body deadline has passed.
+        server = start(listener; read_header_timeout_ns = typemax(Int64) ÷ 4, read_timeout_ns = 1) do input
+            stream || return HT.Response(200)
+            read(input)
+            return nothing
+        end
+        sock = tls ? Reseau.TLS.connect(NC.loopback_addr(HT.port(server)), Reseau.TLS.Config(verify_peer = false)) :
+                     NC.connect(NC.loopback_addr(HT.port(server)))
+        try
+            # Only two of the ten declared body bytes are ever sent.
+            write(sock, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nab")
+            response = HT._read_response(HT._ConnReader(sock))
+            @test response.status == 408
+            @test response.close
         finally
             close(sock)
             HT.forceclose(server)

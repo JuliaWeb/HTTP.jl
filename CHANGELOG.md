@@ -86,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- HTTP/1 servers answer a request head or body read timeout on a TLS
+  connection with `408 Request Timeout`, as on plain TCP. A head timeout
+  closed the connection without a response, and a body timeout answered `500`.
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
