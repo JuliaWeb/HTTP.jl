@@ -351,7 +351,7 @@ function _server_write(stream::Stream, data::AbstractVector{UInt8})::Int
     isempty(data) && return 0
     if _server_stream_buffered_h2(stream) || _server_stream_live_h2(stream) || stream.write_mode == _ServerStreamWriteMode.FIXED
         if stream.response.content_length >= 0 && (stream.written_bytes + length(data)) > stream.response.content_length
-            throw(ProtocolError("response body bytes exceeded Content-Length"))
+            throw(ProtocolError("response body bytes exceeded Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         _write_server_stream_bytes!(stream, data)
         stream.written_bytes += length(data)
@@ -384,14 +384,14 @@ function _server_closewrite(stream::Stream)::Nothing
     _server_startwrite!(stream)
     if _server_stream_buffered_h2(stream)
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
-            throw(ProtocolError("response body bytes did not match Content-Length"))
+            throw(ProtocolError("response body bytes did not match Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         @atomic :release stream.write_closed = true
         return nothing
     end
     if _server_stream_live_h2(stream)
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
-            throw(ProtocolError("response body bytes did not match Content-Length"))
+            throw(ProtocolError("response body bytes did not match Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         if !isempty(stream.response.trailers)
             _write_h2_trailers!(
@@ -415,7 +415,7 @@ function _server_closewrite(stream::Stream)::Nothing
     end
     if stream.write_mode == _ServerStreamWriteMode.FIXED
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
-            throw(ProtocolError("response body bytes did not match Content-Length"))
+            throw(ProtocolError("response body bytes did not match Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         _server_stream_buffered_fixed_h1(stream) && _write_buffered_fixed_head!(stream)
     elseif stream.write_mode == _ServerStreamWriteMode.CHUNKED

@@ -1657,6 +1657,8 @@ end
             HT.port(server),
             "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"
         )
+        # The handler broke its own framing, so this is a server error.
+        @test startswith(overflow_raw, "HTTP/1.1 500 Internal Server Error\r\n")
         @test !occursin("toolong", overflow_raw)
         @test !occursin("content-length: 2", lowercase(overflow_raw))
 
@@ -1664,6 +1666,7 @@ end
             HT.port(server),
             "GET /underflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"
         )
+        @test startswith(underflow_raw, "HTTP/1.1 500 Internal Server Error\r\n")
         @test !occursin("hi", underflow_raw)
         @test !occursin("content-length: 5", lowercase(underflow_raw))
     finally

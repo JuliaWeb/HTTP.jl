@@ -27,6 +27,8 @@ end
     _PROTOCOL_ERROR_LINE_TOO_LONG = 1
     _PROTOCOL_ERROR_HEADERS_TOO_LARGE = 2
     _PROTOCOL_ERROR_BODY_TOO_LARGE = 3
+    # A server response body that does not match its own Content-Length.
+    _PROTOCOL_ERROR_RESPONSE_LENGTH = 4
 end
 
 """
