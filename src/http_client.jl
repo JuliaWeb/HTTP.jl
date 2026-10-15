@@ -9,47 +9,42 @@ const _RESPONSE_COPY_BUFFER_BYTES = 64 * 1024
 const _RESPONSE_SMALL_COPY_BUFFER_BYTES = 8 * 1024
 
 """
-    Client(; ...)
+    Client(; transport=Transport(proxy=ProxyFromEnvironment()), cookiejar=CookieJar(),
+           max_redirects=10, check_redirect=nothing, prefer_http2=true,
+           http2_settings=HTTP2Settings(), default_headers=[], default_query=nothing,
+           default_basicauth=nothing, connect_timeout=0, request_timeout=0,
+           response_header_timeout=0, read_idle_timeout=0, write_idle_timeout=0,
+           local_addr=nothing)
 
-High-level HTTP client with transport pooling, redirect policy, cookies, and
-optional HTTP/2. Also acts as a configuration container so that defaults set
-once on the client (headers, query parameters, timeouts, basic auth) apply
-to every request issued through it unless the per-call `request`/`get`/`post`
-keywords override them.
+An HTTP client: a connection pool plus the settings and cookies that requests
+sent through it share. Pass it to `request`, the verb helpers, or `open` as the
+first argument or as the `client` keyword. Calls without a client use a shared
+default `Client`. `close(client)` closes its connections; using a closed client
+throws `ArgumentError`.
 
-Keyword arguments:
-- `transport`: reusable lower-level HTTP/1 transport/pool implementation
-- `check_redirect`: optional callback deciding whether a redirect should be
-  followed
-- `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
-- `max_redirects`: maximum redirect hops before failing
-- `prefer_http2`: whether secure requests should try HTTP/2 when available.
-  When automatic negotiation (`protocol = :auto`) learns an origin only
-  speaks HTTP/1.1, that result is cached and later automatic requests skip
-  the HTTP/2 attempt; [`close_idle_connections!`](@ref) clears the cache.
-  An explicit `protocol = :h2` always attempts HTTP/2.
-- `http2_settings`: an [`HTTP2Settings`](@ref) configuring HTTP/2 receive
-  flow-control windows for connections this client opens
-- `default_headers`: headers applied to every request issued through this
-  client; per-call `headers` are appended on top, and per-call values for the
-  same name take precedence
-- `default_query`: query parameters appended to every request URL; per-call
-  `query` overrides any keys it shares with the default
-- `default_basicauth`: default basic-auth credentials applied unless the call
-  passes `basicauth` or an explicit `Authorization` header
+- `transport`: the [`Transport`](@ref) that owns the connections. The default
+  one takes its proxy from the environment.
+- `cookiejar`: the [`CookieJar`](@ref) for this client, or `nothing` for no
+  cookies.
+- `max_redirects`: the most redirects one request follows.
+- `check_redirect`: a function `(response, request, location) -> Bool`; return
+  `false` to stop at a redirect and return it.
+- `prefer_http2`: try HTTP/2 for `https://` URLs. When an origin turns out to
+  speak only HTTP/1.1, the client remembers that until
+  [`close_idle_connections!`](@ref). `protocol = :h2` on a call always tries
+  HTTP/2.
+- `http2_settings`: the [`HTTP2Settings`](@ref) for HTTP/2 connections.
+- `default_headers`: headers added to each request that does not set them.
+- `default_query`: query parameters added to each URL; the call's `query`
+  replaces those with the same key.
+- `default_basicauth`: `user => password` used unless the call passes
+  `basicauth` or an `Authorization` header.
 - `connect_timeout`, `request_timeout`, `response_header_timeout`,
-  `read_idle_timeout`, `write_idle_timeout`: defaults applied to every request
-  unless the call passes the matching keyword. `0` disables.
-- `local_addr`: bind this client's outbound connections to a source IP/interface
-  (Go's `net.Dialer.LocalAddr` model). Accepts an IP-literal `String` (ephemeral
-  source port) or a `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`. Cannot be combined
-  with an explicit `transport`; set it on the `Transport` in that case.
-
-Pass a `Client` with the `client` keyword to `request`, `get`, `open`, or the
-other verb helpers when you want connection reuse and shared cookies across
-many calls. The verb helpers also accept the client positionally
-(`HTTP.get(client, url; ...)`). Close the client when you are finished; once
-closed, subsequent calls that use it raise `ArgumentError`.
+  `read_idle_timeout`, `write_idle_timeout`: timeouts in seconds, used when the
+  call passes no value or `0`. `0` here means no default.
+- `local_addr`: the source IP address for connections, as a string or a
+  `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`. With your own `transport`, set it on
+  the `Transport` instead.
 """
 mutable struct Client{CR}
     transport::Transport
@@ -1117,12 +1112,16 @@ function _do_incoming!(
 end
 
 """
-    do!(client, address, request; ...) -> Response
+    do!(client, address, request; secure=false, server_name=nothing, protocol=:auto,
+        redirect_limit=nothing, redirect_method=nothing, forwardheaders=true,
+        cookies=true, cookiejar=nothing, context=nothing) -> Response
 
-Execute a prepared `Request` through an existing `Client`.
+Send a prepared `request` to `address` (`"host:port"`) through `client`,
+following redirects and using cookies like [`request`](@ref), but without
+retries or status errors. `secure = true` connects with TLS.
 
-This is the low-level companion to [`request`](@ref) for callers that already
-own the address/target split and want to reuse client state directly.
+The response body is a stream: read it with [`body_read!`](@ref) and close it
+with [`body_close!`](@ref).
 """
 function do!(
     client::Client,
@@ -1219,11 +1218,9 @@ end
 import Base: get, get!
 
 """
-    get!(client, address, target; secure=false, protocol=:auto)
+    get!(client, address, target; secure=false, protocol=:auto, kwargs...) -> Response
 
-Convenience GET request using an existing `Client`.
-
-Returns the same low-level `Response` shape as `do!`.
+Send a `GET` request for `target` to `address` with [`do!`](@ref).
 """
 function get!(client::Client, address::AbstractString, target::AbstractString; secure::Bool=false, protocol::Symbol=:auto, kwargs...)
     request = Request("GET", target; host=String(address), body=EmptyBody(), content_length=0)
@@ -1233,14 +1230,13 @@ end
 """
     StatusError
 
-Raised when `status_exception=true` and the response status indicates failure.
+Raised by `request` and the verb helpers for a response with status 300 or
+above that is not a redirect, unless `status_exception = false`.
 
 Fields:
 
-- `status::Int16` — the response status code (mirrors `response.status` for
-  convenience so catch sites can write `err.status` instead of
-  `err.response.status`).
-- `response::Response` — the full response that triggered the error.
+- `status::Int16`: the response status.
+- `response::Response`: the response, including its body.
 """
 struct StatusError <: HTTPError
     status::Int16
@@ -1258,15 +1254,12 @@ function Base.showerror(io::IO, err::StatusError)
 end
 
 """
-    retry_attempts(x) -> Int
+    retry_attempts(request) -> Int
+    retry_attempts(response) -> Int
 
-Number of automatic retries the client performed for a request, `0` when the
-first attempt was the only one. Accepts the `Request` or a client `Response`
-(which consults its originating request).
-
-The count lives in the request's context under the `:retryattempt` key — the
-same location HTTP.jl 1.x used — so `get(req.context, :retryattempt, 0)`
-continues to work for migrated code.
+Return how many times the client retried the request, `0` when the first
+attempt was the only one. The count is also stored as
+`request.context[:retryattempt]`.
 """
 retry_attempts(request::Request)::Int = Int(get(get_request_context(request), :retryattempt, 0))
 
@@ -1278,8 +1271,8 @@ end
 """
     TooManyRedirectsError
 
-Raised when redirect following is enabled and the client exceeds the configured
-redirect limit. The final redirect response is attached for inspection.
+Raised when a request reaches its redirect limit and gets another redirect.
+`limit` is the limit and `response` is the last redirect response.
 """
 struct TooManyRedirectsError <: HTTPError
     limit::Int
@@ -2280,174 +2273,126 @@ function request(
 end
 
 """
-    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; trace=nothing, kwargs...)
-    request(trace, method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
+    request(method, url, headers=[], body=nothing; kwargs...) -> Response
+    request(trace, method, url, headers=[], body=nothing; kwargs...) -> Response
 
-High-level one-shot HTTP request API.
+Send an HTTP request and return the [`Response`](@ref), with the whole body in
+`response.body` as a `Vector{UInt8}`.
 
-When `trace` is provided, it must be callable on any emitted client event.
-Current events are [`RequestEvent`](@ref), [`ResponseHeadEvent`](@ref),
-[`RetryEvent`](@ref), [`RetrySkippedEvent`](@ref), [`RedirectEvent`](@ref), and
-[`DoneEvent`](@ref).
+`url` is a string or `URI`. `headers` is anything [`Headers`](@ref) accepts.
+`body` may be a `String`, a byte vector, an `IO`, a `Dict` or `NamedTuple` (sent
+as a URL-encoded form), a [`Form`](@ref), an iterable of string or byte chunks,
+or an [`AbstractBody`](@ref). `headers` and `body` can also be passed as
+keywords. Unless the request sets them, HTTP.jl sends
+`User-Agent: HTTP.jl/<version>` and `Accept-Encoding: gzip, deflate`.
 
-Keyword arguments:
-- `basicauth`: optional basic-auth credentials supplied as
-  `(username, password)` or `username => password`; explicit
-  `Authorization` headers take precedence, and URL `userinfo` is only used as a
-  fallback when neither is provided
-- `retry`: overall toggle for high-level request retries; lower-level reused-connection transport retries still happen independently
-- `retries`: maximum number of retry attempts after the initial request attempt
-- `retry_non_idempotent`: allow automatic retries for methods like `POST`/`PATCH`; `QUERY`, `PUT`, and `DELETE` are already treated as idempotent
-- `retry_if`: optional callback `(attempt, err, req, resp) -> Bool | nothing`; request-path failures are passed as `RequestRetryError` so implementations can inspect `err.err`, while response-based retry checks pass `err = nothing` and `resp = response`; `true` forces a retry when the request body is replayable, `false` suppresses retry, and `nothing` defers to built-in retry rules
-- `respect_retry_after`: honor server `Retry-After` on retryable `429`/`503` responses
-- `retry_bucket`: `true` uses the request transport's default `RetryBucket`, `false` disables bucket coordination, and a custom `RetryBucket` overrides the transport default
-- automatic retries only occur for replayable request bodies; built-in policy retries idempotent methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `QUERY`, `PUT`, `DELETE`) plus requests carrying `Idempotency-Key`/`X-Idempotency-Key`
-- `status_exception`: throw `StatusError` for non-success responses
-- `redirect`: follow redirects through `do!`
-- `redirect_limit`: maximum number of redirects to follow for this call;
-  `0` disables redirect following while still returning the redirect response
-- `redirect_method`: override the method used for `301`/`302` redirects; pass
-  `:same` to preserve the original method
-- `forwardheaders`: whether original request headers are copied onto redirect
-  follow-up requests
-- request bodies may be passed positionally or, for convenience helpers like
-  `post(url; body=...)`, via the `body` keyword; supported inputs include
-  strings, byte vectors, `IO`, `Dict`/`NamedTuple` form fields, `HTTP.Form`,
-  iterable chunks, and existing `HTTP.AbstractBody` values
-- `proxy`: explicit proxy override for this call; pass a proxy URL string, a
-  `ProxyConfig`, or `nothing` to force direct connections
-- `cookies`: `true` (default) to use the effective cookie jar, `false` to disable
-  cookie send/store for this call, or a dictionary of extra cookie name/value pairs
-  to add. When the jar is active, it is merged with any manually-set `Cookie` header,
-  de-duplicated by name (jar / `cookies=` entries win); with `false` a manually-set
-  `Cookie` header is sent verbatim
-- `cookiejar`: optional cookie jar override for this call; explicit clients
-  default to `client.cookiejar`, while implicit convenience calls default to the
-  shared `HTTP.COOKIEJAR`
-- `query`: optional query string or key/value collection appended to the URL
-- `response_stream`: optional sink `IO` or byte buffer written with the final response body.
-  A byte buffer is left untouched when the status is a failure (300 or above,
-  other than a 301, 302, 303, 307, or 308 redirect); that body is returned in
-  `response.body` instead
-- `copyheaders`: `true` copies caller headers (the default). `false` transfers
-  an existing `HTTP.Headers` collection to the operation. Do not access or
-  mutate it until the call completes; final contents are unspecified. Other
-  header inputs become a new collection either way. Retry attempts still
-  receive isolated headers.
-- `canonicalize_headers`: header names are sent as the caller spelled them
-  (HTTP/2 sends them in lowercase). `true` rewrites every request header name
-  into [`canonical_header_key`](@ref) form first, as in HTTP.jl 1.x
-- `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
-- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. Defaults to 64 MiB; `0` disables the limit
-- `sse_callback`: callback receiving `(event)` or `(stream, event)` for
-  successful SSE responses
-- `max_sse_line_bytes`: cap, in bytes, on one SSE response line. Defaults to 1 MiB; `0` disables the line limit
-- `max_sse_event_bytes`: cap, in bytes, on one accumulated SSE event before a blank-line dispatch. Defaults to 16 MiB; `0` disables the event limit
-- `trace`: optional callback receiving request lifecycle events
-- `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
-  request lifecycle lines to `stdout`; `2` also prints request and response
-  heads. When combined with `trace`, verbose output is emitted before the user
-  trace is called.
-- `client`: optional explicit `Client`; otherwise a default or ephemeral client
-  is created
-- `connect_timeout`: connection establishment timeout in seconds, covering DNS,
-  TCP connect, HTTP proxy `CONNECT` or SOCKS5 handshakes, TLS handshake, and
-  HTTP/2 session setup in the high-level client paths. When not passed, the
-  `client`'s `connect_timeout` default applies if set, else 30; `0` disables
-- `request_timeout`: overall request deadline in seconds
-- `response_header_timeout`: maximum time to wait for response headers after
-  the request has been sent
-- `read_idle_timeout`: maximum time between inbound read progress events
-- `write_idle_timeout`: maximum time between outbound write progress events
-- `expect_continue_timeout`: how long to wait for a `100 Continue` response
-  before sending the request body anyway; pass `0` to disable the wait
-- `readtimeout`: deprecated alias for `read_idle_timeout`
-- `require_ssl_verification`: disable certificate verification only for testing
-- `protocol`: `:auto`, `:h1`, or `:h2`
+A response with status 300 or above throws a [`StatusError`](@ref), except for
+redirect responses (301, 302, 303, 307, and 308). A timeout throws a
+[`TimeoutError`](@ref), and a failure to connect throws an error such as
+[`ConnectError`](@ref) or [`DNSError`](@ref).
 
-HTTP.jl 2.0 accepts several HTTP.jl 1.x keywords as migration shims:
-`readtimeout` maps to `read_idle_timeout`; `pool`, `retry_delays`,
-`retry_check`, `sslconfig`, `socket_type_tls`,
-`detect_content_type`, `logerrors`, `logtag`, and
-`observelayers` are accepted so older call sites fail less abruptly. Prefer the
-2.0 forms listed above for new code: `client` / `transport` for pooling,
-`retry_if` / `retry_bucket` for retries, Reseau `Transport` TLS configuration
-for TLS/socket behavior, and `verbose` / `trace` for request observation.
+!!! warning "`String(response.body)` empties `response.body`"
+    `String(::Vector{UInt8})` takes over the vector's memory instead of copying
+    it, so `response.body` is empty afterwards. Use `String(copy(response.body))`
+    if you need the bytes again.
 
-The built-in retry policy is intentionally conservative: it retries transient
-transport errors plus retryable `408`/`429`/`5xx` responses for replayable
-requests, but does not automatically retry request read-timeout/deadline
-failures.
+# Keywords
 
-Returns a high-level `Response`. When no response body sink is provided,
-`response.body` is a fully materialized `Vector{UInt8}`. When `response_stream`
-is provided, the final `Response` contains either the filled buffer/view or
-`nothing` for `IO` sinks. A failing response given a byte-buffer sink has its
-body in a new `Vector{UInt8}`.
+Request and response:
+- `query`: a `Dict`, `NamedTuple`, vector of pairs, or string to add to the
+  URL's query string.
+- `basicauth`: credentials as `user => password` or `(user, password)`. An
+  `Authorization` header takes precedence; credentials in the URL are used when
+  neither is given.
+- `status_exception = true`: throw `StatusError` for a failing response.
+- `response_stream`: an `IO` or byte vector that receives the body instead of
+  `response.body`, which is then `nothing` for an `IO` and the filled vector or
+  view otherwise. A byte vector must be large enough for the body, and is
+  resized to it if it is a `Vector{UInt8}`. A failing response leaves a byte
+  vector untouched and puts its body in `response.body`.
+- `decompress = true`: decompress gzip and deflate responses. `false` returns
+  the body as sent and does not send `Accept-Encoding`.
+- `max_decompressed_size = 64 MiB`: the largest decompressed body; a larger one
+  throws `DecompressionLimitError`. `0` means no limit.
+- `sse_callback`: for a server-sent event stream, call `f(event)` or
+  `f(stream, event)` with each [`SSEEvent`](@ref) instead of reading the body.
+  `max_sse_line_bytes = 1 MiB` and `max_sse_event_bytes = 16 MiB` limit the
+  size of a line and an event; `0` means no limit.
+- `copyheaders = true`: `false` lets the request use an `HTTP.Headers`
+  collection without copying it. Do not touch it until the call returns; its
+  contents afterwards are unspecified.
+- `canonicalize_headers = false`: `true` sends header names in
+  [`canonical_header_key`](@ref) form. Otherwise names are sent as given, and
+  HTTP/2 sends them in lowercase.
 
-# Working with the response body
+Redirects:
+- `redirect = true`: follow redirects.
+- `redirect_limit`: the most redirects to follow; defaults to the client's
+  `max_redirects`, 10 by default. With `0`, the redirect response is returned.
+- `redirect_method`: the method for following a 301 or 302 redirect, or
+  `:same` to keep the original method. By default `GET` is used, except that
+  `HEAD` and `QUERY` are kept. A 303 always uses `GET`, and 307 and 308 keep the
+  method.
+- `forwardheaders = true`: send the request's headers again when following a
+  redirect. Credentials are dropped when the redirect goes to another origin.
 
-By default the buffered body is a `Vector{UInt8}`:
+Retries (see the client guide for the default rules):
+- `retry = true`: retry failed attempts. An idempotent request that fails on a
+  reused connection the server already closed is resent either way.
+- `retries = 4`: the most retries after the first attempt.
+- `retry_non_idempotent = false`: also retry methods other than `GET`, `HEAD`,
+  `OPTIONS`, `TRACE`, `QUERY`, `PUT`, and `DELETE`.
+- `retry_if`: a function `(attempt, err, req, resp)` that returns `true` to
+  retry, `false` to stop, or `nothing` for the default rules. For a failure
+  without a response, `err` is a [`RequestRetryError`](@ref) and `resp` is
+  `nothing`; for a response, `err` is `nothing`. A body that cannot be sent again
+  is never retried.
+- `respect_retry_after = true`: wait as long as a 429 or 503 response's
+  `Retry-After` header asks.
+- `retry_bucket = true`: use the transport's [`RetryBucket`](@ref) to limit
+  retries; pass `false` to skip it, or another `RetryBucket`.
 
-```julia
-using HTTP
+Timeouts, in seconds:
+- `connect_timeout`: DNS lookup, TCP connect, proxy handshake, TLS handshake,
+  and HTTP/2 setup. Defaults to the client's `connect_timeout`, or 30.
+- `request_timeout`: the whole call.
+- `response_header_timeout`: the wait for the response headers.
+- `read_idle_timeout`: the time between reads, including the wait for the
+  response headers.
+- `write_idle_timeout`: the time between writes.
+- `expect_continue_timeout`: how long a request with an
+  `Expect: 100-continue` header waits for `100 Continue` before it sends the
+  body anyway.
+- `context`: a [`RequestContext`](@ref) for cancellation and an absolute
+  deadline.
 
-response = HTTP.get("http://example.com")
-@assert response.body isa Vector{UInt8}
-```
+Connections:
+- `client`: the [`Client`](@ref) to use; defaults to a shared client.
+- `proxy`: a proxy URL, a [`ProxyConfig`](@ref), or `nothing` to connect
+  directly. Cannot be combined with `client`; set the proxy on its `Transport`.
+- `cookies = true`: send and store cookies with the cookie jar. `false` turns
+  cookies off, and a `Dict` adds name/value pairs. Cookies from the jar are
+  merged into a `Cookie` header set on the request.
+- `cookiejar`: the [`CookieJar`](@ref) to use; defaults to the client's jar, or
+  `HTTP.COOKIEJAR` for calls without a client.
+- `require_ssl_verification = true`: `false` skips certificate checks, for
+  testing only. Cannot be combined with `client`.
+- `protocol = :auto`: `:h1` or `:h2` to force HTTP/1.1 or HTTP/2.
 
-Convert it to a `String` with `String(response.body)`:
+Debugging:
+- `verbose`: `1` (or `true`) prints a line for each attempt, response, retry,
+  redirect, and the result; `2` also prints the request and response heads.
+- `trace`: a function called with each [`RequestEvent`](@ref),
+  [`ResponseHeadEvent`](@ref), [`RetryEvent`](@ref),
+  [`RetrySkippedEvent`](@ref), [`RedirectEvent`](@ref), and
+  [`DoneEvent`](@ref).
 
-```julia
-text = String(response.body)
-```
+# Extended help
 
-!!! warning "`String(response.body)` consumes the bytes"
-    `String(::Vector{UInt8})` is the standard Julia conversion and it
-    *aliases* the underlying byte buffer rather than copying it. After
-    `String(response.body)` runs, `response.body` is left empty (`length == 0`).
-    If you want to keep the bytes around, take a copy first
-    (`copy(response.body)` or `String(copy(response.body))`), or use the
-    `response_stream` keyword to write the body somewhere you own.
-
-# Sending JSON
-
-There is no `json=` keyword. Serialize the payload yourself with the JSON
-library of your choice — [JSON.jl](https://github.com/JuliaIO/JSON.jl) is the
-recommended option — and set the `Content-Type` header explicitly:
-
-```julia
-using HTTP, JSON
-
-payload = Dict("name" => "alice", "age" => 30)
-response = HTTP.post(
-    "https://api.example.com/users";
-    headers = ["Content-Type" => "application/json"],
-    body = JSON.json(payload),
-)
-
-returned = JSON.parse(String(response.body))
-```
-
-Form-encoded payloads (`application/x-www-form-urlencoded`) are auto-derived
-from `Dict`/`NamedTuple` bodies, so `HTTP.post(url, [], Dict("a" => "1"))`
-sends `a=1` with the matching `Content-Type` header for you.
-
-# Default headers
-
-If the caller does not supply them, HTTP.jl fills in:
-
-- `User-Agent: HTTP.jl/<version>` — override by passing your own `User-Agent`
-  header.
-- `Accept-Encoding: gzip, deflate` — disable by passing `decompress=false` or
-  by setting your own `Accept-Encoding`.
-
-Throws `ArgumentError` for unsupported inputs or invalid sink combinations,
-`StatusError` (with `.status` and `.response` fields) when
-`status_exception=true` and the response status is considered failing,
-`HTTP.TimeoutError` (alias `HTTP.HTTPTimeoutError`) for timeout failures, plus
-any lower-level transport or protocol exception raised during the request.
-Automatic retries only occur for replayable request bodies.
+These HTTP.jl 1.x keywords are accepted but have no effect, and log a warning:
+`pool`, `retry_delays`, `retry_check`, `sslconfig`, `socket_type_tls`,
+`detect_content_type`, `observelayers`, `logerrors`, and `logtag`. The
+deprecated `readtimeout` sets `read_idle_timeout`.
 """
 function request(
     trace,
@@ -2512,25 +2457,19 @@ end
 end
 
 const _REQUEST_HELPER_DOC = """
-    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
-    get(url, headers=Pair{String,String}[]; kwargs...)
-    head(url, headers=Pair{String,String}[]; kwargs...)
-    query(url, [headers], [body]; kwargs...)
-    post(url, [headers], [body]; kwargs...)
-    put(url, [headers], [body]; kwargs...)
-    patch(url, [headers], [body]; kwargs...)
-    delete(url, [headers], [body]; kwargs...)
-    options(url, headers=Pair{String,String}[]; kwargs...)
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
 
-High-level one-shot client request helpers. The verb helpers call
-`request(method, ...)` with a fixed HTTP method and accept the same keyword
-arguments as `request` — see the [`request`](@ref) docstring for the full
-keyword list, the body-encoding rules, and the JSON example.
-
-`response.body` is a `Vector{UInt8}` by default; convert with
-`String(response.body)`. Note that the conversion aliases the underlying buffer
-and leaves `response.body` empty afterwards — see [`request`](@ref) for the
-full warning and the safe-copy idioms.
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of [`request`](@ref),
+including `headers` and `body`, and also accepts a [`Client`](@ref) as its first
+argument.
 """
 
 @doc _REQUEST_HELPER_DOC
@@ -2624,17 +2563,14 @@ options(client::Client, url::Union{AbstractString,URI}, headers=Pair{String,Stri
     HTTP.@client request_middleware
     HTTP.@client request_middleware stream_middleware
 
-Define module-local `request`, verb helpers, and `open` methods that wrap the
-public HTTP client APIs with custom client-side middleware.
+Define `request`, the verb helpers (`get`, `post`, ...), and `open` in the
+calling module so that they pass through middleware before reaching HTTP.jl.
 
-Each middleware must be a callable of the form `mw(next) -> wrapped`, where
-`wrapped` matches either:
-- `request(method, url, headers, body; kwargs...)` for one-shot requests
-- `open(method, url, headers; kwargs...)` for streaming requests
-
-Pass either a single middleware or a tuple of middlewares for each position.
-Tuple middlewares are applied from left to right, so `(outer, inner)` runs
-`outer(inner(HTTP.request))`.
+A middleware is a function `mw(next) -> f`. Request middleware returns
+`f(method, url, headers, body; kwargs...)`, which handles `request` and the verb
+helpers. Stream middleware returns `f(method, url, headers; kwargs...)`, which
+handles `open`. Each position takes one middleware or a tuple of them; in
+`(outer, inner)`, `outer` runs first.
 """
 macro client(request_middleware, stream_middleware=:(()))
     request_handler = gensym(:http_client_request)

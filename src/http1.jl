@@ -120,11 +120,8 @@ end
 """
     trailers(body)
 
-Return parsed trailer headers for a chunked body; empty headers for other body
-types.
-
-The returned `Headers` object is copied so callers can inspect or mutate it
-without racing the body reader.
+Return a copy of the trailers that ended a chunked `body`, or empty `Headers`
+for other bodies. Read the body to the end first.
 """
 function trailers(body::ChunkedBody)::Headers
     return copy(body.trailers)
@@ -829,18 +826,12 @@ end
 """
     write_request!(io, request)
 
-Serialize an HTTP/1 request to `io`, including body framing.
+Write `request` to `io` in HTTP/1.1 format, with its body.
 
-Behavior:
-- writes exactly one `Host` line as the first header field (RFC 9112 §3.2),
-  taking the value from a caller-supplied `Host` header when present and from
-  `request.host` otherwise
-- normalizes connection-close signaling
-- chooses between `Content-Length` and chunked transfer-coding
-- serializes trailers only for chunked bodies
-
-Returns `nothing`. May throw `ProtocolError` for inconsistent framing or
-propagate exceptions from `io` and the request body.
+The `Host` header comes first (RFC 9110 §7.2), taken from the request's `Host`
+header or else from `request.host`. A body of known length is sent with
+`Content-Length`, and any other body with chunked encoding, the only framing
+that carries trailers.
 """
 function write_request!(
     io::IO,
@@ -866,11 +857,9 @@ end
 """
     write_response!(io, response)
 
-Serialize an HTTP/1 response to `io`, including body framing.
-
-Body suppression rules for status codes like `1xx`, `204`, and `304` are
-enforced here so callers can hand the function a regular `Response` object and
-let the serializer apply wire-level HTTP/1 rules.
+Write `response` to `io` in HTTP/1.1 format, with its body. No body is written
+for `1xx`, `204`, and `304` responses, or when `response.request` is a `HEAD`
+request.
 """
 function write_response!(io::IO, response::Response)
     headers = copy(response.headers)
@@ -977,19 +966,12 @@ function _parse_status_line(line::AbstractString)::Tuple{UInt8,UInt8,Int,String}
 end
 
 """
-    read_request(io; max_line_bytes=..., max_header_bytes=...)
+    read_request(io; max_line_bytes=64*1024, max_header_bytes=1024*1024) -> Request
 
-Parse one HTTP/1 request from `io`.
-
-Returns a `Request` whose body is one of `EmptyBody`, `FixedLengthBody`, or
-`ChunkedBody` depending on the incoming framing headers.
-
-Throws:
-- `ArgumentError` for invalid parser limits
-- `ParseError` for malformed syntax or truncated framed bodies
-- `ProtocolError` for invalid semantic combinations such as conflicting length
-  metadata
-- any exception propagated by the underlying `IO`
+Read one HTTP/1 request head from `io` and return it as a `Request` whose body
+reads the rest of the request from `io`. `max_line_bytes` limits each line and
+`max_header_bytes` the whole head. Throws [`ParseError`](@ref) or
+[`ProtocolError`](@ref) for an invalid request.
 """
 function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES, max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES)
     line = _readline_crlf(io, max_line_bytes)

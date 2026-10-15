@@ -32,24 +32,18 @@ const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
 """
     HTTP2Settings(; initial_window_size=65535, connection_window_size=65535)
 
-HTTP/2 flow-control configuration shared by [`Server`](@ref), [`Client`](@ref),
-and `connect_h2!`.
+HTTP/2 receive windows, passed as `http2_settings` to a [`Client`](@ref) or to
+`serve!` and `listen!`.
 
-- `initial_window_size`: the per-stream receive window advertised via
-  `SETTINGS_INITIAL_WINDOW_SIZE` (RFC 7540 §6.5.2).
-- `connection_window_size`: the connection-level receive window. Values above the
-  protocol default of 65535 are applied with an initial `WINDOW_UPDATE`.
+- `initial_window_size`: the receive window of each stream, sent as
+  `SETTINGS_INITIAL_WINDOW_SIZE` (RFC 9113 §6.5.2). Values from 1 to 2^31 - 1
+  are allowed, so it can also be lowered to slow down senders.
+- `connection_window_size`: the receive window shared by all streams on a
+  connection, from 65535 to 2^31 - 1.
 
-Both default to the protocol default of 65535, leaving existing behavior
-unchanged. Raising them improves single-stream throughput on links with
-non-trivial latency, where the default 64 KiB window would otherwise cap a
-transfer at roughly `window / RTT`. The per-stream receive buffer cap is derived
-from `initial_window_size`, so it does not need to be configured separately.
-
-`initial_window_size` may be set below the default to apply tighter per-stream
-backpressure. `connection_window_size` must be at least the protocol default of
-65535: the connection-level window starts at that value and can only be enlarged
-with a `WINDOW_UPDATE`, so a smaller value cannot be advertised.
+Both default to 65535, the protocol default. One stream can move at most about
+`window / round-trip time` bytes per second, so raise them for large transfers
+over links with high latency.
 """
 struct HTTP2Settings
     initial_window_size::Int
