@@ -24,10 +24,11 @@ end
     NoProxy(spec)
     NoProxy()
 
-Matcher for `NO_PROXY`-style bypass rules.
-
-`spec` may be a comma-separated string or vector-like collection containing
-hostnames, domain suffixes, IP literals, CIDR ranges, or `host:port` entries.
+The hosts that a [`ProxyConfig`](@ref) reaches without its proxy, in the format
+of the `NO_PROXY` environment variable. `spec` is a comma-separated string or a
+vector of entries: host names, domain suffixes, IP addresses, CIDR ranges, or
+any of these with a `:port`. `"*"` matches every host. `localhost` and loopback
+addresses always match.
 """
 mutable struct NoProxy
     matches_all::Bool
@@ -53,15 +54,19 @@ end
     ProxyConfig(url; no_proxy=nothing)
     ProxyConfig(; http=nothing, https=nothing, all=nothing, no_proxy=nothing, env=false)
 
-HTTP client proxy configuration.
+The proxy settings of a [`Transport`](@ref) or a request. `ProxyConfig()`
+connects directly.
 
-Use this to route plain HTTP, HTTPS, or all traffic through explicit proxy
-targets, optionally with `NoProxy` exclusions or environment-driven defaults.
-Proxy URLs support `http://`, `https://` parsing for future compatibility
-(`https://` proxy transport is not implemented yet), and SOCKS5 proxy
-transport with `socks5://` or `socks5h://`. As in Go's `net/http`
-transport, `socks5://` and `socks5h://` both send domain targets to the SOCKS
-proxy instead of resolving them locally.
+`http` is the proxy for `http://` URLs, `https` the proxy for `https://` URLs,
+and `all` the proxy for either when the other is not set; `ProxyConfig(url)`
+sets `all`. `no_proxy` is a [`NoProxy`](@ref), or anything it accepts, naming
+hosts to reach directly. With `env = true`, settings that are not given come
+from the `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment
+variables, in upper or lower case.
+
+Proxy URLs may use `http://`, `socks5://`, or `socks5h://`; with either SOCKS
+scheme, the proxy resolves host names. An `https://` proxy URL is accepted, but
+a request through it throws `ArgumentError`.
 """
 struct ProxyConfig
     http::Union{Nothing,_ProxyTarget}
@@ -442,9 +447,8 @@ end
 """
     ProxyURL(url; no_proxy=nothing) -> ProxyConfig
 
-Convenience constructor for a single proxy URL applied to all outbound
-requests. Supported proxy URL schemes are `http://`, `https://` (parsed but
-not yet dialed as a TLS proxy), `socks5://`, and `socks5h://`.
+Return a [`ProxyConfig`](@ref) that sends every request through the proxy at
+`url`, except requests to the hosts in `no_proxy`.
 """
 function ProxyURL(url::AbstractString; no_proxy=nothing)::ProxyConfig
     return ProxyConfig(url; no_proxy=no_proxy)
@@ -453,9 +457,9 @@ end
 """
     ProxyFromEnvironment() -> ProxyConfig
 
-Load proxy configuration from the standard `HTTP_PROXY`, `HTTPS_PROXY`,
-`ALL_PROXY`, and `NO_PROXY` environment variables. Proxy values may use the
-same schemes accepted by `ProxyURL`, including `socks5://` and `socks5h://`.
+Return a [`ProxyConfig`](@ref) read from the `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`, and `NO_PROXY` environment variables, in upper or lower case. The
+variables are read once, when it is called.
 """
 function ProxyFromEnvironment()::ProxyConfig
     return ProxyConfig(; env=true)

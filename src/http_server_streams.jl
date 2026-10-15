@@ -210,8 +210,8 @@ end
 """
     setstatus(stream, status) -> nothing
 
-Set the response status for a server-side `Stream` before response writing
-starts.
+Set the status of the response on a server `stream`. Call it before the first
+write; after that it throws `ArgumentError`.
 """
 function setstatus(stream::Stream, status::Integer)::Nothing
     _require_server_stream(stream)
@@ -224,8 +224,8 @@ end
     setheader(stream, key, value) -> nothing
     setheader(stream, key => value) -> nothing
 
-Set a response header for a server-side `Stream` before response writing
-starts.
+Set a header of the response on a server `stream`. Call it before the first
+write; after that it throws `ArgumentError`.
 """
 function setheader(stream::Stream, key::AbstractString, value::AbstractString)::Nothing
     _require_server_stream(stream)
@@ -239,10 +239,12 @@ function setheader(stream::Stream, header::Pair{<:AbstractString,<:AbstractStrin
 end
 
 """
-    addtrailer(stream, header_or_headers) -> nothing
+    addtrailer(stream, key => value) -> nothing
+    addtrailer(stream, headers) -> nothing
 
-Append response trailers for a server-side `Stream`. Trailers are emitted when
-the response body is closed, so call this before `closewrite(stream)`.
+Add trailers to the response on a server `stream`. They are sent after the body,
+so add them before `closewrite(stream)`. Only chunked HTTP/1 and HTTP/2
+responses carry trailers; an HTTP/1 response with a `Content-Length` drops them.
 """
 function addtrailer(stream::Stream, trailers::Headers)::Nothing
     _require_server_stream(stream)
@@ -457,20 +459,10 @@ end
 """
     peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
 
-Return the remote (client) socket address of a server `stream`, or `nothing`
-when the peer endpoint is unavailable.
-
-The returned `SocketAddr` carries the client IP and port: render it with
-`string(addr)` to get `"ip:port"`, or read `addr.ip` (an `NTuple` of octets)
-and `addr.port`. Works for both plain-TCP and TLS connections and for HTTP/1
-and HTTP/2 server streams.
-
-This is the supported way to obtain the client IP for rate limiting, audit
-logging, and other per-client policy; it avoids reaching into transport
-internals and restores the capability `Sockets.getpeername(::HTTP.Stream)`
-provided in HTTP.jl 1.x.
-
-Throws `ArgumentError` when called on a client-side stream.
+Return the client's address for a server `stream`, or `nothing` when it is not
+known. `string(addr)` gives `"ip:port"`; `addr.ip` is a tuple of the address
+bytes and `addr.port` is the port. Works over HTTP/1 and HTTP/2, with or without
+TLS. Throws `ArgumentError` for a client stream.
 """
 function peeraddr(stream::Stream)
     _require_server_stream(stream)
@@ -580,7 +572,9 @@ end
 """
     streamhandler(request_handler) -> stream handler
 
-Adapter that takes a request handler and returns a stream handler.
+Return a stream handler, for `listen!`, that reads each request into memory,
+calls `request_handler(req)`, and writes the response it returns. A response
+body that is not in memory, such as a file from `fileserver`, is streamed.
 """
 function streamhandler(handler)
     return _StreamHandlerAdapter(handler)

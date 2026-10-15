@@ -75,33 +75,25 @@ const _SERVER_DEFAULT_MAX_BODY_BYTES = Int64(64 * 1024 * 1024)
 """
     Server(; network="tcp", address="127.0.0.1:0", handler, stream=false, ...)
 
-Stateful HTTP server handle returned by [`listen!`](@ref) and [`serve!`](@ref).
+An HTTP server, returned by [`serve!`](@ref) and [`listen!`](@ref).
+[`port`](@ref) returns its port. `close(server)` stops accepting connections and
+waits for the requests in progress to finish, [`forceclose`](@ref) closes every
+connection at once, and `wait(server)` returns when the server stops accepting
+connections.
 
-The handle owns the listener, background task, active-connection set, and
-timeout configuration. Keep it around for lifecycle operations such as
-[`port`](@ref), `wait(server)`, `close(server)`, or [`forceclose`](@ref).
+Server tasks, including handlers, run on Julia's `:interactive` thread pool.
+Start Julia with at least one interactive thread, such as `--threads=4,1`, so
+that tasks on the default pool that never yield cannot stall the server.
+Without an interactive thread, these tasks run on the default pool.
 
-HTTP.jl schedules server tasks on Julia's `:interactive` thread pool. Start
-Julia with at least one interactive thread, such as `--threads=4,1`, to keep
-server and health-check work isolated from non-yielding tasks on the default
-pool. Without an interactive thread, Julia falls back to the default pool.
+On a plain TCP listener, a connection that starts with the HTTP/2 connection
+preface is served as cleartext HTTP/2; `allow_h2c = false` turns that off. A
+TLS listener offers HTTP/2 when its `TLS.Config` lists `"h2"` in
+`alpn_protocols`.
 
-Timeout fields are stored in nanoseconds. Use the convenience `listen!` and
-`serve!` keywords to configure request-read, header-read, response-write, and
-idle deadlines without constructing a `Server` manually.
-
-HTTP/2 receive flow control is configurable through the `http2_settings` keyword,
-an [`HTTP2Settings`](@ref) carrying the per-stream and connection-level receive
-windows. It defaults to the protocol defaults so existing behavior is unchanged.
-Raising the windows improves single-stream throughput on links with non-trivial
-latency, where the default 64 KiB window would otherwise cap a transfer at roughly
-`window / RTT`.
-
-On plain TCP listeners, a connection that opens with the HTTP/2 preface is
-served as cleartext HTTP/2 (h2c). Set `allow_h2c=false` to parse every plain
-connection as HTTP/1, which answers the preface with `400 Bad Request`. TLS
-listeners select `h2` only through ALPN (the `alpn_protocols` of their
-`TLS.Config`) and ignore `allow_h2c`.
+The constructor takes the keywords of `serve!` with timeouts in nanoseconds
+only; `stream = true` marks `handler` as a stream handler. Start the server with
+`listen!(server)`.
 """
 mutable struct Server{F}
     network::String
@@ -193,13 +185,13 @@ end
 """
     Stream
 
-Bidirectional HTTP stream used by `listen!`, `serve!`, `HTTP.open`, and
-stream-oriented request/response handlers.
+One HTTP exchange, read and written as an `IO`. A server passes one to each
+stream handler, and the client's [`open`](@ref) returns one.
 
-Server-side streams expose request metadata through `startread(stream)` and let
-handlers consume request bytes from the stream directly before writing a
-response. Client-side streams let callers write a request body first, then
-switch to reading the response head/body from the same object.
+On a server stream, [`startread`](@ref) returns the request, reading the stream
+reads the request body, and [`setstatus`](@ref), [`setheader`](@ref), and
+writes build the response. On a client stream, writes send the request body,
+and after [`startread`](@ref) reading the stream reads the response body.
 """
 mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     parsed::Union{Nothing,_URLParts}
@@ -510,8 +502,8 @@ end
 """
     port(server) -> Int
 
-Return the bound port for `server`, or the configured port if it has not started
-listening yet.
+Return the port `server` listens on, or the configured port before it starts
+listening.
 """
 function port(server::Server)::Int
     lock(server.lock)
@@ -772,7 +764,8 @@ end
 """
     forceclose(server)
 
-Immediately stop accepting new connections and close all tracked connections.
+Stop `server` at once: stop accepting connections and close every open
+connection, including those with requests in progress.
 """
 function forceclose(server::Server)::Nothing
     initiated = _begin_shutdown!(server)
@@ -1381,7 +1374,8 @@ end
 """
     listen!(server) -> Server
 
-Start a configured `Server` asynchronously and return it.
+Start `server`, made with the [`Server`](@ref) constructor, in the background
+and return it.
 """
 function listen!(server::Server)::Server
     return _start_server_task!(server) do ready
@@ -1427,24 +1421,14 @@ end
 end
 
 """
-    listen!(handler, host="127.0.0.1", port=8080;
-            read_timeout_ns=0, read_header_timeout_ns=0, write_timeout_ns=0,
-            idle_timeout_ns=0, max_header_bytes=1*1024*1024,
-            listenany=false, reuseaddr=true, backlog=128) -> Server
+    listen!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
     listen!(handler, port; kwargs...) -> Server
     listen!(handler, listener; kwargs...) -> Server
 
-Start a streaming HTTP server and return the running `Server`.
-
-`handler` is called with an `HTTP.Stream` and is responsible for reading the
-request and writing the response. Timeout keywords ending in `_ns` are
-nanoseconds; `read_timeout`, `read_header_timeout`, `write_timeout`, and
-`idle_timeout` accept seconds. The older `readtimeout` keyword is accepted as a
-seconds-valued migration alias for `read_timeout`. `allow_h2c=false` turns off
-cleartext HTTP/2 on plain TCP listeners; see [`Server`](@ref).
-
-Server tasks use Julia's `:interactive` thread pool. Configure at least one
-interactive thread; see [`Server`](@ref) and the [Server Guide](@ref).
+Start an HTTP server in the background and return its [`Server`](@ref).
+`handler(stream::Stream)` reads each request from the [`Stream`](@ref) and
+writes the response to it. `listen!` takes the keywords of [`serve!`](@ref)
+except `max_body_bytes`, since a stream handler reads the body itself.
 """
 function listen!(
     handler::F, host::AbstractString="127.0.0.1", port_num::Integer=8080;
@@ -1582,9 +1566,9 @@ function listen!(
 end
 
 """
-    listen(handler, args...; kwargs...)
+    listen(handler, args...; kwargs...) -> Server
 
-Run `listen!` in the foreground, blocking until the server is closed.
+Like [`listen!`](@ref), but block until the server is closed.
 """
 function listen(handler::F, args...; kwargs...) where {F}
     server = listen!(handler, args...; kwargs...)
@@ -1599,27 +1583,42 @@ function listen(handler::F, args...; kwargs...) where {F}
 end
 
 """
-    serve!(handler, host="127.0.0.1", port=8080;
-           read_timeout_ns=0, read_header_timeout_ns=0,
-           write_timeout_ns=0, idle_timeout_ns=0,
-           max_header_bytes=1*1024*1024, max_body_bytes=64*1024*1024,
-           listenany=false, reuseaddr=true, backlog=128) -> Server
+    serve!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
     serve!(handler, port; kwargs...) -> Server
     serve!(handler, listener; kwargs...) -> Server
 
-Start an HTTP server and return the running `Server`.
+Start an HTTP server in the background and return its [`Server`](@ref).
+`handler(req::Request)` returns the [`Response`](@ref) for each request; a
+handler that throws sends `500 Internal Server Error`. Port `0` picks a free
+port. `listener` is a listener from `Reseau.TCP.listen` or
+`Reseau.TLS.listen`; pass a TLS listener to serve HTTPS. Server tasks run on
+Julia's `:interactive` thread pool; see [`Server`](@ref).
 
-`handler` is called with an `HTTP.Request` and must return an `HTTP.Response`.
-Use `listen!` for the lower-level `HTTP.Stream` handler path.
-Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
-keyword is accepted as a seconds-valued migration alias for `read_timeout`.
-Ordinary request handlers buffer request bodies before dispatch; `max_body_bytes`
-caps that buffering, and `0` restores the legacy unbounded behavior.
-`allow_h2c=false` turns off cleartext HTTP/2 on plain TCP listeners; see
-[`Server`](@ref).
+# Keywords
 
-Server tasks use Julia's `:interactive` thread pool. Configure at least one
-interactive thread; see [`Server`](@ref) and the [Server Guide](@ref).
+- `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`:
+  timeouts in seconds, all off by default. Each also has a nanosecond form
+  ending in `_ns`, such as `read_timeout_ns`. `read_header_timeout` limits
+  reading a request's head, `read_timeout` then limits reading its body, and
+  `idle_timeout` limits the wait for the next request on a kept-alive
+  connection. The header and idle timeouts fall back to `read_timeout` when
+  they are `0`. A request whose head or body times out gets
+  `408 Request Timeout`.
+- `max_body_bytes = 64 MiB`: the largest request body `serve!` reads into
+  memory; a larger one gets `413 Content Too Large`. `0` means no limit.
+- `max_header_bytes = 1 MiB`: the largest request head.
+- `http2_settings`: the [`HTTP2Settings`](@ref) for HTTP/2 connections.
+- `max_concurrent_streams = 100`: the most HTTP/2 streams a connection may
+  have open; `0` means no limit.
+- `allow_h2c = true`: serve cleartext HTTP/2 to clients that send the HTTP/2
+  connection preface.
+- `listenany = false`: `true` ignores `port` and listens on a free port.
+- `reuseaddr = true`, `backlog = 128`: options for the listener that `serve!`
+  creates; they do not apply to a `listener` argument.
+
+# Extended help
+
+`readtimeout` is a deprecated name for `read_timeout`.
 """
 function serve!(
     handler::F,
@@ -1781,9 +1780,9 @@ function serve!(
 end
 
 """
-    serve(handler, args...; kwargs...)
+    serve(handler, args...; kwargs...) -> Server
 
-Run `serve!` in the foreground, blocking until the server is closed.
+Like [`serve!`](@ref), but block until the server is closed.
 """
 function serve(
     handler::F,

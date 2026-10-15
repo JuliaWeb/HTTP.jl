@@ -37,23 +37,17 @@ end
 """
     RetryBucket(; backoff_scale_factor_ms=25, max_backoff_secs=20, capacity=500)
 
-Shared retry-budget bucket keyed by caller-supplied partitions.
+A retry budget shared by the requests of a [`Transport`](@ref), so that a burst
+of failures does not become a burst of retries. Each host has its own budget of
+`capacity`. A retry reserves part of it; the reservation comes back when the
+retried attempt gets a response that is not worth retrying, and is kept, in
+whole or in part, when the attempt fails again. Each request that succeeds
+without a retry earns back one unit. When a host's budget runs out, failures
+are not retried, and a [`RetrySkippedEvent`](@ref) with reason `:retry_bucket`
+reports it.
 
-Each partition tracks its own remaining capacity. `acquire(bucket, partition)`
-reserves retry capacity for one retry attempt, and
-`release(bucket, token, failure_cost)` returns all or part of that reserved
-capacity. Use `failure_cost = 0` for a full refund, or a positive cost to keep
-some or all of the reserved retry capacity consumed.
-
-The built-in client retry flow refunds a reservation in full when the retried
-attempt reaches a non-retryable response (the retry did its job), keeps part of
-the cost when the built-in or custom policy still classifies the response as a
-failure, keeps a conservative partial cost for a non-success terminal response
-after a retry explicitly requested by `retry_if`, keeps the full cost when the
-retried attempt fails with an exception,
-and slowly restores consumed capacity by crediting one unit per successful
-non-retried response — so a burst of real failures can drain a partition, but
-healthy traffic always heals it.
+Retries wait a random time of up to `backoff_scale_factor_ms * 2^(attempt - 1)`
+milliseconds, and at most `max_backoff_secs` seconds.
 """
 mutable struct RetryBucket
     backoff_scale_factor_ms::Int

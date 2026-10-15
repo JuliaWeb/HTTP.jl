@@ -368,15 +368,24 @@ function _servecontent_body(source::IO, total_size::Int64, range::Union{Nothing,
 end
 
 """
-    servecontent(request, source; ...)
+    servecontent(request, source; name="", size=nothing, modtime=nothing,
+                 content_type=nothing, etag=nothing, headers=Headers(),
+                 allow_ranges=true) -> Response
 
-Build a response for `request` from byte-backed or seekable content while
-handling conditional headers and single-byte-range requests.
+Build the response to `request` for `source`, an `AbstractVector{UInt8}` or a
+seekable `IO`; pass `codeunits(str)` for a string. Conditional requests
+(`If-None-Match`, `If-Modified-Since`, `If-Match`, `If-Unmodified-Since`) get
+`304` or `412` when they apply. A request for one byte range gets
+`206 Partial Content`, and an unsatisfiable range gets `416`.
 
-`source` may be an `AbstractVector{UInt8}` or a seekable `IO`. The helper sets
-`Content-Type`, `Content-Length`, `Last-Modified`, `ETag`, `Accept-Ranges`, and
-`Content-Range` when enough information is provided. It returns `304`, `412`,
-or `416` responses for the corresponding precondition/range outcomes.
+- `name`: a file name whose extension sets the `Content-Type` when
+  `content_type` is not given. Without either, the type is detected from the
+  content.
+- `size`: the length of `source`, needed when it cannot be found by seeking.
+- `modtime`: a `DateTime` sent as `Last-Modified`.
+- `etag`: the `ETag` value.
+- `headers`: more response headers.
+- `allow_ranges`: answer `Range` requests.
 """
 function servecontent(
     request::Request,
@@ -719,13 +728,20 @@ function _servefile_response(
 end
 
 """
-    servefile(request, path; ...)
+    servefile(request, path; index_file="index.html", redirect_canonical=true,
+              etag=nothing, cache_control=nothing) -> Response
 
-Serve the file or directory at `path` for `request` using `servecontent`
-semantics and canonical redirect handling.
+Build the response to `request` for the file or directory at `path`, with the
+conditional and range handling of [`servecontent`](@ref). A directory is served
+by its `index_file`. With `redirect_canonical`, a request for a directory
+without a trailing slash, a file with one, or the index file itself is
+redirected to the canonical path. Methods other than `GET` and `HEAD` get
+`405`, a missing file `404`, and an unsafe request path, such as one with
+`..`, `400`.
 
-Only `GET` and `HEAD` are served. Directory requests resolve `index_file`;
-missing files return `404`, and unsafe or invalid request paths return `400`.
+`etag` may be `:weak_stat`, for an ETag made from the file's size and
+modification time, a function `(path, stat) -> String`, or a string; by default
+no ETag is sent. `cache_control` sets the `Cache-Control` header.
 """
 function servefile(
     request::Request,
@@ -755,16 +771,15 @@ function servefile(
 end
 
 """
-    fileserver(root; ...)
+    fileserver(root; index_file="index.html", redirect_canonical=true, etag=nothing,
+               cache_control=nothing, spa_fallback=nothing) -> handler
 
-Return a request handler that serves static files rooted at `root`.
-
-If `spa_fallback` is provided, missing request paths whose final segment does
-not look like a filename are served from that file within `root`. Missing
-asset-like paths still return `404`.
-
-The returned function is a normal `Request -> Response` handler suitable for
-`serve!`, routers, and middleware.
+Return a request handler that serves the files under the directory `root` with
+[`servefile`](@ref), which describes the keywords. With `spa_fallback`, a
+missing path whose last segment does not look like a file name, such as
+`/users/42`, gets the file `spa_fallback` from `root`, as a single-page app
+needs; a missing path such as `/app.js` still gets `404`. Throws
+`ArgumentError` when `root` is not an existing directory.
 """
 function fileserver(
     root::AbstractString;
