@@ -1190,6 +1190,11 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 rethrow(err)
             end
             _set_conn_state!(tracked, _ConnState.ACTIVE)
+            # HTTP/2 arrives as h2c or over TLS ALPN, never as an HTTP/1 request line.
+            if request.proto_major != UInt8(1)
+                _try_write_server_error!(tracked.conn, request, 505)
+                return nothing
+            end
             if _request_has_unsupported_expect(request)
                 _try_write_server_error!(tracked.conn, request, 417)
                 return nothing

@@ -878,6 +878,11 @@ end
         invalid_target_resp, _ = _raw_http_request_until_close(port_num, "GET foo HTTP/1.1\r\nHost: $(address)\r\n\r\n")
         @test occursin("HTTP/1.1 400 Bad Request", invalid_target_resp)
 
+        for version in ("HTTP/0.9", "HTTP/2.0", "HTTP/3.0")
+            version_resp, _ = _raw_http_request_until_close(port_num, "GET / $(version)\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+            @test startswith(version_resp, "HTTP/1.1 505 HTTP Version Not Supported\r\n")
+        end
+
         sock = ND.connect("tcp", "127.0.0.1:$(port_num)")
         try
             write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")))

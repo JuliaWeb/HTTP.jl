@@ -96,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
+- The HTTP/1 server answers a request line whose HTTP major version is not 1,
+  such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
+  Go's server does. It served those requests, and a stream handler's status
+  line repeated the request's version.
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
