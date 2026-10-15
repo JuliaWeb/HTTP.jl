@@ -24,13 +24,12 @@ include("http_public_suffix.jl")
 @enum SameSite SameSiteDefaultMode = 1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
 """
-    Cookie
+    Cookie(name, value; kwargs...)
 
-HTTP cookie model used for both request `Cookie` headers and response
-`Set-Cookie` headers.
-
-Construct a cookie with `Cookie(name, value; kwargs...)` and mutate additional
-fields such as `path`, `domain`, `secure`, or `httponly` when needed.
+A cookie, as sent in a request's `Cookie` header or a response's `Set-Cookie`
+header. Set its other fields, such as `path`, `domain`, `expires`, `maxage`,
+`secure`, `httponly`, and `samesite` (`:lax`, `:strict`, or `:none`), with
+keywords.
 """
 mutable struct Cookie
     name::String
@@ -115,11 +114,10 @@ id(c::Cookie) = "$(c.domain);$(c.path);$(c.name)"
     stringify(cookie, isrequest=true) -> String
     stringify(prefix, cookies, isrequest=true) -> String
 
-Serialize cookies back to HTTP header text.
-
-When `isrequest=true`, the output matches a request `Cookie` header. When
-`false`, response-only attributes such as `Path`, `Domain`, and `HttpOnly` are
-included for `Set-Cookie` serialization.
+Format cookies as header text. With `isrequest = true` the result is
+`name=value`, as in a `Cookie` header; with `false` it also has the attributes
+of a `Set-Cookie` header, such as `Path`, `Domain`, and `HttpOnly`. The second
+form appends `cookies` to the header text `prefix`, separated by `"; "`.
 """
 function stringify(c::Cookie, isrequest::Bool=true)::String
     nm = strip(c.name)
@@ -183,10 +181,10 @@ function stringify(cookiestring::AbstractString, cookies::Vector{Cookie}, isrequ
 end
 
 """
-    addcookie!(message, cookie) -> typeof(message)
+    addcookie!(message, cookie) -> message
 
-Append `cookie` to a request or response message in the appropriate header
-slot.
+Add `cookie` to the `Cookie` header of a `Request`, or as a new `Set-Cookie`
+header of a `Response`.
 """
 function addcookie! end
 
@@ -390,7 +388,8 @@ end
 """
     cookies(request_or_response) -> Vector{Cookie}
 
-Parse cookies from a request `Cookie` header or response `Set-Cookie` headers.
+Return the cookies in a request's `Cookie` header or a response's `Set-Cookie`
+headers.
 """
 function cookies end
 
@@ -497,15 +496,13 @@ const normal_url_char = Bool[
     CookieJar()
     CookieJar(entries::Dict{String, Dict{String, Cookie}})
 
-Create an in-memory cookie jar suitable for attaching to `Client`.
+An in-memory cookie store for a [`Client`](@ref) or the `cookiejar` keyword of
+a request. It stores cookies from responses and picks the ones to send by their
+domain, path, expiry, and `Secure` flag.
 
-The jar applies standard domain/path/expiry rules when storing cookies from
-responses and when selecting cookies for future requests.
-
-Pass `entries` to start from previously saved cookies: `jar.entries` is the
-jar's storage (keyed by canonical host), so persisting a jar amounts to saving
-`jar.entries` and restoring it is `CookieJar(entries)`. The jar takes ownership
-of the passed dict; it is not copied.
+`jar.entries` holds the cookies, keyed by host. To keep cookies across
+sessions, save `jar.entries` and later pass it to `CookieJar(entries)`, which
+uses the `Dict` without copying it.
 """
 struct CookieJar
     lock::ReentrantLock
@@ -550,8 +547,7 @@ end
 """
     getcookies!(jar, scheme, host, path[, now]) -> Vector{Cookie}
 
-Return the cookies from `jar` that should be attached to a request for
-`scheme://host/path`.
+Return the cookies from `jar` to send with a request to `scheme://host/path`.
 """
 function getcookies!(jar::CookieJar, scheme::String, host::String, path::String, now::DateTime=Dates.now(Dates.UTC))::Vector{Cookie}
     cookies = Cookie[]
@@ -607,9 +603,9 @@ function has_prefix(name::AbstractString, prefix::AbstractString)
 end
 
 """
-    setcookies!(jar, scheme, host, path, headers) -> Nothing
+    setcookies!(jar, scheme, host, path, headers) -> nothing
 
-Update `jar` from response headers received for `scheme://host/path`.
+Store the `Set-Cookie` headers of a response from `scheme://host/path` in `jar`.
 """
 function setcookies!(jar::CookieJar, scheme::String, host::String, path::String, headers::Headers)
     cookies = readsetcookies(headers)

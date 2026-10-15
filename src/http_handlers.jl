@@ -43,25 +43,20 @@ using Logging: Logging, AbstractLogger, LogLevel, with_logger, @logmsg
 """
     Handler
 
-Abstract type for the handler interface that exists for documentation purposes.
-A `Handler` is any function of the form `f(req::HTTP.Request) -> HTTP.Response`.
-There is no requirement to subtype `Handler` and users should not rely on or
-dispatch on `Handler`.
+The name of the handler interface. Nothing subtypes or dispatches on it.
 
-For advanced cases, a `Handler` function can also be of the form
-`f(stream::HTTP.Stream) -> Nothing`. In this case, the server would be run like
-`HTTP.listen(f, ...)`. Any middleware used with a stream handler
-also needs to accept and return a stream handler.
+A handler is a function `f(req::HTTP.Request) -> HTTP.Response`, run with
+`serve!`. A stream handler is a function `f(stream::HTTP.Stream)`, run with
+`listen!`. Middleware used with stream handlers must take and return stream
+handlers.
 """
 abstract type Handler end
 
 """
     Middleware
 
-Abstract type for the middleware interface that exists for documentation
-purposes. A `Middleware` is any function of the form `f(::Handler) -> Handler`.
-There is no requirement to subtype `Middleware` and users should not rely on or
-dispatch on `Middleware`.
+The name of the middleware interface. Nothing subtypes or dispatches on it.
+Middleware is a function that takes a [`Handler`](@ref) and returns a new one.
 """
 abstract type Middleware end
 
@@ -209,22 +204,24 @@ function match(node::Node, method, segments, i)
 end
 
 """
-    HTTP.Handlers.Router([_404], [_405], [middleware])
     HTTP.Router([_404], [_405], [middleware])
 
-Define a router object that maps incoming requests by path to registered routes
-and associated handlers.
+A handler that calls the handler [`register!`](@ref)ed for the request's method
+and path. `_404` handles a path with no route, and `_405` a path whose routes
+do not accept the method; by default they return empty 404 and 405 responses.
+`middleware`, if given, wraps each handler as it is registered. A router works
+with request handlers (`serve!`) and with stream handlers (`listen!`).
 
-Routes are matched by method and path segments. Supported segment patterns are:
+A route path is made of segments:
 
 - exact segments, such as `/users`
-- named variables, such as `/users/{id}`
-- named variables with regular expressions, such as `/files/{name:\\w+}`
-- single-segment wildcards with `*`
-- trailing multi-segment wildcards with `**`
+- variables, such as `/users/{id}`
+- variables with a regular expression, such as `/files/{name:\\w+}`
+- `*`, which matches any one segment
+- `**` at the end, which matches the rest of the path
 
-Matched route metadata is stored on the request context and can be read with
-[`getroute`](@ref), [`getparams`](@ref), and [`getparam`](@ref).
+A handler reads the matched route with [`getroute`](@ref) and its variables with
+[`getparams`](@ref) and [`getparam`](@ref).
 """
 struct Router{T,S,F}
     _404::T
@@ -246,21 +243,15 @@ Router(_404=default404, _405=default405, middleware=nothing) = Router(_404, _405
     register!(handler, router, method, path) -> Nothing
     register!(handler, router, path) -> Nothing
 
-Register a new route in `router`.
+Add a route to `router`: requests with `method` and a path matching `path` go to
+`handler`. Without `method`, the route accepts every method. See
+[`Router`](@ref) for the path syntax.
 
-The `path` may include named path variables like `/{id}` or wildcard segments.
-The 3-argument form registers the handler for all methods.
-
-`handler` may be a `Request -> Response` handler for `serve!` or a
-`Stream -> Nothing` handler for `listen!`, as long as the router is used with
-the matching server entrypoint.
-
-The handler-first forms accept the handler as the first positional argument so
-that `do`-block syntax may be used:
+The handler-first forms allow `do` blocks:
 
 ```julia
-register!(router, "GET", "/users/{id}") do req
-    return HTTP.Response(200; body = HTTP.Handlers.getparam(req, "id"))
+HTTP.register!(router, "GET", "/users/{id}") do req
+    return HTTP.Response(200; body = HTTP.getparam(req, "id"))
 end
 ```
 """
@@ -347,25 +338,23 @@ end
 """
     HTTP.getroute(req) -> Union{Nothing, String}
 
-Retrieve the original route registration string for a request after its target
-has been matched against a router.
+Return the registered path, such as `"/users/{id}"`, of the route that matched
+`req`, or `nothing`.
 """
 getroute(req) = get(req.context, :route, nothing)
 
 """
     HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
 
-Retrieve any matched path parameters from the request context.
-
-Returns `nothing` when the request has not been routed or the route contained
-no path variables.
+Return the path variables of the route that matched `req`, or `nothing` when no
+route matched or it has no variables.
 """
 getparams(req) = get(req.context, :params, nothing)
 
 """
-    HTTP.getparam(req, name, default=nothing) -> Any
+    HTTP.getparam(req, name, default=nothing)
 
-Retrieve a matched path parameter with name `name` from request context.
+Return the path variable `name` of the route that matched `req`, or `default`.
 """
 function getparam(req, name, default=nothing)
     params = getparams(req)
@@ -396,25 +385,19 @@ end
 """
     logging_middleware(handler; logger=nothing, level=Logging.Info) -> handler
 
-Middleware that emits one log record per request through Julia's logging
-system: an opt-in access log.
+Wrap `handler` so that each request it handles logs one record, an access log.
 
-The record is emitted after the wrapped `handler` returns and carries the
-request `method` and `target`, the response `status`, the handler's wall-clock
+The message reads like `GET /users/1 200 0.412ms`. The record has the request
+`method` and `target`, the response `status`, the handler's time in
 `elapsed_ms`, and the response body `length` in bytes when it is known without
-reading the body (`nothing` otherwise). The message reads like
-`GET /users/1 200 0.412ms`, and every record uses the `:access` log group so
-it can be filtered. When the handler throws, the record is logged at
-`Logging.Error` with the `exception` and its backtrace and with the `status`
-the server sends for that failure, and the exception is rethrown.
+reading the body (`nothing` otherwise). Records are in the `:access` log group
+and logged at `level`, to `logger` when given and to the current logger
+otherwise. When the handler throws, the record is logged at `Logging.Error`
+with the exception and the status the server sends, and the exception is
+rethrown.
 
-Records are logged at `level` to the current logger, or with
-`Logging.with_logger(logger)` when `logger` is given.
-
-The middleware wraps both `Request -> Response` handlers (`serve!`,
-`streamhandler`) and `Stream -> Nothing` handlers (`listen!`). Stream records
-also carry the client `peer` address from [`peeraddr`](@ref); request
-handlers do not have access to the connection, so request records omit it.
+It wraps request handlers and stream handlers. Stream handler records also have
+the client's `peer` address from [`peeraddr`](@ref).
 
 ```julia
 server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
@@ -588,13 +571,12 @@ end
     handlertimeout(timeout_s; status=503, body="handler timed out", content_type="text/plain; charset=utf-8")
         -> middleware
 
-Wrap a request handler with a wall-clock timeout and synthesize a timeout
-response when the handler does not finish in time.
-
-The wrapped handler receives a child `RequestContext` whose deadline is bounded
-by both the configured timeout and any existing parent request deadline. On
-timeout, the child context is canceled and a response with `status`, `body`,
-and `content_type` is returned.
+Return middleware that answers with `status`, `body`, and `content_type` when a
+request handler takes longer than `timeout_s` seconds. The handler runs with a
+child [`RequestContext`](@ref) whose deadline is the earlier of the timeout and
+the request's own deadline. At the timeout that context is canceled, but the
+handler keeps running until it returns or checks the context. Only request
+handlers are supported.
 """
 function handlertimeout(
     timeout_s::Real;
@@ -613,7 +595,9 @@ end
 """
     HTTP.getcookies(req) -> Vector{Cookie}
 
-Retrieve any parsed cookies from a request context.
+Return the cookies that `HTTP.Handlers.cookie_middleware` stored on `req`, or
+an empty vector for a request that did not pass through it. [`cookies`](@ref)
+reads a request's cookies directly.
 """
 getcookies(req) = get(() -> Cookie[], req.context, :cookies)
 
