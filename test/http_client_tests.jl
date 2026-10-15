@@ -1138,6 +1138,51 @@ end
     @test host_nr == "origin.com:443"  # relative redirect, no parsed host: falls back to dial address
 end
 
+@testset "HTTP URL hosts: non-ASCII, empty, and empty ports" begin
+    for (url, address, host_header) in [
+        ("http://日本/p", "日本:80", "日本"),
+        ("https://user@ü.example/p", "ü.example:443", "ü.example"),
+        ("http://example.com:/p", "example.com:80", "example.com"),
+        ("https://[::1]:/p", "[::1]:443", "[::1]"),
+    ]
+        for parsed in (HT._parse_http_url(url), HT._parse_http_url(HT.URI(url)))
+            @test parsed.address == address
+            @test parsed.host_header == host_header
+            @test parsed.target == "/p"
+        end
+    end
+    for url in ("http://:8080/", "http://:", "http://user@:80/", "http://[]:80/")
+        @test_throws ArgumentError HT._parse_http_url(url)
+    end
+
+    # Strict RFC 3986 parsing: `http:g` has no host, like `//:` and `//`.
+    @test HT._resolve_redirect_target("a:80", false, "//b:/x", "/", "a") == ("b:80", false, "/x", "b")
+    for location in ("//:", "//:8080/x", "http://:8080/x", "//", "http:g", "https:/g")
+        @test_throws HT.ProtocolError HT._resolve_redirect_target("a:80", false, location, "/b/c/d;p?q", "a")
+    end
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        req.target == "/landing" && return HT.Response(200, "landed")
+        return HT.Response(302, ["Location" => HT.URIs.unescapeuri(split(req.target, "loc=")[2])], "")
+    end
+    try
+        port = HT.port(server)
+        get_location(location) = HT.get("http://127.0.0.1:$port/start?loc=$(HT.URIs.escapeuri(location))"; retry = false)
+        @test String(get_location("//127.0.0.1:$port/landing").body) == "landed"
+        # An empty host must not dial the local machine.
+        for location in ("//:$port/landing", "//:", "http:g")
+            err = try
+                get_location(location)
+            catch caught
+                caught
+            end
+            @test err isa HT.ProtocolError
+            @test occursin("invalid redirect location: $location", sprint(showerror, err))
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
 @testset "do! redirect with header-only Host (request.host === nothing)" begin
     # Low-level `do!` callers may set `Host` only in the request headers, leaving
     # `request.host === nothing`. A relative redirect must still be followed: the
