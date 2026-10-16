@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- HTTP/1 servers answer a request head or body read timeout on a TLS
+  connection with `408 Request Timeout`, as on plain TCP. A head timeout
+  closed the connection without a response, and a body timeout answered
+  `500`. ([#1403])
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
@@ -1052,3 +1056,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
 [#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400
+[#1403]: https://github.com/JuliaWeb/HTTP.jl/issues/1403
+[#1404]: https://github.com/JuliaWeb/HTTP.jl/issues/1404
+[#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
+[#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
+[#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
