@@ -127,6 +127,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
   Go's server does. It served those requests, and a stream handler's status
   line repeated the request's version. ([#1405])
+- Requests to `localhost` and loopback addresses never use proxies from the
+  environment, as in Go and HTTP.jl 1.x. With `HTTP_PROXY` set and `NO_PROXY`
+  unset, they went through the proxy. ([#1414])
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
