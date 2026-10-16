@@ -995,6 +995,45 @@ end
     end
 end
 
+@testset "HTTP/2 client sends header frames up to the peer's SETTINGS_MAX_FRAME_SIZE" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    large_value = repeat("x", 20_000)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x5) => UInt32(1 << 20)]))
+            _ = HT.read_frame!(reader)
+            # `read_frame!` rejects frames over the default 16 KiB; read this one by hand.
+            header = _read_exact_h2_tcp!(reader, 9)
+            @test header[4] == HT.FRAME_HEADERS
+            @test header[5] & HT.FLAG_END_HEADERS == HT.FLAG_END_HEADERS
+            block = _read_exact_h2_tcp!(reader, (Int(header[1]) << 16) | (Int(header[2]) << 8) | Int(header[3]))
+            @test length(block) > 16_384
+            decoded = HT.decode_header_block(HT.Decoder(), block)
+            @test any(field -> field.name == "x-big" && field.value == large_value, decoded)
+            encoded = HT.encode_header_block(HT.Encoder(), HT.HeaderField[HT.HeaderField(":status", "204", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(UInt32(1), true, true, encoded))
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/one-frame"; host = address, headers = ["X-Big" => large_value])
+        @test HT.h2_roundtrip!(h2_conn, request).status == 204
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 client rejects oversized accumulated response header blocks" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
