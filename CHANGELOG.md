@@ -112,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http:g`, throws a `ProtocolError` that names it. ([#1400])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
+- Servers compiled with `juliac --trim=safe` verify when they close gracefully
+  with `close(server)`, serve byte ranges with `servecontent`, answer HTTP/2
+  requests with an error status, or send server-sent events (on Julia 1.14,
+  where multi-argument `write` is not specialized on its arguments).
+  ([#1399], [#1401], [#1423])
 - A stream handler that writes more or fewer bytes than its declared
   `Content-Length` is answered with `500 Internal Server Error` instead of
   `400 Bad Request` while the HTTP/1 response head is still held. ([#1404])
@@ -1087,7 +1092,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1385]: https://github.com/JuliaWeb/HTTP.jl/issues/1385
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
+[#1399]: https://github.com/JuliaWeb/HTTP.jl/issues/1399
 [#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400
+[#1401]: https://github.com/JuliaWeb/HTTP.jl/issues/1401
 [#1403]: https://github.com/JuliaWeb/HTTP.jl/issues/1403
 [#1404]: https://github.com/JuliaWeb/HTTP.jl/issues/1404
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
@@ -1095,3 +1102,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
