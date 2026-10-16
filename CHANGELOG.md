@@ -137,6 +137,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
+- A space in a request URL, a `query` string, or a redirect `Location` is sent
+  as `%20`. It went into the request line as is, so `HTTP.get("http://h/a b")`
+  sent the invalid `GET /a b HTTP/1.1`. ([#1415])
 - `read_header_timeout` limits the first request head on a plain TCP connection
   to one budget, as with `allow_h2c = false`. The cleartext HTTP/2 preface check
   restarted the budget when the first bytes arrived, so a slow client could take

@@ -121,8 +121,15 @@ function _urlparts_target!(parts::_URLParts)::String
         end
         isempty(query_suffix) ? base : _append_query(base, query_suffix)
     end
+    target = _escape_target_spaces(target)
     setfield!(parts, :target_cache, target)
     return target
+end
+
+# A request target cannot contain a space (RFC 9112 §3.2), so send each as
+# `%20`, as browsers do, rather than split the request line.
+@inline function _escape_target_spaces(target::String)::String
+    return occursin(' ', target) ? replace(target, ' ' => "%20") : target
 end
 
 function _urlparts_server_name!(parts::_URLParts)::String
@@ -397,7 +404,7 @@ function _parse_http_url(url::URI, query=nothing)::_URLParts
     end
 
     target = _uri_request_target(url)
-    query === nothing || (target = _append_query(target, query))
+    query === nothing || (target = _escape_target_spaces(_append_query(target, query)))
 
     has_userinfo = _uri_component_present(url.userinfo) && !isempty(url.userinfo)
     authorization = has_userinfo ? _userinfo_basic_authorization(String(url.userinfo)) : nothing

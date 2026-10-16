@@ -1183,6 +1183,26 @@ end
     end
 end
 
+@testset "HTTP client sends spaces in URLs as %20" begin
+    @test HT._parse_http_url("http://h/a b?x=c d").target == "/a%20b?x=c%20d"
+    @test HT._parse_http_url("http://h/p", "x=c d").target == "/p?x=c%20d"
+    @test HT._parse_http_url(HT.URI("http://h/p"), "x=c d").target == "/p?x=c%20d"
+    @test HT._resolve_redirect_target("h:80", false, "b c?d e", "/a/", "h")[3] == "/a/b%20c?d%20e"
+    @test HT._resolve_redirect_target("h:80", false, "//g/b c?d e", "/a", "h")[3] == "/b%20c?d%20e"
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        req.target == "/start" && return HT.Response(302, ["Location" => "/b c?d e"], "")
+        return HT.Response(200, req.target)
+    end
+    try
+        base = "http://127.0.0.1:$(HT.port(server))"
+        @test String(HT.get("$base/a b?x=c d"; retry = false).body) == "/a%20b?x=c%20d"
+        @test String(HT.get("$base/p"; query = "x=c d", retry = false).body) == "/p?x=c%20d"
+        @test String(HT.get("$base/start"; retry = false).body) == "/b%20c?d%20e"
+    finally
+        HT.forceclose(server)
+    end
+end
+
 @testset "do! redirect with header-only Host (request.host === nothing)" begin
     # Low-level `do!` callers may set `Host` only in the request headers, leaving
     # `request.host === nothing`. A relative redirect must still be followed: the
