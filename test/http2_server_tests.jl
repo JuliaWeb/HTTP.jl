@@ -1282,6 +1282,55 @@ end
     end
 end
 
+@testset "HTTP/2 server close finishes the streams its GOAWAY covered" begin
+    # During a graceful close the client keeps sending: WINDOW_UPDATE for the
+    # response it is reading, and a request the GOAWAY did not cover. The
+    # covered stream finishes, the new one is refused, and close returns.
+    payload = repeat("d", 100_000)
+    server = HT.serve!(_ -> HT.Response(200, payload), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = nothing
+    close_task = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/drain")
+        received = 0
+        while received < 65_535
+            frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.DataFrame)
+            received += length((frame::HT.DataFrame).data)
+        end
+        close_task = Threads.@spawn close(server)
+        goaway = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.GoAwayFrame)::HT.GoAwayFrame
+        @test goaway.last_stream_id == UInt32(1)
+        @test goaway.error_code == UInt32(0)
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/late"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(3), true, collect(codeunits("late"))))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(0), UInt32(1_000_000)))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(1_000_000)))
+        refused = nothing
+        finished = false
+        while refused === nothing || !finished
+            frame = HT.read_frame!(reader)
+            frame isa HT.RSTStreamFrame && (refused = frame::HT.RSTStreamFrame)
+            if frame isa HT.DataFrame && (frame::HT.DataFrame).stream_id == UInt32(1)
+                received += length((frame::HT.DataFrame).data)
+                finished = (frame::HT.DataFrame).end_stream
+            end
+        end
+        @test received == length(payload)
+        @test refused.stream_id == UInt32(3)
+        @test refused.error_code == UInt32(0x7)
+        fetch(close_task::Task)
+        @test !isopen(server)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        close_task === nothing || HTTP.@try_ignore fetch(close_task::Task)
+        isopen(server) && HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server splits large text response bodies into valid DATA frames" begin
     large_payload = repeat("z", 70_000)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
@@ -1939,6 +1988,45 @@ end
         unlock(send_state.state_lock)
     end
     @test waited == Int64[6]
+end
+
+@testset "HTTP/2 buffered responses send headers before waiting for send credit" begin
+    # HEADERS are not flow-controlled: with no stream credit yet, a String body
+    # still sends its headers at once, as a streamed body does.
+    listener = NC.listen("tcp", "127.0.0.1:0")
+    client = NC.connect(NC.addr(listener))
+    server_conn = NC.accept(listener)
+    write_lock = ReentrantLock()
+    send_state = HT._H2SendWindowState()
+    lock(() -> send_state.initial_stream_send_window = Int64(0), send_state.state_lock)
+    HT._register_h2_send_window!(send_state, UInt32(1))
+    writer = errormonitor(Threads.@spawn HT._write_h2_response!(
+        server_conn, write_lock, send_state, UInt32(1), HT.Request("GET", "/"), HT.Response(200, "abcdefgh"),
+    ))
+    try
+        reader = HT._ConnReader(client)
+        # Observe the writer parked on flow control, not elapsed time.
+        while lock(() -> isempty(send_state.window_condition.waitq), send_state.state_lock)
+            yield()
+        end
+        # This frame lands after whatever the writer sent before it parked.
+        HT._write_frame_h2_server_threadsafe!(write_lock, server_conn, HT.PingFrame(true, ntuple(UInt8, 8)))
+        @test HT.read_frame!(reader) isa HT.HeadersFrame
+        HT._apply_h2_window_update!(send_state, HT.WindowUpdateFrame(UInt32(1), UInt32(8)))
+        body = UInt8[]
+        while true
+            frame = HT.read_frame!(reader)
+            frame isa HT.DataFrame || continue
+            append!(body, (frame::HT.DataFrame).data)
+            (frame::HT.DataFrame).end_stream && break
+        end
+        @test String(body) == "abcdefgh"
+        wait(writer)
+    finally
+        close(client)
+        close(server_conn)
+        close(listener)
+    end
 end
 
 @testset "HTTP/2 buffered responses wait for send credit without the write lock" begin

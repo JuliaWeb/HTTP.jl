@@ -86,6 +86,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `HTTP.streamhandler` closes a streaming response body that a HEAD, 204, or
+  304 response does not send, instead of reading it to the end. A HEAD request
+  to a server-sent events route kept the event producer running and blocked
+  `close(server)`. ([#1409])
+- A failed HTTP/2 request no longer closes the pooled connection it shares
+  with other requests. A request timeout, a stream reset by the server, a
+  request rejected by GOAWAY, or an error from the request body resets only
+  that request's stream, and a connection draining after GOAWAY finishes its
+  streams before it closes. A request that gets no reply at all still moves
+  later requests to a new connection. ([#1426])
+- `examples/batch_server_example.jl` answers batch requests again. It called an
+  internal function with an outdated signature, so every request got `500`. ([#1435])
+- The HTTP/1 server answers any exception a handler throws with
+  `500 Internal Server Error` and logs it at `Error` level with the request
+  method, target, and client address. A `ProtocolError`, `ParseError`, or
+  timeout thrown by a handler, or an invalid `Content-Length` set by a stream
+  handler, got `400` or `408` and no log. Errors reading the request body keep
+  their `4xx` status, and peer disconnects are not logged. ([#1425])
+- `servecontent` (and so `servefile` and `fileserver`) sends the whole content
+  with `200` for a `Range` it does not support, as RFC 9110 §14.2 allows: an
+  unknown unit such as `items=0-4`, several ranges, or a `Range` on a method
+  other than `GET` or `HEAD`. The first two got `416`, and a `POST` got `206`. ([#1433])
+- The HTTP/1 server and `streamhandler` no longer modify the `Response` a
+  handler returns, so one response object can answer many requests at once.
+  Under concurrent HEAD and GET requests, a shared response could send its body
+  to a HEAD request and drop it from a GET, and after one failed write on the
+  `streamhandler` path every later response carried `Connection: close`. ([#1424])
+- `listen!` reports a port that is already in use with `AddressInUseError`, as
+  `serve!` does, instead of a `TaskFailedException`. ([#1432])
 - An empty request body (`EmptyBody`, what a `GET` handler gets) supports the
   same collection functions as a buffered one: `isempty(req.body)`,
   `length`, `copy`, `collect`, and `Vector{UInt8}(req.body)` work instead of
@@ -95,6 +124,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credit. The response kept the connection's write lock while it waited, so
   the server could not answer and never read the WINDOW_UPDATE that followed.
   ([#1410])
+- `request_timeout` and `cancel!` end an HTTP/2 request that waits for a free
+  stream slot on a connection at the server's `SETTINGS_MAX_CONCURRENT_STREAMS`
+  limit. The request waited until a slot freed up, forever with a limit of 0.
+  ([#1427])
 - HTTP/1 servers answer a request head or body read timeout on a TLS
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
@@ -104,6 +137,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client do (1 MiB). A client request threw
   `HTTP/2 frame exceeds max_frame_size` and closed its connection, and the
   server never sent the response. ([#1411])
+- `close(server)` lets the HTTP/2 streams its GOAWAY covered finish. Any frame
+  the client sent after the GOAWAY, such as the WINDOW_UPDATE a large response
+  needs, closed the connection mid-response. Streams opened after the GOAWAY
+  are refused with REFUSED_STREAM. ([#1429])
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
@@ -114,6 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the built-in retry rules retry their causes. It returned `false`, so a
   retry loop around `HTTP.request` gave up on these transient failures.
   ([#1412])
+- HTTP/2 `String` and byte-vector responses send their headers before waiting
+  for flow-control credit, as other bodies do. With no credit yet, the headers
+  waited for a WINDOW_UPDATE, so a client that waits for the headers before
+  granting credit never got a response. ([#1430])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
 - Servers compiled with `juliac --trim=safe` verify when they close gracefully
@@ -127,46 +168,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
+- `expect_continue_timeout` sets how long an HTTP/1 request with `Expect:
+  100-continue` waits for `100 Continue` before it sends the body, and `0` sends
+  it at once. The keyword was ignored, and the client always waited up to one
+  second. ([#1413])
 - The HTTP/1 server answers a request line whose HTTP major version is not 1,
   such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
   Go's server does. It served those requests, and a stream handler's status
   line repeated the request's version. ([#1405])
+- Requests to `localhost` and loopback addresses never use proxies from the
+  environment, as in Go and HTTP.jl 1.x. With `HTTP_PROXY` set and `NO_PROXY`
+  unset, they went through the proxy. ([#1414])
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
+- A space in a request URL, a `query` string, or a redirect `Location` is sent
+  as `%20`. It went into the request line as is, so `HTTP.get("http://h/a b")`
+  sent the invalid `GET /a b HTTP/1.1`. ([#1415])
 - `read_header_timeout` limits the first request head on a plain TCP connection
   to one budget, as with `allow_h2c = false`. The cleartext HTTP/2 preface check
   restarted the budget when the first bytes arrived, so a slow client could take
   nearly twice the limit. ([#1406])
+- A client read timeout over HTTPS with HTTP/1 raises `TimeoutError`, as over
+  plain HTTP. It raised `TLSTransportError`. ([#1416])
 - Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
   waits also propagate failed writer tasks instead of waiting indefinitely.
   ([#1390])
+- The default `User-Agent` header and `HTTP.VERSION` give the installed HTTP.jl
+  version. They always said 2.0.0. ([#1417])
 - A byte-buffer `response_stream` receives only a 2xx body. A redirect that is
   not followed, such as S3's 301 for the wrong region (it has no `Location`),
   went into the buffer, and a body larger than the buffer raised `ArgumentError:
   Unable to grow response stream` instead of returning the 301. A body kept out
   of the buffer is read up to 1 MiB, or `max_decompressed_size` if smaller; it
   was read in full, however large. ([#1407])
+- Each ignored HTTP.jl 1.x client keyword, such as `pool`, `retry_delays`, or
+  `sslconfig`, warns once. Only the first one passed in a session warned.
+  ([#1418])
 - An empty `write` to a server stream (`write(stream, UInt8[])`, an empty
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the
   body end early and later writes went out after the terminator.
+- `HTTP.WebSockets.open` closes the client it creates for
+  `require_ssl_verification = false` when the handshake fails, for example on a
+  redirect to an invalid `Location`, and closes the connection when the server's
+  first frame is invalid. Both stayed open. ([#1419])
 - HTTP and WebSocket client redirects resolve `Location` against the current
   URL as RFC 3986 §5.2 specifies. A relative location lost repeated slashes
   (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
   fragment to the server, and absolute and `//host` locations kept their `.`
   and `..` segments.
+- A URL port must be 1-65535 in decimal digits, or the URL is rejected with an
+  `ArgumentError` when it is parsed. `http://a:abc/` failed later with a
+  confusing message, and `http://a:+80/` connected to port 80. The HTTP/1 server
+  answers an absolute-form request target with such a port with `400`. ([#1420])
 - A byte-buffer `response_stream` (a vector or view) is left untouched when the
   status is 300 or above, other than a 301, 302, 303, 307, or 308 redirect. The
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
   the buffer raises `StatusError` rather than `ArgumentError: Unable to grow
   response stream`. `IO` sinks still receive every final response body.
+- Cookie handling no longer throws `StringIndexError` on non-ASCII text. A
+  request to a path such as `/日本/a` threw when the response set a cookie, as did
+  a cookie name or quoted value that ended in a non-ASCII character. ([#1421])
 - HTTP/1 server read deadlines now follow the request phase. `read_header_timeout`
   no longer limits the request body (only `read_timeout` does) or the wait
   between keep-alive requests (`idle_timeout`, else `read_timeout`), so a server
   that sets only `read_header_timeout` keeps idle connections open. An idle
   timeout or client close between requests no longer writes a `408` or `400`.
   ([#1381])
+- `HTTP.getcookies(req)` returns the cookies in the request's `Cookie` header.
+  It returned an empty vector unless the non-public `cookie_middleware` had run
+  first. ([#1422])
 - HTTP/1 stream handlers no longer send `100 Continue` after the response head.
   A handler that called `startwrite` before reading the body of an
   `Expect: 100-continue` request put the interim response inside its own
@@ -1104,6 +1176,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1409]: https://github.com/JuliaWeb/HTTP.jl/issues/1409
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
 [#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
@@ -1120,6 +1193,11 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
 [#1424]: https://github.com/JuliaWeb/HTTP.jl/issues/1424
 [#1425]: https://github.com/JuliaWeb/HTTP.jl/issues/1425
+[#1426]: https://github.com/JuliaWeb/HTTP.jl/issues/1426
+[#1427]: https://github.com/JuliaWeb/HTTP.jl/issues/1427
+[#1428]: https://github.com/JuliaWeb/HTTP.jl/issues/1428
+[#1429]: https://github.com/JuliaWeb/HTTP.jl/issues/1429
+[#1430]: https://github.com/JuliaWeb/HTTP.jl/issues/1430
 [#1431]: https://github.com/JuliaWeb/HTTP.jl/issues/1431
 [#1432]: https://github.com/JuliaWeb/HTTP.jl/issues/1432
 [#1433]: https://github.com/JuliaWeb/HTTP.jl/issues/1433

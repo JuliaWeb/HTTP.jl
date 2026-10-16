@@ -493,6 +493,28 @@ end
     @test (fallback::HT._ProxyTarget).address == "fallback-proxy.local:3128"
 end
 
+@testset "HTTP environment proxies never apply to loopback" begin
+    # Clear the lowercase variants first: Windows environment variables are
+    # case-insensitive, so clearing them afterwards would delete the values.
+    for no_proxy in (nothing, "", "example.com")
+        config = withenv(
+                "http_proxy" => nothing,
+                "no_proxy" => nothing,
+                "HTTP_PROXY" => "http://proxy.local:3128",
+                "NO_PROXY" => no_proxy,
+            ) do
+            HT.ProxyFromEnvironment()
+        end
+        for address in ("127.0.0.1:8080", "127.1.2.3:80", "localhost:8080", "[::1]:8080")
+            @test HT._proxy_plan(config, false, address).mode == HT._ProxyPlanMode.DIRECT
+        end
+        @test HT._proxy_plan(config, false, "origin.local:80").mode == HT._ProxyPlanMode.HTTP_FORWARD
+    end
+    # A proxy URL given in code, without `no_proxy`, still applies to every host.
+    explicit = HT.ProxyURL("http://proxy.local:3128")
+    @test HT._proxy_plan(explicit, false, "127.0.0.1:8080").mode == HT._ProxyPlanMode.HTTP_FORWARD
+end
+
 @testset "HTTP proxy CGI safeguard matches Go semantics" begin
     selector = withenv(
             "HTTP_PROXY" => "http://cgi-http-proxy.local:8080",
