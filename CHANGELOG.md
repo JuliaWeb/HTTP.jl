@@ -95,6 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credit. The response kept the connection's write lock while it waited, so
   the server could not answer and never read the WINDOW_UPDATE that followed.
   ([#1410])
+- `request_timeout` and `cancel!` end an HTTP/2 request that waits for a free
+  stream slot on a connection at the server's `SETTINGS_MAX_CONCURRENT_STREAMS`
+  limit. The request waited until a slot freed up, forever with a limit of 0.
+  ([#1427])
 - HTTP/1 servers answer a request head or body read timeout on a TLS
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
@@ -1150,3 +1154,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1426]: https://github.com/JuliaWeb/HTTP.jl/issues/1426
+[#1427]: https://github.com/JuliaWeb/HTTP.jl/issues/1427
+[#1428]: https://github.com/JuliaWeb/HTTP.jl/issues/1428
+[#1429]: https://github.com/JuliaWeb/HTTP.jl/issues/1429
+[#1430]: https://github.com/JuliaWeb/HTTP.jl/issues/1430
