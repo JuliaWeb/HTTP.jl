@@ -1116,4 +1116,11 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1424]: https://github.com/JuliaWeb/HTTP.jl/issues/1424
+[#1425]: https://github.com/JuliaWeb/HTTP.jl/issues/1425
+[#1431]: https://github.com/JuliaWeb/HTTP.jl/issues/1431
+[#1432]: https://github.com/JuliaWeb/HTTP.jl/issues/1432
+[#1433]: https://github.com/JuliaWeb/HTTP.jl/issues/1433
+[#1434]: https://github.com/JuliaWeb/HTTP.jl/issues/1434
 [#1435]: https://github.com/JuliaWeb/HTTP.jl/issues/1435
+[#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
