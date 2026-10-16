@@ -44,11 +44,8 @@ function _escape_terminal_control_chars(text::AbstractString)::String
             write(out, "\\e")
             changed = true
         elseif code <= 0x1f || 0x7f <= code <= 0x9f
-            if code <= 0xff
-                write(out, "\\x", uppercase(lpad(string(code, base=16), 2, '0')))
-            else
-                write(out, "\\u{", string(code, base=16), "}")
-            end
+            write(out, "\\x")
+            write(out, uppercase(lpad(string(code, base=16), 2, '0')))
             changed = true
         else
             print(out, c)
