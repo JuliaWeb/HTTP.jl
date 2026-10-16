@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- An empty request body (`EmptyBody`, what a `GET` handler gets) supports the
+  same collection functions as a buffered one: `isempty(req.body)`,
+  `length`, `copy`, `collect`, and `Vector{UInt8}(req.body)` work instead of
+  throwing a `MethodError`.
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so

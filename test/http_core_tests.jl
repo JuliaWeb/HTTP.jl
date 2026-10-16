@@ -279,6 +279,18 @@ end
     @test isempty(body)
     HT.body_close!(body)
     @test HT.body_closed(body)
+    # An empty body offers the same collection view as an empty BytesBody.
+    for empty in (HT.EmptyBody(), HT.BytesBody(UInt8[]))
+        @test isempty(empty)
+        @test length(empty) == 0
+        @test collect(empty) == UInt8[]
+        @test copy(empty) == UInt8[]
+        @test convert(Vector{UInt8}, empty) == UInt8[]
+        @test Array(empty) == UInt8[]
+        @test Vector{UInt8}(empty) == UInt8[]
+        @test String(empty) == ""
+        @test_throws BoundsError empty[1]
+    end
     cb_closed = Ref(false)
     cb_reads = Ref(0)
     cb = HT.CallbackBody(
