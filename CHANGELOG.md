@@ -86,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- HTTP/1 status lines name only `HTTP/1.1`, or `HTTP/1.0` for an HTTP/1.0
+  response. A stream handler or `servecontent` answered an `HTTP/1.2` request
+  with `HTTP/1.2 200 OK`; Go answers `HTTP/1.1`.
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so

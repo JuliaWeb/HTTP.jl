@@ -882,6 +882,11 @@ end
             version_resp, _ = _raw_http_request_until_close(port_num, "GET / $(version)\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
             @test startswith(version_resp, "HTTP/1.1 505 HTTP Version Not Supported\r\n")
         end
+        # A later HTTP/1 minor version is answered as HTTP/1.1, as Go does.
+        newer_resp, _ = _raw_http_request_until_close(port_num, "GET / HTTP/1.2\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+        @test startswith(newer_resp, "HTTP/1.1 200 OK\r\n")
+        older_resp, _ = _raw_http_request_until_close(port_num, "GET / HTTP/1.0\r\nHost: $(address)\r\n\r\n")
+        @test startswith(older_resp, "HTTP/1.0 200 OK\r\n")
 
         sock = ND.connect("tcp", "127.0.0.1:$(port_num)")
         try
