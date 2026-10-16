@@ -140,6 +140,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that sets only `read_header_timeout` keeps idle connections open. An idle
   timeout or client close between requests no longer writes a `408` or `400`.
   ([#1381])
+- `HTTP.getcookies(req)` returns the cookies in the request's `Cookie` header.
+  It returned an empty vector unless the non-public `cookie_middleware` had run
+  first. ([#1422])
 - HTTP/1 stream handlers no longer send `100 Continue` after the response head.
   A handler that called `startwrite` before reading the body of an
   `Expect: 100-continue` request put the interim response inside its own
@@ -1075,3 +1078,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
