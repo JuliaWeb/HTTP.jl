@@ -1140,4 +1140,37 @@ end
     for err in (EOFError(), HT.ParseError("x"), ArgumentError("y"), Reseau.IOPoll.DeadlineExceededError())
         @test HT.isrecoverable(err) == HT._retryable_request_error(err)
     end
+
+    # The error a request throws is as recoverable as the transport error it
+    # wraps, which is what the built-in retry rules classified.
+    refused = ND.OpError("connect", "tcp", nothing, nothing, SystemError("connect", Libc.ECONNREFUSED))
+    for raw in (
+        refused,
+        ND.DialTimeoutError("host:80"),
+        Reseau.TLS.TLSHandshakeTimeoutError(1),
+        Reseau.IOPoll.DeadlineExceededError(),
+        ND.OpError("dial", "tcp", nothing, nothing, ND.LookupError("no such host", "missing.invalid")),
+    )
+        public = HT._wrap_client_transport_error(raw)
+        @test public isa HT.HTTPError
+        @test HT.isrecoverable(public) == HT._retryable_request_error(raw)
+    end
+    @test HT.isrecoverable(HT._wrap_client_transport_error(refused)::HT.ConnectError)
+    @test HT.isrecoverable(HT.TimeoutError("connect", 0))
+    @test HT.isrecoverable(HT.TimeoutError("tls_handshake", 0))
+    @test !HT.isrecoverable(HT.TimeoutError("request", 0))
+    @test !HT.isrecoverable(HT.ConnectError("host:80", ErrorException("refused by policy")))
+
+    # A refused connection on a closed local port.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    NC.close(listener)
+    err = try
+        HT.get("http://$(address)/"; retry = false)
+        nothing
+    catch ex
+        ex
+    end
+    @test err isa HT.ConnectError
+    @test HT.isrecoverable(err)
 end
