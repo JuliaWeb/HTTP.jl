@@ -155,6 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unable to grow response stream` instead of returning the 301. A body kept out
   of the buffer is read up to 1 MiB, or `max_decompressed_size` if smaller; it
   was read in full, however large. ([#1407])
+- Each ignored HTTP.jl 1.x client keyword, such as `pool`, `retry_delays`, or
+  `sslconfig`, warns once. Only the first one passed in a session warned.
+  ([#1418])
 - An empty `write` to a server stream (`write(stream, UInt8[])`, an empty
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the

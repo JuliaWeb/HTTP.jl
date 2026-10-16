@@ -2773,6 +2773,13 @@ end
     end
 end
 
+@testset "HTTP 1.x compat keywords each warn once" begin
+    @test_logs (:warn, r"`pool`") (:warn, r"`retry_check`") (:warn, r"`logtag`") begin
+        HT._handle_client_compat_kwargs(pool = 1, retry_check = 1, logtag = 1)
+        HT._handle_client_compat_kwargs(pool = 1, retry_check = 1, logtag = 1)
+    end
+end
+
 @testset "HTTP request timeout configuration parsing" begin
     request_timeout_ns, config = HT._resolve_request_timeout_settings(
         1.25,
