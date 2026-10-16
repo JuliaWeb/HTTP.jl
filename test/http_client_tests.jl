@@ -3339,7 +3339,7 @@ end
         @test derived_lines[2] == "Host: $(address)"
         @test count(startswith("Host:"), derived_lines) == 1
         @test "X-Test: 1" in derived_lines
-        @test any(startswith("User-Agent:"), derived_lines)
+        @test "User-Agent: HTTP.jl/$(pkgversion(HTTP))" in derived_lines
         @test supplied_lines[1] == "GET /second HTTP/1.1"
         @test supplied_lines[2] == "Host: override.example"
         @test count(startswith("Host:"), supplied_lines) == 1
