@@ -1015,9 +1015,9 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
-function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, request::Union{Nothing,Request}=response.request)::Nothing
+function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, head::Bool=_is_head_request(response.request))::Nothing
     try
-        write_response!(conn, response, request)
+        _write_response!(conn, response, head)
     finally
         if response.body isa AbstractBody
             @try_ignore body_close!(response.body::AbstractBody)
@@ -1281,7 +1281,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     return nothing
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj, handler_request)
+                _write_all_response!(tracked.conn, response_obj, _is_head_request(handler_request))
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
