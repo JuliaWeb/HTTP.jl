@@ -1098,6 +1098,8 @@ function _server_error_status(err)::Union{Nothing,Int}
             return 431
         elseif code == _PROTOCOL_ERROR_BODY_TOO_LARGE
             return 413
+        elseif code == _PROTOCOL_ERROR_RESPONSE_LENGTH
+            return 500
         end
         return 400
     end

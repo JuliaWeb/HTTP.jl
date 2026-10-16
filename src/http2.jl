@@ -469,11 +469,11 @@ Serialize and write one HTTP/2 frame to `io`.
 
 Returns `nothing`. Throws `ProtocolError` or `ArgumentError` for frames that
 cannot be represented legally, plus any exception raised by the underlying
-`IO`.
+`IO`. Callers size frames to the peer's `SETTINGS_MAX_FRAME_SIZE`, which may be
+larger than the 16 KiB default.
 """
 function write_frame!(io::IO, frame::AbstractFrame)
     header, payload = _serialize_frame(frame)
-    header.length <= _H2_MAX_FRAME_SIZE || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
     write(io, _encode_header_bytes(header))
     isempty(payload) || write(io, payload)
     return nothing
