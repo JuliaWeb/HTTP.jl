@@ -7,7 +7,7 @@ than just a simple request. For CORS details, see e.g. https://cors-errors.info/
 using HTTP, JSON, UUIDs
 using StructUtils: @noarg
 
-# modified Animal struct to associate with specific user
+# Each animal belongs to the user identified by `userId`
 @noarg mutable struct Animal
     id::Int
     userId::UUID
@@ -33,15 +33,11 @@ const CORS_OPT_HEADERS = [
     "Access-Control-Allow-Methods" => "POST, GET, OPTIONS"
 ]
 
-# CORS response headers that set access right of the recepient
+# CORS header sent with every other response
 const CORS_RES_HEADERS = ["Access-Control-Allow-Origin" => "*"]
 
-#= 
-JSONMiddleware minimizes code by automatically converting the request body
-to JSON to pass to the other service functions automatically. JSONMiddleware
-recieves the body of the response from the other service funtions and sends
-back a success response code
-=#
+# JSONMiddleware turns a service function's return value into a 200 JSON
+# response, so the service functions do not build responses themselves.
 function JSONMiddleware(handler)
     # Middleware functions return *Handler* functions
     return function(req::HTTP.Request)
@@ -58,14 +54,8 @@ function JSONMiddleware(handler)
     end
 end
 
-#= CorsMiddleware: handles preflight request with the OPTIONS flag
-If a request was recieved with the correct headers, then a response will be 
-sent back with a 200 code, if the correct headers were not specified in the request,
-then a CORS error will be recieved on the client side
-
-Since each request passes throught the CORS Handler, then if the request is 
-not a preflight request, it will simply go to the JSONMiddleware to be passed to the
-correct service function =#
+# CorsMiddleware answers CORS preflight (OPTIONS) requests and passes every
+# other request on to the wrapped handler.
 function CorsMiddleware(handler)
     return function(req::HTTP.Request)
         if req.method == "OPTIONS"

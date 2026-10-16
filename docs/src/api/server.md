@@ -34,9 +34,9 @@ HTTP.peeraddr
 
 ## Routing and Middleware
 
-The router and middleware helpers live in `HTTP.Handlers` and are also
-available through `HTTP.Router`, `HTTP.register!`, and the related imported
-aliases for compatibility.
+The router and middleware live in `HTTP.Handlers`. Except for `handlertimeout`
+and `logging_middleware`, the names below are also available from `HTTP`
+directly, as in `HTTP.Router` and `HTTP.register!`.
 
 ```@docs
 HTTP.Handlers.Handler

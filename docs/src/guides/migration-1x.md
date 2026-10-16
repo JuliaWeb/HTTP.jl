@@ -1,72 +1,39 @@
 # Migration From HTTP.jl 1.x
 
-HTTP.jl 2.0 is a breaking release. Code that stayed on the common
-`HTTP.get`, `HTTP.post`, `HTTP.request`, and basic `HTTP.serve!` workflows
-should usually migrate with small edits. Code that reached into parser,
-connection-pool, layer-stack, HPACK, or HTTP/2 internals should move to the
-documented 2.0 API instead of chasing renamed internals.
+HTTP.jl 2.0 is a breaking release with a new HTTP stack underneath. Code that
+calls `HTTP.get`, `HTTP.post`, `HTTP.request`, `HTTP.serve!`, `HTTP.Router`, and
+`HTTP.WebSockets` usually needs only small changes. Code that used parser,
+connection-pool, layer-stack, or other internal APIs has to move to the public
+API. HTTP.jl 2.0 requires Julia 1.10 or later.
 
-The Before/After snippets below are intentionally minimal — they show the API
-shape change, not full runnable programs. Each runnable snippet assumes the
-caller has already issued `using HTTP`, plus any extra `using` statements
-shown in-line (for example `using JSON` for JSON examples or `using Downloads`
-for the [`HTTP.download`](#httpdownload) discussion).
+The snippets below assume `using HTTP` and an existing `url`.
 
-The most important 2.0 changes are:
+## Checklist
 
-- Julia 1.10 is the minimum supported Julia version.
-- HTTP.jl now delegates transport, resolver, and TLS substrate work to Reseau.
-- `HTTP.Headers` is now a standalone mutable header struct rather than an alias
-  for a vector of substring pairs.
-- `Request`, `Response`, `Headers`, `RequestContext`, bodies, `Client`,
-  `Transport`, `Server`, and `Stream` are the core public building blocks.
-- Top-level request helpers buffer `Response.body::Vector{UInt8}` by default.
-- `RequestContext` is typed request state, not a plain `Dict`.
-- Client pooling, retries, TLS, proxying, and timeouts use more explicit
-  `Client` / `Transport` / keyword configuration.
-- WebSocket entrypoints live under `HTTP.WebSockets`.
+- Read data written with `response_stream = io` from `io`; `resp.body` is
+  `nothing`.
+- Replace `HTTP.download` with `Downloads.download` or a `response_stream`
+  file.
+- Read text from a server request with `String(req.body)`.
+- Use `HTTP.get_request_context(req)` for cancellation and deadlines.
+- Replace `pool` with a long-lived `HTTP.Client`.
+- Replace `retry_delays` and `retry_check` with `retries`, `retry_if`, and
+  `HTTP.RetryBucket`.
+- Replace `readtimeout` with the timeout keyword you need.
+- Replace `sslconfig` with a `Transport`'s `tls_config`.
+- Replace `HTTP.Exceptions.StatusError` and friends with the top-level names,
+  and `HTTP.RequestError` with the underlying exception.
+- Replace `Sockets.getpeername(stream)` with `HTTP.peeraddr(stream)`.
+- Start servers with an interactive thread, such as `julia --threads=4,1`.
+- Re-test redirects, retries, proxies, cookies, streaming, WebSockets,
+  server-sent events, and HTTP/2.
 
-## Recommended Upgrade Order
+## Response Bodies
 
-1. Upgrade Julia and dependency compat so HTTP.jl 2.0 can be resolved.
-2. Update high-level client calls and response field access.
-3. Update explicit `Request` / `Response` constructors.
-4. Replace direct connection-pool, layer, parser, HPACK, or HTTP/2 internals
-   with documented `Client`, `Transport`, `Stream`, server, or WebSocket APIs.
-5. Re-test timeout, retry, proxy, cookie, streaming, WebSocket, SSE, and HTTP/2
-   paths explicitly.
-
-## High-Level Requests
-
-Most simple request calls still look the same.
-
-Before:
-
-```julia
-resp = HTTP.get(url)
-text = String(resp.body)
-```
-
-After:
-
-```julia
-resp = HTTP.get(url)
-text = String(resp.body)
-```
-
-By default, `HTTP.request` and verb helpers return a fully materialized
-`Vector{UInt8}` in `resp.body`. For streaming, use `response_stream` or
-`HTTP.open`.
-
-Before:
-
-```julia
-open("payload.bin", "w") do io
-    HTTP.get(url; response_stream = io)
-end
-```
-
-After:
+`HTTP.request` and the verb helpers still return the whole body as a
+`Vector{UInt8}` in `resp.body`. With `response_stream = io`, 1.x also stored
+`io` in `resp.body`. In 2.0 `resp.body` is `nothing`; read the data from the
+`io` you passed:
 
 ```julia
 open("payload.bin", "w") do io
@@ -75,26 +42,14 @@ open("payload.bin", "w") do io
 end
 ```
 
-In 1.x, the supplied `response_stream` object could also appear as
-`resp.body`. In 2.0, the sink remains owned by the caller; read the data back
-from the original `IO` or byte buffer you passed as `response_stream`.
-
 ## `HTTP.download`
 
-The dedicated 1.x `HTTP.download` helper has been removed in HTTP.jl 2.0.
+HTTP.jl 2.0 has no `download` function. `HTTP.download(url, path)` still runs,
+because every module can see `Base.download`, but it calls `Base.download`,
+which uses the Downloads standard library. It accepts none of HTTP.jl's
+keywords; passing one throws a `MethodError`.
 
-!!! warning "`HTTP.download` still resolves — but it is no longer HTTP.jl's"
-    Because `HTTP` re-exports `Base.download`, calls like
-    `HTTP.download(url, path)` continue to work. Those calls now go through
-    `Base.download` (which is itself backed by the `Downloads` standard
-    library), **not** through HTTP.jl's request stack. The 1.x keyword
-    arguments (`proxy`, `retry`, `headers`, `client`, `transport`, TLS
-    configuration, etc.) are not recognized by `Base.download` — passing them
-    raises `MethodError` rather than silently being applied. Update such call
-    sites to use one of the patterns below.
-
-For the closest direct replacement, use the `Downloads.download` function from
-Julia's standard library:
+Use `Downloads.download` to copy a URL to a file:
 
 ```julia
 using Downloads
@@ -102,152 +57,66 @@ using Downloads
 Downloads.download(url, "payload.bin")
 ```
 
-If you want to keep all request handling inside HTTP.jl, stream the response
-body into an `IOStream` that you own:
+Stream the response into a file when you need HTTP.jl options such as headers,
+retries, proxies, or a `Client`:
 
 ```julia
-using HTTP
-
 open("payload.bin", "w") do io
-    resp = HTTP.request("GET", url; response_stream = io)
-    @assert 200 <= resp.status < 300
-    @assert resp.body === nothing
+    HTTP.get(url; response_stream = io)
 end
 ```
 
-Use this pattern when you need HTTP.jl client configuration such as custom
-headers, retries, proxy settings, TLS configuration, or a reusable
-`HTTP.Client`. Use `Downloads.download` when you just need a URL copied to a
-file.
+## Requests, Responses, and Headers
 
-For pull-based streaming:
-
-```julia
-using HTTP
-
-HTTP.open(:GET, url) do stream
-    response = HTTP.startread(stream)
-    @info "status" response.status
-    output = IOBuffer()
-    buf = Vector{UInt8}(undef, 8192)
-    while true
-        n = readbytes!(stream, buf)
-        n == 0 && break
-        write(output, @view buf[1:n])
-    end
-    @info "captured bytes" length(take!(output))
-end
-```
-
-Like all `HTTP.open` `do`-block calls, the form above returns the final
-[`HTTP.Response`](@ref) — capture data you want to keep in an outer variable
-rather than as the value of the `do` block.
-
-## Request and Response Constructors
-
-Common 1.x positional constructors remain accepted as migration shims, including
-string and byte-vector request or response bodies:
+The 1.x positional constructors still work:
 
 ```julia
 req = HTTP.Request("POST", "/widgets", ["Content-Type" => "text/plain"], "hello")
 resp = HTTP.Response(201, ["Location" => "/widgets/1"], "created")
 ```
 
-New code may use the keyword forms when it needs explicit headers, trailers,
-protocol metadata, or context ownership:
+The keyword forms take the same values plus trailers, protocol version, and a
+context:
 
 ```julia
-req = HTTP.Request(
-    "POST",
-    "/widgets";
-    headers = ["Content-Type" => "text/plain"],
-    body = "hello",
-)
+req = HTTP.Request("POST", "/widgets"; headers = ["Content-Type" => "text/plain"], body = "hello")
 ```
 
-## Headers
-
-`HTTP.Headers` is the canonical mutable header container. It preserves pair
-order and each header name as you spell it, as 1.x did. Lookups such as
-`HTTP.header(headers, "Content-Type")` match names in any case. Unlike 1.x,
-headers received from the network use `Content-Type` form. To send every
-request header name in that form, pass `canonicalize_headers=true`, as in 1.x.
-HTTP/2, which 2.0 uses for HTTPS when the server supports it, always sends
-names in lowercase; pass `protocol=:h1` to a server that needs exact spelling.
-
-Before:
-
-```julia
-headers = ["content-type" => "application/json"]
-```
-
-After:
-
-```julia
-headers = HTTP.Headers(["content-type" => "application/json"])
-HTTP.setheader(headers, "x-request-id", request_id)
-```
-
-Useful helpers include `HTTP.header`, `HTTP.headers`, `HTTP.hasheader`,
-`HTTP.headercontains`, `HTTP.setheader`, `HTTP.appendheader`, and
-`HTTP.removeheader`.
+`req.headers` and `resp.headers` are `HTTP.Headers`, an ordered vector of
+`String => String` pairs; in 1.x they were a `Vector` of `SubString` pairs.
+Header names keep the spelling you give them, and lookups such as
+`HTTP.header(resp, "content-type")` ignore case. Headers received from the
+network use `Content-Type` spelling, while 1.x kept the spelling from the wire.
+Pass `canonicalize_headers = true` to send every request header name in that
+form, as in 1.x. HTTP/2, which 2.0 uses for HTTPS when the server supports it,
+always sends names in lowercase; pass `protocol = :h1` to a server that needs
+exact spelling. Places that take headers still accept vectors of pairs.
 
 ## Request Context
 
-In 1.x, middleware often treated request context as a plain dictionary. In 2.0,
-`RequestContext` is typed request state with deadline, cancellation, metadata,
-and timeout fields. Dict-like symbol-key metadata access still works for
-migration.
-
-Before:
+`req.context` is still a `Dict{Symbol,Any}` for application data:
 
 ```julia
 req.context[:request_id] = request_id
+request_id = get(req.context, :request_id, nothing)
 ```
 
-After:
-
-```julia
-ctx = HTTP.get_request_context(req)
-ctx[:request_id] = request_id
-```
-
-Reading application metadata remains familiar:
-
-```julia
-request_id = get(HTTP.get_request_context(req), :request_id, nothing)
-```
-
-Use the typed helpers for control flow:
+Cancellation and deadlines live on the [`HTTP.RequestContext`](@ref) returned by
+`HTTP.get_request_context(req)`:
 
 ```julia
 ctx = HTTP.get_request_context(req)
 HTTP.set_deadline!(ctx, time_ns() + 5_000_000_000)
-HTTP.cancel!(ctx; message = "caller disconnected")
 HTTP.canceled(ctx) && throw(HTTP.CanceledError("request canceled"))
 ```
 
-For compatibility, `req.context` returns the metadata view. Use
-`HTTP.get_request_context(req)` whenever you need cancellation, deadlines, or
-timeout state.
+## Clients, Proxies, and TLS
 
-## Reusable Clients and Pooling
-
-The 1.x `pool` keyword and old connection-pool internals are replaced by
-`Client` and `Transport`.
-
-Before:
+The `pool` keyword is ignored. Create a long-lived [`HTTP.Client`](@ref)
+instead; it keeps connections, cookies, and settings across requests:
 
 ```julia
-resp = HTTP.get(url; pool = pool)
-```
-
-After:
-
-```julia
-transport = HTTP.Transport(max_idle_per_host = 4, max_idle_total = 32)
-client = HTTP.Client(transport = transport, cookiejar = HTTP.CookieJar())
-
+client = HTTP.Client(transport = HTTP.Transport(max_idle_per_host = 4))
 try
     resp = HTTP.get(url; client = client)
 finally
@@ -255,15 +124,92 @@ finally
 end
 ```
 
-Use a long-lived `Client` when you want connection reuse, shared cookies, proxy
-configuration, retry buckets, and HTTP/2 preference to be consistent across
-many requests.
+As in 1.x, requests without a `client` use proxies from the `HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment variables. 2.0 reads them
+once, when the first such request runs, instead of on every request. The
+`proxy` keyword accepts a proxy URL or an [`HTTP.ProxyConfig`](@ref), and
+`socks5://` and `socks5h://` proxies are supported:
+
+```julia
+HTTP.get(url; proxy = HTTP.ProxyURL("http://proxy.internal:8080"; no_proxy = "localhost"))
+HTTP.get(url; proxy = HTTP.ProxyURL("socks5h://proxy.internal:1080"))
+HTTP.get(url; proxy = nothing)  # connect directly
+```
+
+The `sslconfig` and `socket_type_tls` keywords are ignored. Configure TLS with a
+`Reseau.TLS.Config` on the `Transport`:
+
+```julia
+using Reseau
+
+client = HTTP.Client(transport = HTTP.Transport(tls_config = Reseau.TLS.Config(ca_file = "ca.pem")))
+```
+
+`require_ssl_verification = false` still turns off certificate checks for one
+call.
+
+## Retries
+
+The `retry_delays` and `retry_check` keywords are ignored. A `retry_if`
+function replaces `retry_check`. Return `true` to retry and `nothing` to fall
+back to the default rules:
+
+Before:
+
+```julia
+resp = HTTP.get(url; retries = 3, retry_delays = [0.1, 0.5, 1.0],
+    retry_check = (s, ex, req, resp, resp_body) -> resp !== nothing && resp.status == 409)
+```
+
+After:
+
+```julia
+resp = HTTP.get(url; retries = 3, retry_if = (attempt, err, req, resp) ->
+    resp !== nothing && resp.status == 409 ? true : nothing)
+```
+
+There is no list of delays. Retries wait a random, exponentially growing delay;
+pass `retry_bucket = HTTP.RetryBucket(backoff_scale_factor_ms = 100)` to change
+its scale. 2.0 retries 408, 429, 500, 502, 503, and 504 responses by default,
+where 1.x also retried 403, 409, and every other 5xx status. See
+[Retries](client.md#Retries) in the client guide for the full default policy.
+
+## Timeouts
+
+`readtimeout` still works but is deprecated. It sets `read_idle_timeout`, the
+longest wait between reads. Pick the timeout you mean:
+
+```julia
+resp = HTTP.get(url; connect_timeout = 5, request_timeout = 60, read_idle_timeout = 30)
+```
+
+[Timeouts](client.md#Timeouts) in the client guide describes each keyword.
+A timeout throws `HTTP.TimeoutError`, also available as `HTTP.HTTPTimeoutError`.
+
+## Exceptions
+
+The exception types live at the top level: `HTTP.StatusError`,
+`HTTP.ConnectError`, `HTTP.TimeoutError`, and their supertype `HTTP.HTTPError`.
+The 1.x names `HTTP.Exceptions.StatusError`, `ConnectError`, `TimeoutError`, and
+`HTTPError` still resolve to them, with a deprecation warning under
+`--depwarn=yes`. `@try` and `current_exceptions_to_string` are gone.
+
+`HTTP.RequestError` is gone. Failures throw the underlying exception instead,
+and [`HTTP.isrecoverable`](@ref) tells you whether a failure is worth retrying:
+
+```julia
+try
+    HTTP.get(url)
+catch e
+    HTTP.isrecoverable(e) || rethrow()
+    # a transient network failure; retry later
+end
+```
 
 ## `HTTP.@client`
 
-In 1.x, `HTTP.@client` composed one request middleware chain plus, optionally, a
-stream middleware chain. In 2.0, each position may be a single middleware or a
-tuple of middlewares:
+`HTTP.@client` accepts one middleware or a tuple of them in each position. The
+first middleware in a tuple is the outermost:
 
 ```julia
 HTTP.@client request_middleware
@@ -271,383 +217,61 @@ HTTP.@client request_middleware stream_middleware
 HTTP.@client (outer_request, inner_request) (outer_stream, inner_stream)
 ```
 
-Request middlewares wrap high-level `request(...)` calls. Stream middlewares
-wrap `HTTP.open(...)` calls. Tuple entries are applied in order, so the first
-middleware listed is the outermost wrapper.
+Request middleware wraps `request` and the verb helpers. Stream middleware wraps
+`open`.
 
-## Retries
+## Servers
 
-HTTP.jl 2.0 retries are explicit and conservative. The old `retry_delays` and
-`retry_check` keywords are accepted as compatibility shims, but new code should
-use `retry`, `retries`, `retry_if`, `respect_retry_after`, and
-[`HTTP.RetryBucket`](@ref).
+`HTTP.serve!`, `HTTP.serve`, `HTTP.listen!`, `HTTP.listen`, and `HTTP.Router`
+keep their 1.x shapes. Some details changed:
 
-Before:
-
-```julia
-resp = HTTP.get(url; retry = true, retry_delays = [0.1, 0.5, 1.0])
-```
-
-After:
-
-```julia
-bucket = HTTP.RetryBucket()
-resp = HTTP.get(
-    url;
-    retry = true,
-    retries = 3,
-    retry_bucket = bucket,
-    respect_retry_after = true,
-)
-```
-
-Custom retry decisions move to `retry_if`.
-
-```julia
-function retry_if(attempt, err, req, resp)
-    if err !== nothing
-        return attempt <= 2
-    end
-    return resp !== nothing && resp.status == 503 && attempt <= 3
-end
-
-resp = HTTP.get(url; retry_if = retry_if)
-```
-
-The full callback signature is:
-
-```julia
-retry_if(attempt::Integer, err, req::HTTP.Request, resp) -> Union{Bool,Nothing}
-```
-
-`attempt` is the current one-based attempt number. `err` is a
-`HTTP.RequestRetryError` for request-path failures; inspect `err.err` for the
-underlying transport or protocol exception. Response-based decisions pass
-`err = nothing` and the response in `resp`. Returning `true` requests another
-attempt when the body can be replayed, `false` suppresses a retry, and `nothing`
-uses the built-in retry rules.
-
-## Timeouts
-
-The 1.x `readtimeout` keyword is deprecated. It is still accepted, but now maps
-to `read_idle_timeout`.
-
-Before:
-
-```julia
-resp = HTTP.get(url; connect_timeout = 5, readtimeout = 30)
-```
-
-After:
-
-```julia
-resp = HTTP.get(
-    url;
-    connect_timeout = 5,
-    request_timeout = 60,
-    response_header_timeout = 10,
-    read_idle_timeout = 30,
-)
-```
-
-Use the timeout that matches your intent:
-
-- `connect_timeout` bounds DNS, TCP connect, HTTP proxy `CONNECT` or SOCKS5
-  handshakes, TLS handshake, and HTTP/2 session setup.
-- `request_timeout` is the whole exchange deadline.
-- `response_header_timeout` bounds the wait for response headers.
-- `read_idle_timeout` bounds inactivity between inbound read progress events.
-- `write_idle_timeout` bounds inactivity between outbound write progress
-  events.
-- `expect_continue_timeout` controls HTTP/1 `100-continue` upload waits.
-
-Timeout failures are reported as `HTTP.HTTPTimeoutError`, an alias for
-`HTTP.TimeoutError`.
-
-## Exceptions
-
-In 1.x the client exception types lived in the `HTTP.Exceptions` submodule and were
-re-exported to the top level. 2.x keeps the types at the top level — `HTTP.StatusError`,
-`HTTP.ConnectError`, `HTTP.TimeoutError`, and their `HTTP.HTTPError` supertype — and
-`HTTP.Exceptions` is now a thin deprecated shim. Prefer the top-level names.
-
-Before:
-
-```julia
-catch e
-    e isa HTTP.Exceptions.StatusError && @info "status" e.status
-end
-```
-
-After:
-
-```julia
-catch e
-    e isa HTTP.StatusError && @info "status" e.status
-end
-```
-
-`HTTP.Exceptions.StatusError`, `ConnectError`, `TimeoutError`, and `HTTPError` still
-resolve — forwarding to the top-level names, with a deprecation warning under
-`--depwarn=yes`. The 1.x `@try` macro and `current_exceptions_to_string` helper were
-internal and are removed with no replacement.
-
-`HTTP.RequestError` is also gone. 1.x wrapped request-path failures in a `RequestError`
-(fields `.request`/`.error`); 2.x lets the underlying transport or protocol exception
-propagate directly, and exposes `HTTP.isrecoverable` to classify whether a failure is a
-transient one that is safe to retry.
-
-Before:
-
-```julia
-catch e
-    e isa HTTP.Exceptions.RequestError && @warn "request failed" e.error
-end
-```
-
-After:
-
-```julia
-catch e
-    HTTP.isrecoverable(e) || rethrow()   # otherwise it is a transient transport failure
-end
-```
-
-## TLS, Sockets, and Proxies
-
-The old `sslconfig` and `socket_type_tls` extension points are retained for
-backwards compatibility only; they are no longer functional extension points
-for the 2.0 transport architecture. Configure TLS and socket behavior through
-the Reseau-backed `Transport` layer.
-
-Before:
-
-```julia
-resp = HTTP.get(url; sslconfig = sslconfig)
-```
-
-After:
-
-```julia
-transport = HTTP.Transport(tls_config = tls_config)
-client = HTTP.Client(transport = transport)
-resp = HTTP.get(url; client = client)
-```
-
-Proxy configuration is more flexible and can be more explicit. As before, it can
-come from the environment, but callers can also pass a direct/no-proxy policy or
-a fixed proxy URL per request, client, or transport:
-
-```julia
-direct = HTTP.ProxyConfig()
-from_env = HTTP.ProxyFromEnvironment()
-fixed = HTTP.ProxyURL("http://proxy.internal:8080"; no_proxy = "localhost,127.0.0.1")
-socks = HTTP.ProxyURL("socks5h://proxy.internal:1080")
-
-HTTP.get(url; proxy = from_env)
-HTTP.get("http://127.0.0.1:8080"; proxy = direct)
-```
-
-SOCKS5 proxies are configured with `socks5://` or `socks5h://` URLs. Both
-schemes follow Go's HTTP transport behavior and pass domain targets to the
-proxy for resolution.
-
-Peer (client) addresses are read through the transport layer rather than
-`Sockets`. In 1.x, `Sockets.getpeername(::HTTP.Stream)` returned the client
-IP and port from a server stream; in 2.0, use `HTTP.peeraddr(stream)`, which
-returns a `SocketAddr` (or `nothing` when unavailable) for both plain-TCP and
-TLS connections.
+- Server tasks run on Julia's `:interactive` thread pool. Start Julia with at
+  least one interactive thread; see the [server guide](server.md).
+- In a `serve!` handler, `req.body` is a body object rather than a
+  `Vector{UInt8}`. Use `String(req.body)` to read it as text.
+- `HTTP.peeraddr(stream)` replaces `Sockets.getpeername(stream)`. It returns
+  the client address, or `nothing`; `string(addr)` gives `"ip:port"`.
+- The server `readtimeout` keyword still works and sets `read_timeout`. Each
+  server timeout has a seconds keyword (`read_timeout`) and a nanoseconds
+  keyword (`read_timeout_ns`).
 
 Before:
 
 ```julia
 HTTP.listen("127.0.0.1", 8080) do stream
     ip, port = Sockets.getpeername(stream)
-    @info "client" ip port
 end
 ```
 
 After:
 
 ```julia
-HTTP.listen!("127.0.0.1", 8080) do stream
+HTTP.listen("127.0.0.1", 8080) do stream
     addr = HTTP.peeraddr(stream)
-    if addr !== nothing
-        # `addr.ip` is an NTuple of octets (not a `Sockets.IPAddr`);
-        # `string(addr)` renders it as "ip:port".
-        @info "client" ip = addr.ip port = addr.port
-    end
 end
 ```
-
-## Servers
-
-Request/response servers still use `HTTP.serve!`:
-
-Before:
-
-```julia
-HTTP.serve!("127.0.0.1", 8080) do req
-    return HTTP.Response(200, "ok")
-end
-```
-
-After:
-
-```julia
-HTTP.serve!("127.0.0.1", 8080) do req
-    return HTTP.Response(200; body = "ok")
-end
-```
-
-Use `HTTP.listen!` for stream handlers:
-
-```julia
-server = HTTP.listen!("127.0.0.1", 8080) do stream
-    req = HTTP.startread(stream)
-    HTTP.setstatus(stream, 200)
-    HTTP.setheader(stream, "Content-Type", "text/plain")
-    write(stream, "streamed response for $(req.target)")
-    closewrite(stream)
-    HTTP.closeread(stream)
-end
-```
-
-Every server timeout has a seconds-valued keyword and a nanosecond-valued
-`_ns` keyword. The old server `readtimeout` keyword is accepted as a
-seconds-valued migration alias for `read_timeout`.
-
-```julia
-server = HTTP.serve!(
-    handler,
-    "127.0.0.1",
-    8080;
-    read_timeout_ns = 30_000_000_000,
-    read_header_timeout_ns = 5_000_000_000,
-    write_timeout_ns = 30_000_000_000,
-    idle_timeout_ns = 120_000_000_000,
-)
-
-server = HTTP.serve!(
-    handler,
-    "127.0.0.1",
-    8080;
-    read_timeout = 30,
-    read_header_timeout = 5,
-    write_timeout = 30,
-    idle_timeout = 120,
-)
-```
-
-Useful server helpers in 2.0 include:
-
-- `HTTP.fileserver(root)` builds a ready-to-use static-file handler rooted at
-  `root`. It serves ordinary files, normalizes directory redirects, can serve a
-  configured SPA fallback, and uses the same conditional/range-aware response
-  helpers as the lower-level APIs.
-- `HTTP.servefile(request, path)` serves one filesystem path for a request,
-  including `If-Modified-Since`, `If-None-Match`, `Range`, content type,
-  `Last-Modified`, `ETag`, and `Accept-Ranges` handling.
-- `HTTP.servecontent(request, source)` applies the same conditional and range
-  response logic to bytes, strings, or seekable `IO` content you already own.
-- `HTTP.Router` for route matching.
-- `HTTP.forceclose(server)` for immediate shutdown.
-
-## Routing and Middleware
-
-`HTTP.Router` and `HTTP.register!` are the top-level public router names; the
-underlying implementation lives in `HTTP.Handlers` and remains available as
-`HTTP.Handlers.Router` / `HTTP.Handlers.register!` if you prefer the explicit
-path.
-
-```julia
-router = HTTP.Router()
-
-HTTP.register!(router, "GET", "/users/{id}") do req
-    id = HTTP.getparam(req, "id")
-    return HTTP.Response(200; body = id)
-end
-
-server = HTTP.serve!(router, "127.0.0.1", 8080)
-```
-
-When a route matches, the route string and path parameters are stored in the
-request context. Retrieve them with `HTTP.getroute`, `HTTP.getparams`, or
-`HTTP.getparam`.
 
 ## WebSockets
 
-Use `HTTP.WebSockets` for WebSocket-specific client and server behavior.
-Top-level `HTTP.open` is for ordinary HTTP request/response streaming, not
-`ws://` or `wss://` URLs.
+The `HTTP.WebSockets` API keeps its 1.x shape: `open`, `listen!`, `listen`,
+`upgrade`, `isupgrade`, `send`, `receive`, and iteration over a socket. Two
+differences:
 
-Before:
-
-```julia
-# Any code relying on top-level HTTP.open or internal upgrade helpers for
-# WebSocket traffic should move to HTTP.WebSockets.
-```
-
-After:
-
-```julia
-HTTP.WebSockets.open("ws://127.0.0.1:8080/socket") do ws
-    HTTP.WebSockets.send(ws, "ping")
-    msg = HTTP.WebSockets.receive(ws)
-end
-```
-
-Server side:
-
-```julia
-server = HTTP.WebSockets.listen!("127.0.0.1", 8080) do ws
-    for msg in ws
-        HTTP.WebSockets.send(ws, msg)
-    end
-end
-```
-
-To mix ordinary HTTP routes and WebSocket routes on a single server, upgrade an
-in-flight server stream by hand with `HTTP.WebSockets.upgrade`, the 2.0
-counterpart to the 1.x `WebSockets.upgrade(http)` helper. Guard the call with
-`HTTP.WebSockets.isupgrade` and upgrade before writing any response:
-
-```julia
-server = HTTP.listen!("127.0.0.1", 8080) do stream
-    if HTTP.WebSockets.isupgrade(stream.message)
-        HTTP.WebSockets.upgrade(stream) do ws
-            for msg in ws
-                HTTP.WebSockets.send(ws, msg)
-            end
-        end
-    else
-        HTTP.setstatus(stream, 200)
-        HTTP.startwrite(stream)
-        write(stream, "ok")
-    end
-end
-```
-
-`upgrade` runs its handler synchronously and closes the connection when the
-handler returns. It accepts the same `subprotocols`, `check_origin`,
-`maxframesize`, and `maxfragmentation` keywords as `listen!`. WebSocket upgrades
-over HTTP/2 are not supported.
-
-The WebSocket client accepts the handshake timeout controls
-`connect_timeout`, `request_timeout`, `response_header_timeout`,
-`read_idle_timeout`, and `write_idle_timeout`.
+- `maxframesize` defaults to 16 MiB instead of no limit. Pass a larger value if
+  your messages are bigger.
+- `HTTP.WebSockets.upgrade` works only on HTTP/1.1 connections.
 
 ## Server-Sent Events
 
-Client-side SSE uses the `sse_callback` keyword on `HTTP.request`:
+Clients still use the `sse_callback` keyword:
 
 ```julia
 events = HTTP.SSEEvent[]
-
 HTTP.request("GET", url; sse_callback = event -> push!(events, event))
 ```
 
-Server-side SSE uses `HTTP.sse_stream`:
+Servers return the response that `HTTP.sse_stream` builds and write events in
+its `do` block:
 
 ```julia
 HTTP.serve!("127.0.0.1", 8080) do req
@@ -657,60 +281,18 @@ HTTP.serve!("127.0.0.1", 8080) do req
 end
 ```
 
+## Ignored 1.x Keywords
+
+The client accepts these 1.x keywords so old calls do not fail, but they have no
+effect and log a warning: `pool`, `retry_delays`, `retry_check`, `sslconfig`,
+`socket_type_tls`, `detect_content_type`, `observelayers`, `logerrors`, and
+`logtag`. `readtimeout` sets `read_idle_timeout`, and `canonicalize_headers`
+keeps its 1.x meaning.
+
 ## Internal APIs
 
-These 1.x internals are not migration targets for 2.0:
-
-- layer-stack internals
-- connection-pool internals
-- parser internals
-- undocumented socket/TLS extension points
-
-Move those call sites to documented `Client`, `Transport`, `Stream`, server,
-router, WebSocket, or SSE APIs. If a 1.x internal use case cannot be expressed
-through the 2.0 public surface, open an issue with the use case rather than
-depending on the new internals.
-
-## Compatibility Keywords
-
-HTTP.jl 2.0 accepts several old client keywords so existing code fails less
-abruptly:
-
-- `readtimeout`: maps to `read_idle_timeout`
-- `pool`: accepted, but use `client` / `transport`
-- `retry_delays` and `retry_check`: accepted, but use `retry_if`,
-  `retries`, and `retry_bucket`
-- `sslconfig` and `socket_type_tls`: accepted, but configure the transport
-- `detect_content_type`, `observelayers`, `logerrors`, and `logtag`:
-  accepted for compatibility, but not the preferred 2.0
-  observation/configuration surface
-- `canonicalize_headers`: supported with its 1.x meaning. `true` sends request
-  header names in `Content-Type` form. The default sends them as spelled.
-
-Treat these as temporary migration aids. New code should use the documented
-2.0 API names.
-
-## Final Checklist
-
-- Prefer `resp.status`; `resp.status_code` remains available as a compatibility alias.
-- Use `HTTP.get_request_context(req)` for cancellation/deadline state.
-- Prefer keyword constructors for `Request` and `Response`.
-- Replace `pool` usage with a long-lived `HTTP.Client`.
-- Replace `readtimeout` with the precise timeout keyword you need.
-- Replace `HTTP.Exceptions.StatusError` & friends with the top-level `HTTP.StatusError`; `HTTP.RequestError` is gone — catch the underlying exception or use `HTTP.isrecoverable`.
-- Replace `HTTP.download` with `Downloads.download` or an explicit
-  `HTTP.request(...; response_stream = io)` file stream.
-- Move WebSocket code to `HTTP.WebSockets`.
-- Replace `Sockets.getpeername(stream)` with `HTTP.peeraddr(stream)`.
-- Replace internal parser/connection/HPACK/HTTP2 usage with documented APIs.
-- Run integration tests for redirects, retries, proxy configuration, cookies,
-  streaming, WebSockets, SSE, and HTTP/2 after upgrading.
-
-
-### Explicit header ownership
-
-`copyheaders=false` is supported by `request`, `open`, and `Request`. With an
-`HTTP.Headers` input it transfers ownership of the collection; do not access it
-while the request is active. Any other header input, such as the pair vectors
-1.x call sites pass, becomes a new collection either way. HTTP 2.7.1 and earlier
-HTTP 2 releases ignored this keyword. Retries still isolate mutable headers.
+The 1.x layer stack, connection pool, parser, and socket/TLS extension points
+have no 2.0 equivalent. Move that code to `Client`, `Transport`, `Stream`, the
+server functions, `Router`, `HTTP.WebSockets`, or the SSE functions. If a use
+case cannot be expressed with the public API, open an issue that describes it
+instead of depending on 2.0 internals.

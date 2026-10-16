@@ -5,7 +5,7 @@ updating, and retrieving Animals from a dictionary through 4 different routes
 using HTTP, JSON, UUIDs
 using StructUtils: @noarg
 
-# modified Animal struct to associate with specific user
+# JSON request bodies are parsed into this struct
 @noarg mutable struct Animal
     id::Int
     userId::UUID
@@ -53,7 +53,7 @@ end
 # define REST endpoints to dispatch to "service" functions
 const ANIMAL_ROUTER = HTTP.Router()
 HTTP.register!(ANIMAL_ROUTER, "POST", "/api/zoo/v1/animals", createAnimal)
-# note the use of `*` to capture the path segment "variable" animal id
+# `{id}` captures one path segment; handlers read it with `HTTP.getparams`
 HTTP.register!(ANIMAL_ROUTER, "GET", "/api/zoo/v1/animals/{id}", getAnimal)
 HTTP.register!(ANIMAL_ROUTER, "PUT", "/api/zoo/v1/animals", updateAnimal)
 HTTP.register!(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/animals/{id}", deleteAnimal)

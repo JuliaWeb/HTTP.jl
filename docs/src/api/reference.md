@@ -4,10 +4,8 @@ CurrentModule = HTTP
 
 # API Reference
 
-This section is the canonical placement for exported `HTTP.jl` docstrings and
-the documented submodule APIs that make up the supported 2.0 surface. The
-guides explain how the pieces fit together; these pages are where the concrete
-names live.
+These pages hold the docstrings of HTTP.jl's public API. The guides explain how
+the pieces fit together.
 
 ## Module
 
@@ -17,7 +15,7 @@ HTTP
 
 ## Reference Map
 
-- [Core API](core.md): request/response types, headers, bodies, cookies, forms, and proxy configuration.
-- [Client API](client.md): `Client`, `Transport`, top-level requests, streaming, and connection reuse helpers.
-- [Server API](server.md): `Server`, `Stream`, routing, middleware, static files, and SSE.
-- [WebSockets API](websockets.md): WebSocket client/server types, messaging helpers, and server lifecycle operations.
+- [Core API](core.md): requests, responses, headers, errors, bodies, cookies, forms, proxies, and HTTP/2 settings.
+- [Client API](client.md): `Client`, `Transport`, the request functions, streaming, retries, and trace events.
+- [Server API](server.md): `Server`, `Stream`, routing, middleware, static files, and server-sent events.
+- [WebSockets API](websockets.md): WebSocket clients, servers, and messages.
