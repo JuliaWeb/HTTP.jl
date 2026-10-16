@@ -127,6 +127,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of a head without the body. `logging_middleware` finishes a stream
   handler's response before logging it, so a body shorter than its
   `Content-Length` is logged as the `500` the client gets, not `200`. ([#1436])
+- HTTP/1 status lines name only `HTTP/1.1`, or `HTTP/1.0` for an HTTP/1.0
+  response. A stream handler or `servecontent` answered an `HTTP/1.2` request
+  with `HTTP/1.2 200 OK`; Go answers `HTTP/1.1`. ([#1431])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so

@@ -532,15 +532,22 @@ end
     return reason
 end
 
+# HTTP.jl speaks HTTP/1.0 and HTTP/1.1, so a status line names one of those even
+# when the response copied another version from the request, such as
+# `HTTP/1.2` (RFC 9110 §2.5).
+@inline function _status_line_version(response::Response)::String
+    return response.proto_major == UInt8(1) && response.proto_minor == UInt8(0) ? "HTTP/1.0" : "HTTP/1.1"
+end
+
 @inline function _write_status_line!(io::IO, response::Response)::Nothing
     reason = _response_reason_phrase(response)
-    print(io, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
+    print(io, _status_line_version(response), ' ', response.status, ' ', reason, "\r\n")
     return nothing
 end
 
 @inline function _append_status_line!(buf::IOBuffer, response::Response)::Nothing
     reason = _response_reason_phrase(response)
-    print(buf, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
+    print(buf, _status_line_version(response), ' ', response.status, ' ', reason, "\r\n")
     return nothing
 end
 

@@ -483,6 +483,12 @@ end
     HT.write_response!(custom_io, custom)
     @test startswith(String(take!(custom_io)), "HTTP/1.1 299 Custom Status\r\n")
 
+    # The status line names HTTP/1.0 or HTTP/1.1, whatever version the response carries.
+    for (major, minor, line) in ((1, 0, "HTTP/1.0"), (1, 1, "HTTP/1.1"), (1, 2, "HTTP/1.1"), (2, 0, "HTTP/1.1"))
+        HT.write_response!(custom_io, HT.Response(200; proto_major = major, proto_minor = minor))
+        @test startswith(String(take!(custom_io)), "$(line) 200 OK\r\n")
+    end
+
     for reason in ("OK\r\nX-Injected: yes", "OK\nX-Injected: yes", "OK\r", "OK\0", "OK\x7f")
         injected = HT.Response(200, HT.EmptyBody(); reason = reason, content_length = 0)
         @test_throws HT.ProtocolError HT._write_status_line!(IOBuffer(), injected)
