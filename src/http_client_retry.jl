@@ -70,6 +70,13 @@ function _retryable_request_error(err::Exception)::Bool
             current = (current::TLSTransportError).cause
             continue
         end
+        if current isa ConnectError
+            current = (current::ConnectError).cause
+            continue
+        end
+        # `TimeoutError` stands for `DialTimeoutError` or `TLSHandshakeTimeoutError`
+        # on these operations, and for a deadline (not retried) on the others.
+        current isa TimeoutError && return (current::TimeoutError).operation in ("connect", "tls_handshake")
         if current isa TLS.TLSError
             (current::TLS.TLSError).message == _TLS_TRUNCATED_STREAM_MESSAGE && return true
             cause = (current::TLS.TLSError).cause

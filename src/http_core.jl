@@ -992,7 +992,8 @@ function _fold_received_fields!(headers::Headers, separate::F=Returns(false)) wh
                 run = IOBuffer()
                 write(run, last(entries[out]))
             end
-            write(run, ',', value)
+            write(run, ',')
+            write(run, value)
             continue
         end
         _store_run!(entries, out, run)
