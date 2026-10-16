@@ -95,6 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
   `500`. ([#1403])
+- When the HTTP/2 server cannot send a response, for example because its
+  headers exceed the client's `SETTINGS_MAX_HEADER_LIST_SIZE`, it resets the
+  stream with RST_STREAM(INTERNAL_ERROR) and logs the error. The client waited
+  for the response forever. ([#1428])
 - HTTP/2 header blocks over 16 KiB are sent when the peer's
   `SETTINGS_MAX_FRAME_SIZE` allows larger frames, as Go's HTTP/2 server and
   client do (1 MiB). A client request threw
@@ -1090,3 +1094,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1426]: https://github.com/JuliaWeb/HTTP.jl/issues/1426
+[#1427]: https://github.com/JuliaWeb/HTTP.jl/issues/1427
+[#1428]: https://github.com/JuliaWeb/HTTP.jl/issues/1428
+[#1429]: https://github.com/JuliaWeb/HTTP.jl/issues/1429
+[#1430]: https://github.com/JuliaWeb/HTTP.jl/issues/1430
