@@ -356,6 +356,34 @@ end
     end
 end
 
+@testset "HTTP/2 server resets a stream whose handler breaks its Content-Length" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setheader(stream, "Content-Length", "5")
+        HT.startwrite(stream)
+        write(stream, "hi")
+        return nothing
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        req = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        err = try
+            HT.h2_roundtrip!(conn, req)
+            nothing
+        catch caught
+            caught
+        end
+        # The head has gone out, so the server error is a stream reset rather than a 500.
+        @test err isa HT.H2StreamResetError
+        @test HT._h2_error_code_name(err.error_code) == "INTERNAL_ERROR"
+    finally
+        close(conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server writes vector responses with trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
         _ = request
