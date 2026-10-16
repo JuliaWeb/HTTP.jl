@@ -88,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - HTTP/1 status lines name only `HTTP/1.1`, or `HTTP/1.0` for an HTTP/1.0
   response. A stream handler or `servecontent` answered an `HTTP/1.2` request
-  with `HTTP/1.2 200 OK`; Go answers `HTTP/1.1`.
+  with `HTTP/1.2 200 OK`; Go answers `HTTP/1.1`. ([#1431])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1117,3 +1117,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1431]: https://github.com/JuliaWeb/HTTP.jl/issues/1431
