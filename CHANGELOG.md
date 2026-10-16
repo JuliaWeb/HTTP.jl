@@ -91,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method, target, and client address. A `ProtocolError`, `ParseError`, or
   timeout thrown by a handler, or an invalid `Content-Length` set by a stream
   handler, got `400` or `408` and no log. Errors reading the request body keep
-  their `4xx` status, and peer disconnects are not logged.
+  their `4xx` status, and peer disconnects are not logged. ([#1425])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1120,3 +1120,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1425]: https://github.com/JuliaWeb/HTTP.jl/issues/1425
