@@ -175,7 +175,8 @@ function stringify(cookiestring::AbstractString, cookies::Vector{Cookie}, isrequ
     end
     len = length(cookies)
     for (i, cookie) in enumerate(cookies)
-        write(io, stringify(cookie, isrequest), i == len ? "" : "; ")
+        write(io, stringify(cookie, isrequest))
+        i == len || write(io, "; ")
     end
     return String(take!(io))
 end
