@@ -518,6 +518,15 @@ end
     @test invalid_range_resp.status == 416
     @test HT.header(invalid_range_resp.headers, "Content-Range") == "bytes */6"
     @test isempty(_read_all_server_bytes(invalid_range_resp.body))
+
+    # An unknown unit, several ranges, or a method other than GET or HEAD gets
+    # the whole content (RFC 9110 §14.2).
+    for (method, range) in (("GET", "items=0-1"), ("GET", "bytes=0-1,3-4"), ("POST", "bytes=2-4"))
+        ignored = HT.servecontent(HT.Request(method, "/"; headers = ["Range" => range]), payload; name = "demo.txt")
+        @test ignored.status == 200
+        @test !HT.hasheader(ignored.headers, "Content-Range")
+        @test String(_read_all_server_bytes(ignored.body)) == "abcdef"
+    end
 end
 
 @testset "HTTP servecontent live HTTP/1.1 range and HEAD behavior" begin
