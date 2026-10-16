@@ -18,7 +18,7 @@ module HTTP
 
 using URIs
 
-const VERSION = v"2.0.0"
+const VERSION = pkgversion(@__MODULE__)
 
 macro _spawn_interactive(ex)
     return esc(:(Threads.@spawn :interactive $ex))

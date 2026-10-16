@@ -2,6 +2,7 @@ using Test
 using HTTP
 using Reseau
 using Dates
+using Logging
 
 const HT = HTTP
 const NC = Reseau.TCP
@@ -518,6 +519,15 @@ end
     @test invalid_range_resp.status == 416
     @test HT.header(invalid_range_resp.headers, "Content-Range") == "bytes */6"
     @test isempty(_read_all_server_bytes(invalid_range_resp.body))
+
+    # An unknown unit, several ranges, or a method other than GET or HEAD gets
+    # the whole content (RFC 9110 §14.2).
+    for (method, range) in (("GET", "items=0-1"), ("GET", "bytes=0-1,3-4"), ("POST", "bytes=2-4"))
+        ignored = HT.servecontent(HT.Request(method, "/"; headers = ["Range" => range]), payload; name = "demo.txt")
+        @test ignored.status == 200
+        @test !HT.hasheader(ignored.headers, "Content-Range")
+        @test String(_read_all_server_bytes(ignored.body)) == "abcdef"
+    end
 end
 
 @testset "HTTP servecontent live HTTP/1.1 range and HEAD behavior" begin
@@ -1047,6 +1057,34 @@ end
     end
 end
 
+@testset "HTTP streamhandler closes an unsent streaming body for HEAD, 204, and 304" begin
+    # An SSE body without a producer never reaches EOF, so reading it to discard
+    # it would hold the handler (and graceful close) forever. The body must be
+    # closed before the response head goes out.
+    sent = Channel{HT.SSEStream}(3)
+    bodies = HT.SSEStream[]
+    server = HT.listen!(HT.streamhandler() do request
+            status = request.target == "/nocontent" ? 204 : request.target == "/notmodified" ? 304 : 200
+            response = HT.sse_stream(status)
+            put!(sent, response.body)
+            return response
+        end, "127.0.0.1", 0; listenany = true)
+    try
+        for (method, target, status) in (("HEAD", "/", 200), ("GET", "/nocontent", 204), ("GET", "/notmodified", 304))
+            response = HT.request(method, "http://$(HT.server_addr(server))$(target)";
+                headers = ["Connection" => "close"], retry = false, status_exception = false)
+            @test response.status == status
+            body = take!(sent)
+            push!(bodies, body)
+            @test HT.body_closed(body)
+        end
+    finally
+        foreach(close, bodies)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server timeout and handler error responses" begin
     timeout_server = HT.Server(
         address = "127.0.0.1:0",
@@ -1098,6 +1136,62 @@ end
         _run_test_operation(() -> HT.forceclose(bad_return_server))
         _run_test_operation(() -> wait(bad_return_server))
     end
+end
+
+@testset "HTTP server answers handler errors with 500 and logs them" begin
+    # Only a failure reading the request keeps a 4xx status. A handler that
+    # throws a request-style error, or sets an invalid Content-Length, has a
+    # bug: the client gets 500 and the server logs it. Peer failures are not
+    # logged.
+    logger = Test.TestLogger()
+    function request_handler(request)
+        request.target == "/timeout" && throw(IOP.DeadlineExceededError())
+        throw(HT.ProtocolError("handler bug"))
+    end
+    function stream_handler(stream)
+        request = HT.startread(stream)
+        if request.target == "/framing"
+            HT.setheader(stream, "Content-Length" => "abc")
+            write(stream, "x")
+        elseif request.target == "/read"
+            read(stream)
+        elseif request.target == "/ws"
+            HT.WebSockets.upgrade(HT.WebSockets.receive, stream)
+        else
+            throw(HT.ParseError("handler bug"))
+        end
+    end
+    # Server tasks log to the logger that is current when the server starts.
+    request_server, stream_server = Logging.with_logger(logger) do
+        return (
+            HT.serve!(request_handler, "127.0.0.1", 0; listenany = true),
+            HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true),
+        )
+    end
+    try
+        for (server, target) in ((request_server, "/protocol"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        end
+        raw = _raw_http_request(HT.port(stream_server), "POST /read HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n")
+        @test startswith(raw, "HTTP/1.1 400 Bad Request\r\n")
+        # A WebSocket client that drops the connection is not a handler error.
+        sock = ND.connect("tcp", "127.0.0.1:$(HT.port(stream_server))")
+        write(sock, Vector{UInt8}(codeunits("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" *
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")))
+        @test startswith(_read_until_server_marker(sock, "\r\n\r\n"), "HTTP/1.1 101 ")
+        NC.close(sock)
+    finally
+        # Graceful close returns once every connection, and its logging, is done.
+        close(request_server)
+        close(stream_server)
+    end
+    records = filter(record -> record.message == "server handler error", logger.logs)
+    @test map(record -> record.kwargs[:target], records) == ["/protocol", "/timeout", "/parse", "/framing"]
+    @test all(record -> record.level == Logging.Error, records)
+    @test records[1].kwargs[:exception][1] isa HT.ProtocolError
+    @test records[1].kwargs[:method] == "GET"
+    @test records[1].kwargs[:peer] isa Reseau.TCP.SocketAddr
 end
 
 @testset "HTTP server idle timeout closes keep-alive connections" begin
@@ -2043,6 +2137,41 @@ end
         HT.forceclose(stream_server)
         wait(handler_server)
         wait(stream_server)
+    end
+end
+
+@testset "Servers leave a shared response unchanged" begin
+    # Concurrent requests share one response object, so per-request state
+    # stored on it (the request, the close flag) leaks between them: a HEAD
+    # could send the body and a GET could lose it.
+    shared = HT.Response(200; headers = ["X-Shared" => "1"], body = "0123456789")
+    request_server = HT.serve!(req -> shared, "127.0.0.1", 0; listenany = true)
+    stream_handler = HT.streamhandler(req -> shared)
+    # A failed write must close only its own connection.
+    failing_server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        close(stream.tracked.conn)
+        stream_handler(stream)
+    end
+    stream_server = HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true)
+    try
+        @test isempty(_raw_http_request(HT.port(failing_server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+        for server in (request_server, stream_server)
+            head_raw = _raw_http_request(HT.port(server), "HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(head_raw, "HTTP/1.1 200 OK\r\n")
+            @test endswith(head_raw, "\r\n\r\n")
+            get_raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test endswith(get_raw, "\r\n\r\n0123456789")
+            @test !occursin("connection: close", lowercase(get_raw))
+        end
+        @test shared.request === nothing
+        @test !shared.close
+        @test shared.content_length == 10
+        @test collect(shared.headers) == ["X-Shared" => "1"]
+    finally
+        for server in (request_server, failing_server, stream_server)
+            HT.forceclose(server)
+            wait(server)
+        end
     end
 end
 
