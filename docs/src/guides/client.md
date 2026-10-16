@@ -375,6 +375,7 @@ resp = HTTP.put("https://example.com/upload", headers, payload; copyheaders = fa
 
 A byte vector or writable byte view passed as `response_stream` receives the
 body directly. It must be large enough for the whole body, or the call throws
-`ArgumentError`. A `Vector{UInt8}` is resized to the body length. A failing
-response leaves it untouched and returns the error body in `resp.body`, so a
+`ArgumentError`. A `Vector{UInt8}` is resized to the body length. A response
+with status 300 or above, including a redirect that is not followed, leaves it
+untouched: up to 1 MiB of that body is returned in `resp.body` instead, so a
 `StatusError` still carries it.

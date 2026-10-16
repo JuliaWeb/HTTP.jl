@@ -878,6 +878,11 @@ end
         invalid_target_resp, _ = _raw_http_request_until_close(port_num, "GET foo HTTP/1.1\r\nHost: $(address)\r\n\r\n")
         @test occursin("HTTP/1.1 400 Bad Request", invalid_target_resp)
 
+        for version in ("HTTP/0.9", "HTTP/2.0", "HTTP/3.0")
+            version_resp, _ = _raw_http_request_until_close(port_num, "GET / $(version)\r\nHost: $(address)\r\nConnection: close\r\n\r\n")
+            @test startswith(version_resp, "HTTP/1.1 505 HTTP Version Not Supported\r\n")
+        end
+
         sock = ND.connect("tcp", "127.0.0.1:$(port_num)")
         try
             write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")))
@@ -1165,6 +1170,35 @@ end
     end
 end
 
+@testset "HTTP server keeps the h2c probe's deadline for the first request head" begin
+    server = HT.serve!(_ -> HT.Response(200, "ok"), "127.0.0.1", 0;
+        listenany = true, read_header_timeout_ns = typemax(Int64) ÷ 4)
+    sock = NC.connect(NC.loopback_addr(HT.port(server)))
+    try
+        conns = HT._server_conns(server)
+        while isempty(conns)
+            yield()
+            conns = HT._server_conns(server)
+        end
+        pd = only(conns).conn.fd.pfd.pd
+        waiter = IOP._poll_registration(pd).read_waiter
+        # Nothing has been sent, so this is the h2c probe waiting for a byte.
+        while !((@atomic :acquire waiter.state) isa Task)
+            yield()
+        end
+        @test (@atomic :acquire pd.rd_ns) != 0
+        # A header deadline armed after the probe's would already be expired.
+        server.read_header_timeout_ns = 1
+        write(sock, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        response = HT._read_response(HT._ConnReader(sock))
+        @test response.status == 200
+    finally
+        close(sock)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 @testset "HTTP server separates body, idle, and next-header reads" begin
     for tls in (false, true), ending in (:partial_header, :idle_timeout, :idle_eof)
         far_future = typemax(Int64) ÷ 4
@@ -1217,15 +1251,47 @@ end
                     closewrite(sock)
                 end
             end
-            # TLS wraps its read timeout in TLSError and retains the existing
-            # close-only error path; raw TCP sends the request-timeout response.
-            if ending == :partial_header && !tls
+            if ending == :partial_header
                 response = HT._read_response(reader)
                 @test response.status == 408
                 @test response.close
                 @test response.content_length == 0
             end
             @test readbytes!(reader, Vector{UInt8}(undef, 256)) == 0
+        finally
+            close(sock)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
+@testset "HTTP server answers request body read timeouts with 408" begin
+    for stream in (false, true), tls in (false, true)
+        listener = if tls
+            Reseau.TLS.listen("tcp", "127.0.0.1:0", Reseau.TLS.Config(
+                verify_peer = false,
+                cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt"),
+                key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            ))
+        else
+            NC.listen("tcp", "127.0.0.1:0")
+        end
+        start = stream ? HT.listen! : HT.serve!
+        # The handshake and head get a far deadline; the body deadline has passed.
+        server = start(listener; read_header_timeout_ns = typemax(Int64) ÷ 4, read_timeout_ns = 1) do input
+            stream || return HT.Response(200)
+            read(input)
+            return nothing
+        end
+        sock = tls ? Reseau.TLS.connect(NC.loopback_addr(HT.port(server)), Reseau.TLS.Config(verify_peer = false)) :
+                     NC.connect(NC.loopback_addr(HT.port(server)))
+        try
+            # Only two of the ten declared body bytes are ever sent.
+            write(sock, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nab")
+            response = HT._read_response(HT._ConnReader(sock))
+            @test response.status == 408
+            @test response.close
         finally
             close(sock)
             HT.forceclose(server)
