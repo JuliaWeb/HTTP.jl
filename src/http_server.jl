@@ -1065,17 +1065,8 @@ end
     _H2_CONN_CLOSE_INTERNAL = 3
 end
 
-# Reseau reports a TLS read deadline as a `TLSError` wrapping the
-# `DeadlineExceededError` that a TCP read throws directly.
-@inline function _is_server_timeout(err)::Bool
-    err isa IOPoll.DeadlineExceededError && return true
-    err isa TLS.TLSError || return false
-    tls_err = err::TLS.TLSError
-    return tls_err.op == "read" && tls_err.cause isa IOPoll.DeadlineExceededError
-end
-
 @inline function _classify_server_conn_error(err::Exception)::_ServerConnErrAction
-    _is_server_timeout(err) && return _SERVER_CONN_ERR_TIMEOUT
+    _is_read_timeout(err) && return _SERVER_CONN_ERR_TIMEOUT
     if err isa ParseError || err isa ProtocolError || err isa EOFError ||
        err isa IOPoll.NetClosingError || err isa TLS.TLSError ||
        err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err)
@@ -1112,7 +1103,7 @@ function _server_error_status(err)::Union{Nothing,Int}
         end
         return 400
     end
-    if _is_server_timeout(err)
+    if _is_read_timeout(err)
         return 408
     end
     return nothing

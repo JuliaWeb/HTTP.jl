@@ -277,6 +277,30 @@ end
     @test !HT.Cookies.pathmatch(HT.Cookie("docs", "1"; path = "/docs"), "/docset")
 end
 
+@testset "HTTP cookie helpers handle non-ASCII hosts, paths, names, and values" begin
+    C = HT.Cookies
+    @test C.splithostport("日本:80") == ("日本", "80", false)
+    @test C.splithostport("[日本]:80") == ("日本", "80", false)
+    @test C.hasdotsuffix("ü.example.com", "example.com")
+    @test C.hasdotsuffix("a.ü.example", "ü.example")
+    @test !C.hasdotsuffix("üexample.com", "example.com")
+    @test !C.hasdotsuffix("example.com", "example.com")
+    @test C.defaultPath("/日本/a") == "/日本"
+    @test C.pathmatch(HT.Cookie("k", "v"; path = "/日本"), "/日本/b")
+    @test !C.pathmatch(HT.Cookie("k", "v"; path = "/日本"), "/日本x")
+
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "https", "example.com", "/日本/a", _set_cookie_headers("k=v"))
+    @test [c.name for c in HT.getcookies!(jar, "https", "example.com", "/日本/b")] == ["k"]
+
+    # Non-ASCII names and quoted values are invalid and skipped.
+    @test isempty(C.readsetcookies(_set_cookie_headers("ké=v", "k=\"é\"")))
+    @test [(c.name, c.value) for c in C.readsetcookies(_set_cookie_headers("k=v; pä=1"))] == [("k", "v")]
+    headers = HT.Headers()
+    HT.appendheader(headers, "Cookie", "ké=v; ok=1")
+    @test [(c.name, c.value) for c in C.readcookies(headers)] == [("ok", "1")]
+end
+
 @testset "HTTP CookieJar domain normalization helpers" begin
     jar = HT.CookieJar()
 

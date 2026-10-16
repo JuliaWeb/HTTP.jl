@@ -179,7 +179,8 @@ function _resolve_redirect_target(current_address::String, current_secure::Bool,
         url = string(current_secure ? "https:" : "http:", location)
     else
         next_host_header = current_host_header === nothing ? current_address : current_host_header
-        return current_address, current_secure, _resolve_relative_redirect_request_target(current_target, location), next_host_header
+        target = _resolve_relative_redirect_request_target(current_target, _escape_target_spaces(location))
+        return current_address, current_secure, target, next_host_header
     end
     # A Location that is not an http(s) URL with a host is the server's error.
     parsed = try
