@@ -90,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   304 response does not send, instead of reading it to the end. A HEAD request
   to a server-sent events route kept the event producer running and blocked
   `close(server)`. ([#1409])
+- A failed HTTP/2 request no longer closes the pooled connection it shares
+  with other requests. A request timeout, a stream reset by the server, a
+  request rejected by GOAWAY, or an error from the request body resets only
+  that request's stream, and a connection draining after GOAWAY finishes its
+  streams before it closes. A request that gets no reply at all still moves
+  later requests to a new connection. ([#1426])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
