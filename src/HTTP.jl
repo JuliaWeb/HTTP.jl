@@ -1,24 +1,18 @@
 """
     HTTP
 
-Client, server, streaming, WebSocket, and Server-Sent Events APIs for HTTP.jl.
+An HTTP client and server library for HTTP/1.1 and HTTP/2, with WebSockets and
+server-sent events. Reseau provides the TCP, DNS, and TLS layers.
 
-The 2.0 API is built around explicit `Request`, `Response`, `Headers`,
-`RequestContext`, body, `Client`, `Transport`, `Server`, and `Stream` values.
-HTTP.jl owns HTTP message semantics and high-level client/server behavior,
-while `Reseau` provides the transport, resolver, and TLS substrate.
-
-Common entrypoints:
-
-- `request`, `get`, `post`, `put`, `patch`, `delete`, `head`, `options`, and `query`
-  for high-level client requests.
-- `open` for client-side request/response streaming.
-- `serve!` / `serve` for `Request -> Response` servers.
-- `listen!` / `listen` and `streamhandler` for stream-oriented servers.
-- `WebSockets` for WebSocket client and server helpers.
-- `SSEEvent` and `sse_stream` for Server-Sent Events.
-
-See the migration guide for the most important 1.x to 2.0 API changes.
+- `request`, and `get`, `post`, `put`, `patch`, `delete`, `head`, `options`,
+  and `query`, send a request and return the response.
+- `open` streams a request and its response.
+- `serve!` and `serve` run a server whose handler maps a `Request` to a
+  `Response`.
+- `listen!` and `listen` run a server whose handler reads and writes a
+  `Stream`.
+- `WebSockets` has the WebSocket client and server.
+- `SSEEvent` and `sse_stream` send server-sent events.
 """
 module HTTP
 
@@ -63,13 +57,9 @@ using .Handlers
 include("http_sse.jl")
 include("http_websockets.jl")
 
-# Declare the documented, non-exported public API via Julia's `public` mechanism
-# (Julia 1.11+), so tooling and downstream code can distinguish supported entry
-# points (accessed as `HTTP.name`) from internals. Already-exported names
-# (e.g. `WebSockets`, `escape`, `Form`) are public by virtue of `export` and are
-# not repeated here. The version guard keeps the source parseable on Julia 1.10
-# (the `public` keyword does not exist there); `eval(Expr(:public, …))` is valid
-# syntax on all versions, so only the evaluation is gated.
+# Public names that are not exported (exported names are already public).
+# `public` is not syntax on Julia 1.10, so build the expression and evaluate it
+# on 1.11 and later.
 @static if Base.VERSION >= v"1.11.0-DEV.469"
     Core.eval(@__MODULE__, Expr(:public,
         Symbol("@client"),
@@ -92,13 +82,8 @@ include("http_websockets.jl")
     ))
 end
 
-# Backward-compatibility shim for the 1.x `HTTP.Exceptions` submodule. In 1.x these
-# exception types were defined in `HTTP.Exceptions` and re-exported to the top level;
-# 2.x keeps them at the top level (`HTTP.StatusError` etc.) but dropped the submodule,
-# breaking downstream code that reached in via `HTTP.Exceptions.StatusError`. Re-add a
-# thin deprecated `Exceptions` module forwarding to the canonical names — see #1314.
-# (`@try`, `current_exceptions_to_string` and `RequestError` are not reinstated; see the
-# migration guide.)
+# Deprecated `HTTP.Exceptions` module, so code written for HTTP.jl 1.x
+# (`HTTP.Exceptions.StatusError` and so on) keeps working (#1314).
 module Exceptions
     import ..HTTP
     Base.@deprecate_binding HTTPError    HTTP.HTTPError    false

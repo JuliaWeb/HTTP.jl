@@ -1,13 +1,9 @@
 """
     HTTP.WebSockets
 
-WebSocket client and server helpers layered on top of the HTTP request/response
-stack and `Reseau` transports.
-
-Use [`open`](@ref) for client connections and [`listen!`](@ref),
-[`listen`](@ref), or [`serve!`](@ref) for servers. Most applications will work
-with [`WebSocket`](@ref) values directly rather than the lower-level
-[`Conn`](@ref) codec state.
+WebSocket clients and servers. [`open`](@ref) connects to a server, and
+[`listen!`](@ref) starts one; [`upgrade`](@ref) serves WebSockets from an
+`HTTP.listen!` handler. Each connection is a [`WebSocket`](@ref).
 """
 module WebSockets
 
@@ -126,11 +122,8 @@ end
 """
     WebSocketError
 
-Exception raised when a WebSocket closes or encounters a protocol/payload
-error.
-
-Inspect `err.message.code` and `err.message.reason` to distinguish normal
-closures from errors.
+Raised when a WebSocket is closed or breaks the protocol. `err.message` is the
+[`CloseFrameBody`](@ref): codes 1000, 1001, and 1005 mean a normal close.
 """
 struct WebSocketError <: HTTPError
     message::CloseFrameBody
@@ -148,11 +141,10 @@ end
 """
     WebSocket
 
-Stateful WebSocket endpoint returned by [`open`](@ref) and passed to server
-handlers created by [`listen!`](@ref) or [`serve!`](@ref).
-
-Use [`send`](@ref), [`receive`](@ref), [`ping`](@ref), `close(ws)`, or iterate
-over the socket directly.
+One WebSocket connection, returned by [`open`](@ref) and passed to the handler
+of a WebSocket server. Use [`send`](@ref), [`receive`](@ref), [`ping`](@ref),
+[`pong`](@ref), and `close(ws)`. Iterating over it yields each message until
+the peer closes the connection.
 """
 mutable struct WebSocket{S,C}
     subprotocol::Union{Nothing,String}
@@ -356,9 +348,8 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     end
     op = frame.opcode
     fin = frame.fin
-    # `frame.payload` is already a fresh owned Vector (the decoder builds each
-    # frame with `copy(dec.payload_buf)`) and the frame is discarded right after
-    # this call, so we can take it directly instead of copying a second time.
+    # The decoder hands each frame its own payload buffer, so use it without
+    # copying.
     frame_payload = frame.payload
     if op == UInt8(WsOpcode.PING) || op == UInt8(WsOpcode.PONG)
         return nothing
@@ -472,10 +463,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # frame arrives (#1062).
             ws.read_idle_timeout_ns > 0 &&
                 _ws_arm_read_deadline!(ws.stream, _ws_read_deadline_ns(ws.read_idle_timeout_ns))
-            # Read directly into the reusable `buf`. `readavailable` would
-            # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
-            # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
-            # `_blocking_readbytes!` does one blocking socket read into `buf`.
+            # Read into the reusable `buf`; `readavailable` would allocate a
+            # fresh 64 KiB buffer on every read.
             n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
             # Decode + flush under `ws.sendlock` so the auto-PONG/CLOSE-echo
@@ -585,8 +574,8 @@ function send(ws::WebSocket, x)
         if !isbinary(x) && !istext(x)
             # An iterable of chunks. With permessage-deflate the whole logical
             # message is compressed as one DEFLATE stream, so we gather the
-            # chunks and emit a single compressed frame; otherwise we stream the
-            # chunks as fragments as before.
+            # chunks and emit a single compressed frame; otherwise each chunk
+            # is sent as a fragment.
             if pmce !== nothing
                 buf = UInt8[]
                 msg_opcode = nothing
@@ -1009,9 +998,8 @@ function _open_client_websocket(
         else
             setheader(current_request.headers, "Referer", next_ref::String)
         end
-        # Strip credential headers on any cross-origin hop, where origin is the
-        # full (scheme, host, port) tuple rather than the host alone, so a scheme
-        # downgrade or a port change no longer replays Authorization/Cookie.
+        # Strip credential headers on any cross-origin hop: a change of scheme,
+        # host, or port.
         if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
             _strip_sensitive_redirect_headers!(current_request.headers)
             _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
@@ -1029,20 +1017,26 @@ end
 
 """
     open(url; kwargs...) -> WebSocket
-    open(f, url; kwargs...) -> Any
+    open(f, url; kwargs...)
 
-Open a client WebSocket connection to `url`.
+Connect to the WebSocket server at `url`, a `ws://` or `wss://` URL, and return
+the [`WebSocket`](@ref). With a function `f`, `open` calls `f(ws)`, closes the
+connection with status 1000 when `f` returns, and returns the value of `f`.
 
-Keyword arguments cover handshake headers, redirect behavior, cookies, proxy
-selection, TLS verification, timeout controls, and frame limits.
-`request_timeout` applies an overall handshake deadline, while
-`response_header_timeout` and `write_idle_timeout` configure HTTP handshake
-phases. `read_idle_timeout` bounds both handshake response-header reads and
-post-upgrade inbound WebSocket inactivity. `maxframesize` defaults to 16 MiB
-and bounds incoming frame/message buffering. Pass `compress=true` to offer
-permessage-deflate message compression ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692));
-it is only used when the server also accepts it. When called with a function,
-the socket is closed automatically with status code `1000` when `f` returns.
+- `headers`, `query`, `subprotocols`: the handshake's headers, query
+  parameters, and offered subprotocols.
+- `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
+  frame, and the most frames in one message.
+- `compress = false`: offer permessage-deflate compression
+  ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)), used when the server
+  accepts it.
+- `connect_timeout = 30`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: handshake timeouts in seconds, as
+  for `HTTP.request`. `read_idle_timeout` keeps applying after the handshake:
+  if nothing arrives for that long, the connection closes.
+- `client`, `proxy`, `redirect`, `redirect_limit`, `redirect_method`,
+  `forwardheaders`, `cookies`, `cookiejar`, `require_ssl_verification`: as for
+  `HTTP.request`.
 """
 function open(
     url::AbstractString;
@@ -1170,24 +1164,15 @@ function _open_client_websocket_io(
 end
 
 """
-    open(io::IO; target="/", host="", kwargs...) -> WebSocket
-    open(f, io::IO; target="/", host="", kwargs...) -> Any
+    open(io::IO; target="/", host="", headers=[], subprotocols=String[],
+         maxframesize=16 MiB, maxfragmentation=1024) -> WebSocket
+    open(f, io::IO; kwargs...)
 
-Perform the WebSocket client handshake directly over an already-connected `io`
-(a raw `TCPSocket`, a TLS stream, or any other byte `IO`) instead of dialing a
-new connection from a URL. This is useful when the transport is established
-out-of-band, for testing, or for tunnelling WebSockets over a custom stream.
-
-Because there is no URL to derive them from, the request-line `target` and `Host`
-header default to `"/"` and unset; override them with the `target` and `host`
-keyword arguments. The remaining `headers`, `subprotocols`, `maxframesize`, and
-`maxfragmentation` keywords match the URL-based [`open`](@ref); pool, TLS, proxy,
-redirect, cookie, and timeout options do not apply.
-
-`io` is **not** closed by `open` — the caller retains ownership of the underlying
-stream's lifetime. As with the URL form, calling `open` with a function closes
-the WebSocket with status code `1000` when `f` returns (the close frame is sent
-over `io`, but `io` itself stays open).
+Do the client handshake over `io`, a stream that is already connected, such as
+a `TCPSocket` or a TLS stream, instead of connecting to a URL. `target` is the
+request path, and `host` the `Host` header, which is left out when empty.
+`open` never closes `io`; with `f`, it sends a close frame over `io` when `f`
+returns.
 """
 open(io::IO; kwargs...) = _open_client_websocket_io(io; kwargs...)
 
@@ -1442,10 +1427,7 @@ end
 # is defined over the full (scheme, host, port) triple, so all three must match
 # the server's own origin. `server_secure` indicates whether the server speaks
 # wss/https (true) or ws/http (false) and provides the scheme component plus the
-# default port (443 vs 80) used when the Host header omits the port. Comparing
-# only the host (as a previous version did when the Host header had no port)
-# allowed cross-scheme and cross-port origins on the same hostname to open
-# authenticated WebSockets.
+# default port (443 vs 80) used when the Host header omits the port.
 function _origin_allowed_default(request::Request, server_secure::Bool=false)::Bool
     origin = header(request.headers, "Origin", nothing)
     origin === nothing && return true
@@ -1538,15 +1520,13 @@ function _server_pmce_context(request::Request, compress::Bool)::Union{Nothing,P
 end
 
 """
-    upgrade(f, stream::HTTP.Stream; kwargs...)
+    upgrade(f, stream::HTTP.Stream; subprotocols=String[], check_origin=nothing,
+            maxframesize=16 MiB, maxfragmentation=1024, compress=false)
 
-Upgrade an in-flight HTTP/1.1 server `stream` to a WebSocket connection and run
-`f(ws::WebSocket)`. This is the manual counterpart to [`listen!`](@ref): it lets
-a single `HTTP.listen!` / `HTTP.Router` server mix ordinary HTTP routes with
-WebSocket routes by upgrading the connection from inside a stream handler.
-
-Guard the call with [`isupgrade`](@ref) and call `upgrade` before writing any
-response to the stream:
+Answer a WebSocket handshake on an HTTP/1.1 server `stream` and call
+`f(ws::WebSocket)`. Use it in an `HTTP.listen!` handler to serve WebSockets and
+ordinary HTTP routes from one server. Check the request with
+[`isupgrade`](@ref) first, and call `upgrade` before writing to the stream:
 
 ```julia
 HTTP.listen!("127.0.0.1", 8080) do stream
@@ -1564,11 +1544,9 @@ HTTP.listen!("127.0.0.1", 8080) do stream
 end
 ```
 
-`f` runs synchronously; the connection is closed when it returns. Keyword
-arguments mirror [`listen!`](@ref): `subprotocols`, `check_origin`,
-`maxframesize`, `maxfragmentation`, and `compress` (opt-in permessage-deflate
-message compression, RFC 7692). WebSocket upgrades over HTTP/2 are not
-supported.
+`upgrade` returns when `f` does, and the connection is then closed. The
+keywords work as for [`listen!`](@ref). A stream on an HTTP/2 connection
+throws `WebSocketError`.
 """
 function upgrade(
     f::Function,
@@ -1837,16 +1815,21 @@ end
 """
     listen!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
 
-Start a background WebSocket server and return its [`Server`](@ref) handle.
+Start a WebSocket server in the background and return its [`Server`](@ref).
+`handler(ws::WebSocket)` runs for each connection. Port `0`, or
+`listenany = true`, picks a free port; [`server_addr`](@ref) returns the
+address.
 
-Pass `tls_config` to serve `wss://` traffic, `subprotocols` to advertise
-supported subprotocols, and `check_origin` to customize origin validation. Pass
-`listenany=true` to ignore `port` and bind to an OS-assigned ephemeral port;
-read the actual address afterwards with [`server_addr`](@ref). Pass
-`compress=true` to advertise permessage-deflate message compression
-([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)); it is negotiated per
-connection and clients must also opt in. `maxframesize` defaults to 16 MiB
-and bounds incoming frame/message buffering.
+- `tls_config`: a `Reseau.TLS.Config` to serve `wss://`.
+- `subprotocols`: the subprotocols the server accepts.
+- `check_origin`: a function `(request)` or `(request, origin)` that returns
+  `true` to accept a handshake. By default a handshake with an `Origin` header
+  is accepted only when the origin's scheme, host, and port match the server.
+- `compress = false`: accept permessage-deflate compression
+  ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)) from clients that offer
+  it.
+- `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
+  frame, and the most frames in one message.
 
 WebSocket server tasks use Julia's `:interactive` thread pool. Start Julia with
 at least one interactive thread, such as `--threads=4,1`, to isolate server work
@@ -1892,7 +1875,7 @@ function listen!(
     return server
 end
 
-"""`serve!` is an alias for [`listen!`](@ref)."""
+"""`serve!` is another name for [`listen!`](@ref)."""
 serve!(handler::Function, host::AbstractString="127.0.0.1", port::Integer=8080; kwargs...) = listen!(handler, host, port; kwargs...)
 
 """

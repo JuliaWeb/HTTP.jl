@@ -13,8 +13,8 @@ end
 """
     RequestRetryError(err)
 
-Wrapper passed to `retry_if` for request-path failures. Inspect `err.err` to
-check the underlying transport or protocol exception.
+What a `retry_if` function receives as `err` when an attempt failed without a
+response. `err.err` is the exception.
 """
 struct RequestRetryError <: HTTPError
     err::Exception
@@ -86,22 +86,11 @@ _retryable_request_error(err::RequestRetryError)::Bool = _retryable_request_erro
 """
     isrecoverable(err::Exception) -> Bool
 
-Return `true` when `err` represents a transient transport or protocol failure
-that is safe to retry — the same classification HTTP.jl's built-in retry policy
-applies to request-path exceptions. Recoverable cases include connection resets
-and EOFs (`EOFError`, `IOPoll.NetClosingError`), socket errors (`SystemError`),
-malformed responses (`ParseError`), and dial/handshake timeouts
-(`HostResolvers.DialTimeoutError`, `TLS.TLSHandshakeTimeoutError`), including the
-underlying causes of wrapped `HostResolvers.OpError`/`TLS.TLSError` exceptions,
-HTTP/2 `ProtocolError` connection wrappers, and the public
-[`TLSHandshakeError`](@ref)/[`TLSTransportError`](@ref) wrappers.
-A request *deadline* being exceeded (`IOPoll.DeadlineExceededError`) is treated
-as non-recoverable, as is anything else.
-
-Accepts either the underlying exception or the [`RequestRetryError`](@ref)
-wrapper passed to a `retry_if` callback. This is the public replacement for
-HTTP.jl 1.x's `HTTP.RetryRequest.isrecoverable`, intended for downstream
-packages that implement their own retry/backoff logic.
+Return `true` when `err` is a transient failure that the client's default retry
+rules retry: a connection that was reset or closed early, a socket error, a
+malformed response, a connect or TLS handshake timeout, or an HTTP/2 stream the
+server refused. An expired deadline and other errors return `false`. `err` may
+also be the [`RequestRetryError`](@ref) that a `retry_if` function receives.
 """
 isrecoverable(err::Exception)::Bool = _retryable_request_error(err)
 

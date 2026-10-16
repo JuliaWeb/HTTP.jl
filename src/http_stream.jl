@@ -118,8 +118,8 @@ end
 """
     isaborted(stream) -> Bool
 
-Return `true` when the streamed response terminated in an aborted/error state
-that should not be reused as a keep-alive connection.
+Return `true` when the response on a client `stream` ended in an error, so its
+connection cannot be reused.
 """
 function isaborted(stream::Stream)::Bool
     response = stream.response
@@ -216,15 +216,12 @@ end
 """
     startread(stream)
 
-Begin the readable side of `stream`.
+Start reading from `stream` and return the message head.
 
-For client streams, this finalizes request writes if needed, executes the HTTP
-exchange, and returns the response metadata without buffering the response
-body. Subsequent reads on `stream` consume the response body.
-
-For server streams, this returns request metadata only. The request body stays
-attached to `stream` itself, so handlers should read it with `read(stream)` or
-`readbytes!(stream, ...)`.
+On a client stream from [`open`](@ref), this finishes sending the request and
+returns the [`Response`](@ref) with its status and headers. On a server stream,
+it returns the [`Request`](@ref). Either way, read the body from `stream`
+itself, with `read(stream)` or `readbytes!(stream, buf)`.
 """
 startread(stream::Stream{true}) = _client_start_stream_read!(stream)
 startread(stream::Stream{false}) = _server_startread(stream)
@@ -354,11 +351,10 @@ eof(stream::Stream{false}) = _server_eof(stream)
 """
     closeread(stream) -> Response
 
-Close the readable side of `stream` and return its response metadata.
-
-If the response body has already been fully consumed, this is effectively a
-no-op. If unread response bytes remain, the underlying client connection is not
-reused.
+Stop reading from `stream` and return its [`Response`](@ref): the response
+received on a client stream, or the response being written on a server stream.
+Body bytes that were not read are discarded, and the connection is then closed
+instead of reused.
 """
 function closeread(stream::Stream{true})
     _client_start_stream_read!(stream)
@@ -378,61 +374,30 @@ end
 close(stream::Stream{false}) = _server_close(stream)
 
 """
-    open(method, url, headers=Pair{String,String}[]; kwargs...) -> Stream
-    open(f, method, url, headers=Pair{String,String}[]; kwargs...)
+    open(method, url, headers=[]; kwargs...) -> Stream
+    open(f, method, url, headers=[]; status_exception=true, kwargs...) -> Response
 
-Create a streaming HTTP client request/response exchange.
+Send a request and stream its body and response through a [`Stream`](@ref).
+Write the request body to the stream, call [`startread`](@ref) to finish the
+request and get the response status and headers, then read the response body
+from the stream like any `IO`.
 
-The returned `Stream` buffers request writes locally until `startread(stream)`
-or the end of the `do` block. Once reading starts, `stream` behaves like a
-readable `IO` for the response body. `kwargs` largely mirror `request(...)`,
-including `redirect`, `redirect_limit`, `redirect_method`,
-`forwardheaders`, `cookies`, `cookiejar`, `decompress`, `basicauth`, `retry`,
-`retries`, `retry_non_idempotent`, `retry_if`, `respect_retry_after`,
-`retry_bucket`, `client`, `connect_timeout`, `request_timeout`,
-`response_header_timeout`, `read_idle_timeout`, `write_idle_timeout`,
-`expect_continue_timeout`, `readtimeout`, `require_ssl_verification`, and
-`protocol`. `basicauth` accepts
-`(username, password)` credentials; explicit `Authorization` headers take
-precedence, and URL `userinfo` is only used as a fallback when neither is
-provided. As with `request(...)`, automatic retries only occur for replayable
-request bodies, `retry_bucket=true` uses the transport's default `RetryBucket`,
-and the built-in policy does not automatically retry request
-read-timeout/deadline failures. `request_timeout` applies an overall deadline,
-`read_idle_timeout` and `write_idle_timeout` bound inactivity between response
-and request I/O progress, `response_header_timeout` bounds the wait for
-response headers after the request is sent, and deprecated `readtimeout`
-behaves like `read_idle_timeout`.
+With a function `f`, `open` calls `f(stream)`, finishes the exchange, and
+returns the final [`Response`](@ref), not the value of `f`. It throws a
+[`StatusError`](@ref) for a failing response unless `status_exception = false`.
+Without `f`, close the stream with `closewrite` and [`closeread`](@ref) when you
+are done.
 
-As with `request(...)`, `retry_if` sees request-path failures as
-`RequestRetryError` and can inspect the underlying exception via `err.err`.
-
-# Return values
-
-The plain form `open(method, url, ...)` returns the underlying [`Stream`](@ref)
-so the caller can drive request writes and response reads explicitly.
-
-The `do`-block form `open(f, method, url, ...)` runs the user-provided function
-`f(stream)` against that same stream, automatically closes the writable and
-readable sides on exit, and **returns the final [`Response`](@ref) — not the
-value returned by `f`.** Any data the caller wants to keep from inside `f`
-should be captured in an outer variable rather than relied upon as the
-function's return value:
+`open` follows redirects, retries, decompresses, and applies timeouts like
+[`request`](@ref), and takes its keywords except `body`, `response_stream`,
+`sse_callback`, `trace`, `verbose`, and the size limits.
 
 ```julia
-using HTTP
-
-response_text = ""
-response = HTTP.open(:GET, "http://example.com") do stream
-    response_text = String(read(stream))
+buf = IOBuffer()
+response = HTTP.open("GET", "https://example.com") do stream
+    write(buf, stream)  # copy the body as it arrives
 end
-
-@assert response isa HTTP.Response
-@assert response.status == 200
 ```
-
-If the response indicates failure and `status_exception` is left at its default
-of `true`, an `HTTP.StatusError` is thrown after `f` runs.
 """
 function open(
     method::Union{AbstractString,Symbol},

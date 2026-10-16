@@ -62,19 +62,17 @@ end
 """
     TimeoutError
 
-Raised when an HTTP-layer deadline expires. This is intentionally separate from
-lower-level socket timeout exceptions so higher layers can distinguish "request
-context expired" from transport-specific readiness or handshake failures.
+Raised when a client timeout or deadline expires.
 
 Fields:
 
-- `operation::String` — short label identifying which deadline fired. Common
-  values are `"connect"`, `"tls_handshake"`, `"request"`, `"response_header"`,
-  `"read_idle"`, `"write_idle"`, and `"expect_continue"`.
-- `timeout_ns::Int64` — the budget that fired, in nanoseconds. `0` means the
-  budget was unknown at the wrap site.
-- `elapsed_ns::Int64` — best-effort elapsed time when the deadline fired, in
-  nanoseconds. `0` means the elapsed time is unknown at the wrap site.
+- `operation::String`: `"connect"` or `"tls_handshake"` when `connect_timeout`
+  expired, `"websocket handshake"` for a WebSocket handshake, and `"request"`
+  for the other timeouts and for deadlines.
+- `timeout_ns::Int64`: the timeout that expired, in nanoseconds, or `0` when it
+  is not known.
+- `elapsed_ns::Int64`: the time spent before it expired, in nanoseconds, or `0`
+  when it is not known.
 """
 struct TimeoutError <: HTTPError
     operation::String
@@ -88,11 +86,8 @@ TimeoutError(operation::AbstractString, timeout_ns::Integer) =
 """
     ConnectError(address, cause)
 
-Raised when a low-level connect attempt fails before any HTTP exchange begins.
-`address` records the target the client tried to reach (host:port) and `cause`
-is the underlying transport exception. This wraps Reseau-internal types like
-`HostResolvers.OpError` so callers can pattern-match on `HTTP.ConnectError`
-without depending on Reseau internals.
+Raised when the client cannot connect to `address` (`host:port`). `cause` is
+the underlying exception.
 """
 struct ConnectError <: HTTPError
     address::String
@@ -104,9 +99,8 @@ ConnectError(address::AbstractString, cause::Exception) = ConnectError(String(ad
 """
     DNSError(hostname, cause)
 
-Raised when host resolution fails before any connect attempt. `hostname` is the
-name that could not be resolved and `cause` is the underlying transport
-exception (typically `Reseau.HostResolvers.LookupError`).
+Raised when the client cannot resolve `hostname`. `cause` is the underlying
+exception.
 """
 struct DNSError <: HTTPError
     hostname::String
@@ -219,8 +213,7 @@ end
 """
     HTTPTimeoutError
 
-Public alias for [`TimeoutError`](@ref), kept so code can catch timeout
-failures through the long-form HTTP-specific name.
+Another name for [`TimeoutError`](@ref).
 """
 const HTTPTimeoutError = TimeoutError
 
@@ -371,7 +364,7 @@ function _wrap_server_listen_error(err, address::AbstractString)
     return err
 end
 
-"""Shared empty byte-vector payload used for responses with no buffered body."""
+"""An empty `Vector{UInt8}` to pass as a body that has no bytes. It is shared, so do not modify it."""
 const nobody = UInt8[]
 const _BASE64_ALPHABET = codeunits("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 
@@ -588,14 +581,9 @@ const _COMMON_CANONICAL_HEADER_KEYS = Dict(
 """
     canonical_header_key(key) -> String
 
-Canonicalize a header field name into standard MIME-style form: the first
-character and every character after `-` is uppercased; other ASCII letters are
-lowercased.
-
-Returns a newly owned `String` unless `key` is already in canonical form, in
-which case a cached common-header string may be reused. This function does not
-validate that `key` is a legal HTTP token; callers are still responsible for
-protocol validation where needed.
+Return the header name `key` in canonical form, such as `Content-Type`: the
+first letter and every letter after a `-` are uppercase, and the other ASCII
+letters are lowercase. `key` is not checked for validity.
 """
 function canonical_header_key(key::AbstractString)::String
     isempty(key) && return ""
@@ -636,24 +624,23 @@ function canonical_header_key(key::AbstractString)::String
 end
 
 """
-    Headers
+    Headers()
+    Headers(items)
+    Headers(pairs...; kwargs...)
 
-Ordered collection of header pairs.
+An ordered vector of `String => String` header pairs.
 
-`Headers` deliberately behaves like `Vector{Pair{String, String}}` so code
-written against the long-standing pair-vector header representation can reuse
-the same helper functions. Pair order is preserved.
+Header names match in any case (RFC 9110 §5.1): `header`, `setheader`,
+`removeheader`, `haskey`, and the other lookups ignore case, and each name keeps
+the spelling it was stored with. HTTP/1 sends names in that spelling; HTTP/2
+sends them in lowercase. Headers read from the network are stored in
+[`canonical_header_key`](@ref) form, such as `Content-Type`, so a response looks
+the same over HTTP/1 and HTTP/2.
 
-Header names are case-insensitive (RFC 9110 §5.1). Every lookup and update
-(`header`, `setheader`, `removeheader`, `haskey`, ...) matches a name in any
-case, but a name is stored exactly as it was given. HTTP/1 sends it in that
-spelling; HTTP/2 sends every name in lowercase. Headers read from the network
-are stored in [`canonical_header_key`](@ref) form (`Content-Type`), so a
-response looks the same over HTTP/1 and HTTP/2.
-
-Constructing from a vector, dictionary, or tuple goes through `mkheaders`: the
-source is left unchanged, and adjacent duplicate keys are joined the way
-`appendheader` joins them.
+`items` may be a vector, dictionary, or tuple of pairs, and keyword arguments
+add more headers. The input is copied, and a header with the same name as the
+one before it is joined onto it, as in [`appendheader`](@ref).
+`Headers(n::Integer)` returns an empty collection with room for `n` headers.
 """
 mutable struct Headers <: AbstractVector{Pair{String,String}}
     entries::Vector{Pair{String,String}}
@@ -665,12 +652,6 @@ mutable struct Headers <: AbstractVector{Pair{String,String}}
     Headers(headers::Headers) = new(copy(headers.entries))
 end
 
-"""
-    Headers(hint)
-
-Create an empty `Headers` collection and use `hint` as a preallocation hint for
-the backing pair storage. Throws `ArgumentError` when `hint < 0`.
-"""
 function Headers(hint::Integer)
     hint < 0 && throw(ArgumentError("hint must be >= 0"))
     headers = Headers()
@@ -682,11 +663,6 @@ Headers(items::AbstractDict) = mkheaders(items)
 Headers(items::AbstractVector) = mkheaders(items)
 Headers(items::Tuple) = mkheaders(items)
 
-"""
-    Headers(items...; kwargs...) -> Headers
-
-Construct a Headers from items and/or kwargs.
-"""
 Headers(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(items...; kwargs...)
 
 Base.copy(headers::Headers) = Headers(headers)
@@ -758,11 +734,11 @@ end
 """
     mkheaders(headers_input) -> Headers
 
-Normalize a header-like input into a mutable `Headers` collection.
-
-`headers_input` may be `nothing`, a pair or 2-tuple, an existing `Headers`, a dictionary, or an
-iterable of `Pair`s/2-tuples. Vector-valued entries are expanded into repeated
-header values using the same merge rules as `appendheader`.
+Convert `headers_input` to `Headers`. It may be `nothing`, a pair or 2-tuple, a
+dictionary, or an iterable of pairs or 2-tuples. A `Headers` is returned as is,
+without a copy. Each value, including each element of a vector value, is added
+with [`appendheader`](@ref), which joins it onto the previous header when the
+names match.
 """
 function mkheaders(headers_input)
     headers_input === nothing && return Headers()
@@ -819,7 +795,13 @@ function header_keys(headers::Headers)::Vector{String}
     return out
 end
 
-"""Return the first value for `key`, or `default` if the header is absent."""
+"""
+    header(headers, key, default="")
+    header(message, key, default="")
+
+Return the first value of header `key`, or `default` if there is none. `key`
+matches in any case. `message` is a `Request` or `Response`.
+"""
 function header(headers::Headers, key::AbstractString, default="")
     for (name, value) in headers
         _ascii_equal_fold(name, key) && return value
@@ -829,9 +811,9 @@ end
 
 """
     headers(headers, key) -> Vector{String}
+    headers(message, key) -> Vector{String}
 
-Return a freshly allocated vector containing all values for `key` in stored
-order. Returns `String[]` when the header is absent.
+Return every value of header `key`, in order, or `String[]` if there is none.
 """
 function headers(headers::Headers, key::AbstractString)::Vector{String}
     out = String[]
@@ -841,7 +823,12 @@ function headers(headers::Headers, key::AbstractString)::Vector{String}
     return out
 end
 
-"""Return `true` when the first value for `key` is non-empty."""
+"""
+    hasheader(headers, key) -> Bool
+    hasheader(message, key) -> Bool
+
+Return `true` when header `key` is present and its first value is not empty.
+"""
 function hasheader(headers::Headers, key::AbstractString)::Bool
     return header(headers, key) != ""
 end
@@ -900,14 +887,13 @@ function hasheader(headers::Headers, key::AbstractString, value::AbstractString)
 end
 
 """
-    setheader(headers, key => value) -> Headers
-    setheader(headers, key, value) -> Headers
+    setheader(headers, key => value) -> headers
+    setheader(headers, key, value) -> headers
+    setheader(message, key => value) -> message
 
-Replace all stored values for `key` with `value`, preserving the first matching
-position if the key already exists and appending it otherwise. Names match in
-any case; the kept entry takes the spelling of `key`. Returns the
-mutated `headers`. [`setheader!`](@ref) is the same function under the
-conventional mutating-name spelling.
+Replace every value of header `key` with `value`. The header keeps the position
+of its first occurrence and takes the spelling of `key`; a new header goes at
+the end. [`setheader!`](@ref) is the same function.
 """
 function setheader(headers::Headers, header::Pair)
     item = _header_pair(header.first, header.second)
@@ -943,18 +929,14 @@ function setheader(headers::Headers, key::AbstractString, value::AbstractString)
 end
 
 """
-    appendheader(headers, key => value) -> Headers
-    appendheader(headers, key, value) -> Headers
+    appendheader(headers, key => value) -> headers
+    appendheader(headers, key, value) -> headers
+    appendheader(message, key => value) -> message
 
-Append a header value to `headers`.
-
-If the previous stored header has the same name (in any case) and the key is
-not `Set-Cookie`, the value is merged into the previous entry, which keeps its
-spelling. `Cookie` values are joined with `"; "` (RFC 6265 §5.4); other values
-with a comma and no whitespace, as permitted by RFC 9110 §5.3 and required by
-common request-signing canonicalizations.
-Otherwise a new pair is appended. [`appendheader!`](@ref) is the same
-function under the conventional mutating-name spelling.
+Add a header value. When the last header has the same name, in any case, the
+value is joined onto it instead: with `"; "` for `Cookie` (RFC 6265 §5.4) and
+with `","` for other names (RFC 9110 §5.3). `Set-Cookie` values always become
+separate headers. [`appendheader!`](@ref) is the same function.
 """
 function appendheader(headers::Headers, header::Pair)
     item = _header_pair(header.first, header.second)
@@ -1030,11 +1012,11 @@ end
 end
 
 """
-    removeheader(headers, key) -> Headers
+    removeheader(headers, key) -> headers
+    removeheader(message, key) -> message
 
-Remove every stored header for `key` and return the mutated `headers`.
-[`removeheader!`](@ref) is the same function under the conventional
-mutating-name spelling.
+Remove every value of header `key`. [`removeheader!`](@ref) is the same
+function.
 """
 function removeheader(headers::Headers, key::AbstractString)
     entries = headers.entries
@@ -1053,44 +1035,31 @@ function removeheader(headers::Headers, key::AbstractString)
     return headers
 end
 
-# Conventional mutating-name spellings (#1277). Each is the *same* function as
-# the historical name (extending one extends the other), so the old names stay
-# available without deprecation; new code should prefer the `!` form since
-# every method mutates its first argument.
+# `!` spellings of the mutating header functions (#1277). Each name is bound to
+# the same function, so a method added under one name applies to both.
 """
-    setheader!(headers, key => value) -> Headers
-    setheader!(headers, key, value) -> Headers
-    setheader!(message, key => value) -> Headers
-    setheader!(message, key, value) -> Headers
+    setheader!(headers, key => value) -> headers
+    setheader!(headers, key, value) -> headers
+    setheader!(message, key => value) -> message
 
-Replace all stored values for `key` with `value` and return the mutated
-`headers`, or the mutated `message` for the `Request`/`Response` forms. This
-is the same function as [`setheader`](@ref) under the conventional
-mutating-name spelling.
+The same function as [`setheader`](@ref).
 """
 const setheader! = setheader
 
 """
-    appendheader!(headers, key => value) -> Headers
-    appendheader!(headers, key, value) -> Headers
-    appendheader!(message, key => value) -> Headers
-    appendheader!(message, key, value) -> Headers
+    appendheader!(headers, key => value) -> headers
+    appendheader!(headers, key, value) -> headers
+    appendheader!(message, key => value) -> message
 
-Append a value for `key` without removing existing values and return the
-mutated `headers`, or the mutated `message` for the `Request`/`Response`
-forms. This is the same function as [`appendheader`](@ref) under the
-conventional mutating-name spelling.
+The same function as [`appendheader`](@ref).
 """
 const appendheader! = appendheader
 
 """
-    removeheader!(headers, key) -> Headers
-    removeheader!(message, key) -> Headers
+    removeheader!(headers, key) -> headers
+    removeheader!(message, key) -> message
 
-Remove every stored header for `key` and return the mutated `headers`, or the
-mutated `message` for the `Request`/`Response` forms. This is the same
-function as [`removeheader`](@ref) under the conventional mutating-name
-spelling.
+The same function as [`removeheader`](@ref).
 """
 const removeheader! = removeheader
 
@@ -1193,13 +1162,11 @@ end
 
 """
     headercontains(headers, key, token) -> Bool
+    headercontains(message, key, token) -> Bool
 
-Return `true` when a comma-separated header field contains `token`
-case-insensitively after trimming optional whitespace.
-
-This is the helper used for semantics like `Connection: close` and
-`Transfer-Encoding: chunked`, where RFCs define one header line as a list of
-tokens rather than one opaque string.
+Return `true` when a value of header `key`, read as a comma-separated list,
+contains `token`. Both the name and the token match in any case. Use it for
+list-valued headers such as `Connection` and `Transfer-Encoding`.
 """
 function headercontains(headers::Headers, key::AbstractString, token::AbstractString)::Bool
     needle = token isa String ? (token::String) : String(token)
@@ -1211,13 +1178,10 @@ function headercontains(headers::Headers, key::AbstractString, token::AbstractSt
 end
 
 """
-    defaultheader!(headers, key => value) -> Headers
-    defaultheader!(message, key => value) -> typeof(message)
+    defaultheader!(headers, key => value) -> headers
+    defaultheader!(message, key => value) -> message
 
-Append `key => value` only when `key` is not already present.
-
-This is useful for applying defaults like `User-Agent` or `Accept-Encoding`
-without overwriting caller-specified headers.
+Add `key => value` unless header `key` is already present.
 """
 function defaultheader!(headers::Headers, item::Pair)
     header(headers, first(item), nothing) === nothing || return headers
@@ -1271,26 +1235,21 @@ end
 """
     RequestContext(; deadline_ns=0)
 
-Per-request cancellation, deadline, timeout, and metadata state shared across
-client, server, middleware, and transport code.
+Cancellation, deadline, and application data for one request. Pass one to a
+client call with the `context` keyword; [`get_request_context`](@ref) returns
+the context of a request a server is handling.
 
-Arguments:
-- `deadline_ns`: absolute monotonic deadline in nanoseconds, or `0` to disable
-  deadline tracking.
+`deadline_ns` is an absolute `time_ns()` value, or `0` for no deadline. A client
+request still running at the deadline throws [`TimeoutError`](@ref), and
+[`cancel!`](@ref) makes it throw [`CanceledError`](@ref).
 
-The context itself does not schedule timers; it is a passive state container
-that HTTP.jl consults before or during blocking operations. For migration from
-HTTP.jl 1.x, `RequestContext` also supports dict-like metadata access with
-symbol keys:
+Application data is stored under `Symbol` keys:
 
 ```julia
 ctx = HTTP.RequestContext()
 ctx[:request_id] = "abc"
 get(ctx, :request_id, nothing)
 ```
-
-New code should prefer typed fields and helper functions for cancellation and
-deadlines, and reserve dict-like access for application metadata.
 """
 mutable struct RequestContext
     deadline_ns::Int64
@@ -1302,17 +1261,16 @@ mutable struct RequestContext
     cancel_callbacks::Vector{Function}
 end
 
-"""Construct a `RequestContext`; throws `ArgumentError` when `deadline_ns < 0`."""
 function RequestContext(; deadline_ns::Integer=Int64(0))
     deadline_ns < 0 && throw(ArgumentError("deadline_ns must be >= 0"))
     return RequestContext(Int64(deadline_ns), false, nothing, nothing, nothing, ReentrantLock(), Function[])
 end
 
 """
-    set_deadline!(ctx, deadline_ns) -> RequestContext
+    set_deadline!(ctx, deadline_ns) -> ctx
 
-Set an absolute monotonic deadline in nanoseconds. Passing `0` clears any
-deadline. Throws `ArgumentError` when `deadline_ns < 0`.
+Set the deadline of `ctx` to `deadline_ns`, an absolute `time_ns()` value. `0`
+removes the deadline.
 """
 function set_deadline!(ctx::RequestContext, deadline_ns::Integer)
     deadline_ns < 0 && throw(ArgumentError("deadline_ns must be >= 0"))
@@ -1321,11 +1279,11 @@ function set_deadline!(ctx::RequestContext, deadline_ns::Integer)
 end
 
 """
-    cancel!(ctx; message="request canceled") -> RequestContext
+    cancel!(ctx; message="request canceled") -> ctx
 
-Mark `ctx` canceled and store a human-readable message for higher layers. This
-does not throw on its own; callers typically check `canceled(ctx)` or turn the
-state into a `CanceledError`.
+Cancel the request that uses `ctx`. Its current read or write stops, and the
+request throws a [`CanceledError`](@ref) carrying `message`. `cancel!` does not
+throw itself.
 """
 function cancel!(ctx::RequestContext; message::AbstractString="request canceled")
     @atomic :release ctx.canceled_flag = true
@@ -1406,7 +1364,11 @@ function _remove_cancel_callback!(ctx::RequestContext, callback::Function)
     return ctx
 end
 
-"""Return `true` once `cancel!` has been called for `ctx`."""
+"""
+    canceled(ctx) -> Bool
+
+Return `true` once [`cancel!`](@ref) has been called on `ctx`.
+"""
 function canceled(ctx::RequestContext)::Bool
     return @atomic :acquire ctx.canceled_flag
 end
@@ -1414,9 +1376,7 @@ end
 """
     expired(ctx, now_ns=time_ns()) -> Bool
 
-Return `true` when `ctx.deadline_ns` is non-zero and less than or equal to
-`now_ns`. `now_ns` is injectable so tests and higher-level schedulers can reuse
-an already-sampled monotonic timestamp.
+Return `true` when `ctx` has a deadline and `now_ns` has reached it.
 """
 function expired(ctx::RequestContext, now_ns::Integer=time_ns())::Bool
     deadline = ctx.deadline_ns
@@ -1499,15 +1459,10 @@ end
 """
     AbstractBody
 
-Abstract streaming body interface used throughout the HTTP stack.
+Supertype of request and response bodies that are read as a stream.
 
-Concrete subtypes are expected to implement:
-- `body_read!(body, dst)::Int`
-- `body_close!(body)`
-- `body_closed(body)::Bool`
-
-`body_read!` must return the number of bytes written into `dst`, with `0`
-signaling EOF. Implementations may throw transport-specific exceptions.
+A subtype implements [`body_read!`](@ref), [`body_close!`](@ref), and
+[`body_closed`](@ref).
 """
 abstract type AbstractBody end
 
@@ -1601,9 +1556,10 @@ Base.String(::EmptyBody) = ""
 """
     CallbackBody(read_cb, close_cb)
 
-Callback-driven streaming body. `read_cb(dst)` must return the number of bytes
-written into `dst`, and `close_cb()` is invoked once when the body is closed.
-This is the escape hatch for non-buffered request or response bodies.
+A body produced by a function. `read_cb(dst::Vector{UInt8})` fills the start of
+`dst` and returns the number of bytes written, or `0` at the end of the body.
+`close_cb()` runs once, when the body is closed. A `CallbackBody` can be read
+only once.
 """
 mutable struct CallbackBody{R,C} <: AbstractBody
     read_cb::R
@@ -1611,7 +1567,6 @@ mutable struct CallbackBody{R,C} <: AbstractBody
     @atomic closed::Bool
 end
 
-"""Construct a `CallbackBody` from read and close callbacks."""
 function CallbackBody(read_cb::R, close_cb::C) where {R,C}
     return CallbackBody{R,C}(read_cb, close_cb, false)
 end
@@ -1619,11 +1574,8 @@ end
 @inline _compat_body_arg(::Nothing) = EmptyBody()
 @inline _compat_body_arg(body::AbstractBody) = body
 @inline _compat_body_arg(body::AbstractVector{UInt8}) = BytesBody(body)
-# Wrap String/SubString bodies in a BytesBody that aliases the underlying
-# codeunits via the immutable string buffer — saves a length-of-body memcpy
-# on every Response construction. Strings are immutable so this is safe even
-# if the caller reuses the same String across multiple Responses; HTTP body
-# write paths only read via copyto!/unsafe_write.
+# Request bodies alias a `String`'s bytes instead of copying them; this is safe
+# because strings are immutable and body writers only read.
 @inline _compat_body_arg(body::AbstractString) = BytesBody(codeunits(String(body)))
 
 @inline _compat_body_length(::Nothing)::Int64 = Int64(0)
@@ -1640,22 +1592,17 @@ end
 @inline _response_body_arg(::Nothing) = EmptyBody()
 @inline _response_body_arg(body::AbstractBody) = body
 @inline _response_body_arg(body::AbstractVector{UInt8}) = body
-# Server-built responses keep `String` and `AbstractVector{UInt8}` bodies as given.
-# Both are stateless, so one `Response` can be sent any number of times (baked
-# responses), and every write path emits them zero-copy. Wrapping a string in a
-# cursor-based `BytesBody` made the first send consume it and left the second
-# send with a truncated or empty body (#1333). Requests keep `BytesBody`, since
-# `Request` requires an `AbstractBody`.
+# Responses keep `String` and `AbstractVector{UInt8}` bodies as given. They have
+# no read cursor, so one `Response` can be sent any number of times (#1333).
+# Requests wrap them in `BytesBody` because `Request` requires an `AbstractBody`.
 @inline _response_body_arg(body::AbstractString) = String(body)
 _response_body_arg(body) = _compat_body_arg(body)
 
 """
     body_closed(body) -> Bool
 
-Return `true` once `body` has been fully consumed or explicitly closed.
-
-For immutable in-memory bodies this tracks whether the read cursor reached EOF;
-for streaming bodies it reports whether the underlying producer has been closed.
+Return `true` once [`body_close!`](@ref) has closed `body`. Reading a body to
+the end does not close it.
 """
 function body_closed(::EmptyBody)::Bool
     return false
@@ -1672,10 +1619,8 @@ end
 """
     body_read!(body, dst) -> Int
 
-Read up to `length(dst)` bytes into `dst`. Returns `0` on EOF.
-
-Concrete body types may throw `ProtocolError`, transport errors, or body-
-specific exceptions if the stream is malformed or the backing connection fails.
+Read up to `length(dst)` bytes of `body` into `dst` and return how many were
+read, or `0` at the end of the body.
 """
 function body_read!(::EmptyBody, dst::AbstractVector{UInt8})::Int
     _ = dst
@@ -1707,8 +1652,8 @@ end
 """
     body_close!(body)
 
-Release any resources held by `body`. Implementations should be idempotent so
-callers can safely close in `finally` blocks.
+Close `body` and release what it holds. Closing a closed body does nothing, so
+it is safe to call in a `finally` block.
 """
 function body_close!(::EmptyBody)
     return nothing
@@ -1732,33 +1677,27 @@ end
 @inline _body_uses_eof_framing(::AbstractBody)::Bool = false
 
 """
-    Request(method, target; headers=Headers(), trailers=Headers(), body=EmptyBody(), host=nothing,
-            content_length=-1, proto_major=1, proto_minor=1, close=false,
-            context=RequestContext(), copyheaders=true)
+    Request(method, target; headers=Headers(), body=nothing, trailers=Headers(),
+            host=nothing, content_length=-1, proto_major=1, proto_minor=1,
+            close=false, context=RequestContext(), copyheaders=true)
+    Request(method, target, headers[, body])
 
-HTTP request object shared by the client and server stacks.
+An HTTP request: what a server handler receives, and what the client sends.
 
-Keyword arguments:
-- `headers`, `trailers`: copied into the request by default.
-- `copyheaders=false`: take ownership of existing `Headers` collections for both
-  headers and trailers. The caller must stop accessing or mutating them while
-  the request is in use. Their final contents are unspecified. Other input
-  types are converted into new collections, as with the default.
-- `body`: any `AbstractBody`; ownership stays with the request.
-- `host`: optional authority used for HTTP/1 `Host` and HTTP/2 `:authority`.
-- `content_length`: exact byte length, or `-1` when unknown.
-- `proto_major`, `proto_minor`: protocol version metadata.
-- `close`: request/connection-close hint.
-- `context`: cancellation/deadline metadata consulted by higher layers.
+- `headers`, `trailers`: anything [`Headers`](@ref) accepts. They are copied
+  unless `copyheaders = false` and they are `Headers` collections; the request
+  then uses them directly, so do not touch them while the request is in use.
+- `body`: a `String`, a byte vector, an [`AbstractBody`](@ref), or `nothing`.
+- `host`: the authority sent as the HTTP/1 `Host` header or HTTP/2
+  `:authority`.
+- `content_length`: the body length in bytes. `-1` computes it for a
+  `String`, byte-vector, or empty body, and means unknown for other bodies.
+- `proto_major`, `proto_minor`: the HTTP version.
+- `close`: close the connection after this request.
+- `context`: the request's [`RequestContext`](@ref).
 
-Returns a new `Request{B}` where `B` is the concrete body type. Throws
-`ArgumentError` for invalid protocol numbers, empty method/target, or
-`content_length < -1`.
-
-For migration from HTTP.jl 1.x, common positional forms such as
-`Request(method, target, headers)` and `Request(method, target, headers, body)`
-are still accepted. New code should use the keyword form above so body,
-trailers, protocol metadata, and context ownership are explicit.
+`req.context` returns the context's application data as a `Dict{Symbol,Any}`;
+use [`get_request_context`](@ref) for the `RequestContext` itself.
 """
 mutable struct Request{B<:AbstractBody}
     method::String
@@ -1901,11 +1840,9 @@ end
 """
     get_request_context(request) -> RequestContext
 
-Return the typed request context stored on `request`.
-
-Use this helper when middleware or low-level code needs cancellation,
-deadline, or timeout state. The legacy `request.context` property returns the
-dict-like metadata view for compatibility with HTTP.jl 1.x code.
+Return the [`RequestContext`](@ref) of `request`, which holds its cancellation
+state and deadline. `request.context` returns only the context's application
+data.
 """
 @inline get_request_context(request::Request)::RequestContext = getfield(request, :context)
 
@@ -1935,28 +1872,21 @@ function Base.getproperty(request::Request, field::Symbol)
 end
 
 """
-    Response(status, body=EmptyBody(); reason="", headers=Headers(), trailers=Headers(),
+    Response(status, [body]; headers=Headers(), reason="", trailers=Headers(),
              content_length=-1, proto_major=1, proto_minor=1, close=false,
              request=nothing)
+    Response(status, headers, body)
+    Response(body)
 
-HTTP response object shared by the client and server stacks.
+An HTTP response: what a server handler returns, and what the client returns.
 
-Keyword arguments mirror `Request` closely. `request` optionally links the
-response back to the originating request, which is especially useful in client
-redirect flows and server handler pipelines.
+`body`, passed by position or as a keyword, may be a `String`, a byte vector,
+an [`AbstractBody`](@ref), or `nothing`. A `String` or byte vector is stored as
+is, so one `Response` can be returned for many requests. `content_length`
+defaults to the length of such a body. `request` is the request that produced
+the response. `Response(body)` uses status 200.
 
-Returns a new `Response{B}` where `B` is the stored body field type. Byte-vector
-response bodies are retained as vectors so test fixtures can inspect
-`response.body` directly; pass a `BytesBody` when cursor-based body reads are
-desired. `request_url` is optional client metadata used by high-level request
-helpers.
-
-Throws `ArgumentError` for invalid status or protocol metadata.
-
-For migration from HTTP.jl 1.x, common forms such as
-`Response(status, headers, body)` and `Response(status, headers; body=...)`
-are still accepted. New code should prefer `Response(status; headers=...,
-body=..., content_length=...)`.
+A client response also has `response.url`, the final URL after redirects.
 """
 mutable struct Response{B}
     status::Int

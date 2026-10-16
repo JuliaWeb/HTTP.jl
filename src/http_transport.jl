@@ -193,40 +193,35 @@ function _RequestWriteState(expects_continue::Bool)
 end
 
 """
-    Transport(; ...)
+    Transport(; tls_config=nothing, proxy=nothing, retry_bucket=RetryBucket(),
+              max_idle_per_host=2, max_idle_total=64, max_conns_per_host=0,
+              idle_timeout_ns=90_000_000_000, max_header_bytes=1024*1024,
+              max_line_bytes=64*1024, local_addr=nothing)
 
-Connection-pooling transport for HTTP/1 requests.
+The connection pool of a [`Client`](@ref), with the settings for opening
+connections.
 
-It owns dial/TLS policy and decides when an idle connection can be reused
-versus closed.
-
-`max_conns_per_host = 0` leaves per-host concurrency unlimited. Positive values
-bound the total live HTTP/1 connections (idle, in-flight, and dialing) for one
-pool key and cause additional acquires to wait for direct handoff or a freed
-dial slot.
-
-`idle_timeout_ns` (default 90s, `0` disables) bounds how long an idle pooled
-connection may be handed out again; it also governs the owning `Client`'s
-pooled HTTP/2 connections. Keep it under the network's silent idle-drop window
-(NAT/load-balancer idle timeouts are commonly a few minutes) so a request is
-never written onto a connection whose peer has silently vanished.
-
-A server that advertises its own idle window on a response
-(`Keep-Alive: timeout=<seconds>`) additionally bounds that HTTP/1 connection's
-reuse to the advertised time less a one-second safety margin; the tighter of
-the two limits applies. A hint that leaves no headroom (`timeout=1` or less)
-makes the connection non-reusable.
-
-`max_line_bytes` (default 64 KiB) bounds one HTTP/1 response status line or
-header line, counted with its CRLF terminator; `max_header_bytes` (default
-1 MiB) bounds a response's whole header block (and any chunked trailers). A
-longer line fails the request with `ProtocolError("HTTP/1 line exceeds
-configured max_line_bytes")` and a larger header block with
-`ProtocolError("HTTP/1 headers exceed configured max_header_bytes")`. Both
-must be positive, and `max_line_bytes` may not exceed `max_header_bytes`; when
-only `max_header_bytes` is given and it is below 64 KiB, `max_line_bytes`
-defaults to it. Raise `max_line_bytes` for origins that send very long header
-lines (large `Content-Security-Policy` values are a common case).
+- `tls_config`: a `Reseau.TLS.Config` for `https://` connections.
+- `proxy`: a [`ProxyConfig`](@ref), a proxy URL, or `nothing` to connect
+  directly. A `Client` created without a `transport` uses
+  [`ProxyFromEnvironment`](@ref) instead.
+- `retry_bucket`: the [`RetryBucket`](@ref) that limits retries, or `nothing`.
+- `max_idle_per_host`, `max_idle_total`: how many idle HTTP/1 connections to
+  keep for one host and in all.
+- `max_conns_per_host`: the most HTTP/1 connections to one host, counting idle,
+  busy, and opening ones; further requests wait for one. `0` means no limit.
+- `idle_timeout_ns`: how long, in nanoseconds, an idle HTTP/1 or HTTP/2
+  connection stays reusable; `0` means no limit. Keep it below the idle timeout
+  of NATs and load balancers on the path, often a few minutes, so that requests
+  are not sent on connections they dropped. A response header
+  `Keep-Alive: timeout=N` shortens it to `N - 1` seconds for that connection.
+- `max_line_bytes`, `max_header_bytes`: the longest HTTP/1 response line and the
+  largest response head (and chunked trailers); a longer one fails the request
+  with a [`ProtocolError`](@ref). `max_line_bytes` defaults to the smaller of
+  64 KiB and `max_header_bytes`. Raise it for servers that send very long
+  header lines, such as large `Content-Security-Policy` values.
+- `local_addr`: the source IP address of connections, as a string or a
+  `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`.
 """
 mutable struct Transport
     host_resolver::_TransportHostResolver
@@ -1314,19 +1309,12 @@ end
     close_idle_connections!(client::HTTP.Client)
     close_idle_connections!(transport::HTTP.Transport)
 
-Close all currently idle pooled connections, returning `nothing`. Active
-in-flight requests are unaffected.
+Close the idle connections in a pool; requests in progress are not affected.
+Without an argument, it uses the shared client of calls that pass no `client`.
 
-The no-argument form closes idle connections held by the default client used by
-`HTTP.get`, `HTTP.post`, `HTTP.request`, and friends (a no-op if no request has
-been made yet). Pass an `HTTP.Client` or `HTTP.Transport` to target a specific
-connection pool.
-
-The `Client` and no-argument forms also close the client's pooled HTTP/2
-connections that have no in-flight streams; the `Transport` form covers only
-the HTTP/1 pool it owns. They additionally clear the client's cache of origins
-that negotiated HTTP/1.1 under `protocol = :auto`, so subsequent automatic
-requests re-attempt HTTP/2 against origins that may have enabled it since.
+The `Client` and no-argument forms also close idle HTTP/2 connections, and
+forget which origins answered with HTTP/1.1, so later requests try HTTP/2 with
+them again. The `Transport` form covers only its HTTP/1 connections.
 """
 function close_idle_connections!(transport::Transport)
     to_close = Conn[]
@@ -1381,12 +1369,10 @@ function Base.close(transport::Transport)
 end
 
 """
-    idle_connection_count(transport; key=nothing)
+    idle_connection_count(transport; key=nothing) -> Int
 
-Return idle pooled connection count globally or for one host key.
-
-When `key === nothing`, returns the transport-wide count. Otherwise `key`
-should match the transport's internal pool key such as `https://example.com:443`.
+Return the number of idle HTTP/1 connections in `transport`, or only those for
+`key`, a scheme and address such as `"https://example.com:443"`.
 """
 function idle_connection_count(transport::Transport; key::Union{Nothing,AbstractString}=nothing)::Int
     lock(transport.lock)
@@ -1472,14 +1458,9 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
             line_len = nl_idx - start + 1
             line_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
             reader.next = nl_idx + 1
-            # Require a strict CRLF terminator. A bare LF (no preceding CR) is
-            # rejected here so that request-line, header, and chunk-size framing
-            # is independent of socket-buffer fill state. Tolerating bare LF only
-            # on this fast path (while the slow path below and the generic
-            # _readline_crlf(::IO) reader both require CRLF) would make the
-            # accepted wire grammar depend on TCP segmentation, which is a parser
-            # differential that enables HTTP request smuggling behind a proxy
-            # (ANT-2026-CN279YCX, ANT-2026-MG2WTZ8Z).
+            # Require CRLF, as the slow path below does. Accepting a bare LF only
+            # here would make parsing depend on TCP segmentation, a parser
+            # differential that enables request smuggling behind a proxy.
             content_stop = nl_idx - 1
             (content_stop < start || @inbounds(reader.buf[content_stop]) != 0x0d) &&
                 throw(ParseError("HTTP/1 line not terminated by CRLF (bare LF)"))
@@ -1517,10 +1498,8 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
         append!(bytes, @view(reader.buf[start:nl_idx]))
         reader.next = nl_idx + 1
         nbytes = length(bytes)
-        # Require a strict CRLF terminator (see the fast-path comment above). An
-        # LF not immediately preceded by CR is a bare LF and is rejected rather
-        # than folded into the line body, so both code paths agree regardless of
-        # buffer-fill boundaries (ANT-2026-CN279YCX, ANT-2026-MG2WTZ8Z).
+        # Require CRLF, as the fast path above does: a bare LF is rejected,
+        # not kept in the line.
         if nbytes >= 2 && bytes[nbytes-1] == 0x0d && bytes[nbytes] == 0x0a
             resize!(bytes, nbytes - 2)
             return String(bytes)
@@ -2083,8 +2062,12 @@ end
 """
     roundtrip!(transport, address, request; secure=false, server_name=nothing) -> Response
 
-Execute a single request through `transport` without the higher-level redirect,
-cookie, or retry orchestration provided by `Client`.
+Send `request` to `address` (`"host:port"`) over one HTTP/1 connection from
+`transport`, without redirects, cookies, or the client's retry rules.
+`secure = true` uses TLS,
+with `server_name` for SNI and certificate checks. The response body is a
+stream; read it with [`body_read!`](@ref) and close it with
+[`body_close!`](@ref).
 """
 function roundtrip!(transport::Transport, address::String, request::Request)
     return _streaming_response(_roundtrip_incoming!(transport, address, request, false, nothing))

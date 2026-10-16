@@ -147,22 +147,11 @@ function _urlparts_url!(parts::_URLParts)::String
     return url
 end
 
-# Authority for the `Host` header. This mirrors the URL as written: an explicit
-# port is preserved, but the scheme's default port is never synthesized. The
-# connection address (`_urlparts_address!`) always carries a port for dialing,
-# so the two intentionally differ for a default-port URL.
-#
-# Synthesizing the default port into `Host` (e.g. `s3.amazonaws.com:443`) is
-# legal per RFC 9110 but breaks any server that treats the Host verbatim. The
-# motivating case is AWS SigV4: it signs the canonical host (`s3.amazonaws.com`)
-# and rejects a request whose `Host` carries `:443`. Go's net/http, curl and
-# HTTP.jl 1.x all keep the Host authority as written; this restores that.
-#
-# For an explicit port we use the authority directly. For a default-port URL we
-# strip the synthesized `:<default_port>` off `address` rather than reusing
-# `server_name`, because `server_name` unwraps IPv6 brackets (`2001:db8::1`)
-# whereas a `Host` header requires them (`[2001:db8::1]`); `address` keeps the
-# brackets (`[2001:db8::1]:443`), so trimming the port yields the correct form.
+# Authority for the `Host` header, as written in the URL: an explicit port is
+# kept and a default port is never added, because servers that compare `Host`
+# verbatim (e.g. AWS SigV4 signing) reject `host:443`. For a default-port URL,
+# trim the port off `address` rather than using `server_name`, which drops the
+# IPv6 brackets that `Host` requires.
 function _urlparts_host_header!(parts::_URLParts)::String
     getfield(parts, :has_explicit_port) && return _urlparts_address!(parts)
     address = _urlparts_address!(parts)
@@ -218,7 +207,6 @@ end
 end
 
 @inline function _userinfo_basic_authorization(userinfo::AbstractString)::String
-    # Matches 1.x, curl, and browsers.
     username, password = _userinfo_username_password(userinfo)
     return "Basic " * _base64encode(string(username, ":", password))
 end

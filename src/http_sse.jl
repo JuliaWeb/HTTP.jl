@@ -11,15 +11,15 @@ const _DEFAULT_SSE_STREAM_MAX_LEN = 16 * 1024 * 1024
 """
     SSEEvent(data; event=nothing, id=nothing, retry=nothing)
 
-Server-Sent Event value used for both client-side parsing and server-side
-emission.
+One server-sent event: what a server writes to an [`SSEStream`](@ref), and what
+the client passes to an `sse_callback`.
 
 Fields:
-- `data`: concatenated `data:` lines joined by `\n`
-- `event`: optional event name
-- `id`: last event id in effect when the event dispatched
-- `retry`: last valid retry hint in milliseconds
-- `fields`: all observed fields collected into a string dictionary
+- `data`: the event data; several `data:` lines are joined with `"\\n"`
+- `event`: the event type, or `nothing`
+- `id`: the last event ID received, or `nothing`
+- `retry`: the last reconnection time received, in milliseconds, or `nothing`
+- `fields`: the event's fields by name
 """
 struct SSEEvent
     data::String
@@ -73,11 +73,9 @@ end
 """
     SSEStream(; max_len=16*1024*1024)
 
-Writable Server-Sent Events body used by `sse_stream(status)`.
-
-`SSEStream` is also an `AbstractBody`, so server response writers can stream it
-directly to HTTP/1 or HTTP/2 connections while user code keeps pushing
-`SSEEvent` values into it.
+The body of a server-sent event response from [`sse_stream`](@ref).
+`write(stream, event::SSEEvent)` sends an event and `close(stream)` ends the
+response. `max_len` limits the size of one event, in bytes.
 """
 mutable struct SSEStream <: AbstractBody
     buffer::Base.BufferStream
@@ -123,11 +121,9 @@ function body_read!(stream::SSEStream, dst::Vector{UInt8})::Int
     return readbytes!(buf, dst, available)
 end
 
-# Split `value` into logical lines, treating CR, LF and CRLF all as line
-# terminators. The SSE wire format and browser EventSource parsers accept any of
-# these as a line break, so splitting on '\n' alone (as before) would let a bare
-# '\r' inside `data` smuggle additional wire-level lines/fields. This normalizes
-# every line break in `data` to a fresh `data:` prefix instead.
+# Split `value` on CR, LF, and CRLF. EventSource parsers treat each as a line
+# break, so each must start a new `data:` line; otherwise a bare '\r' in
+# `data` could smuggle extra fields onto the wire.
 function _split_sse_data_lines(value::AbstractString)
     return split(value, r"\r\n|\r|\n"; keepempty=true)
 end
@@ -169,23 +165,22 @@ function write(stream::SSEStream, event::SSEEvent)::Int
 end
 
 """
-    sse_stream(status=200; max_len=16*1024*1024, ...) -> Response
-    sse_stream(status, f; max_len=16*1024*1024, ...) -> Response
-    sse_stream(response; max_len=16*1024*1024) -> SSEStream
-    sse_stream(response, f; max_len=16*1024*1024) -> SSEStream
+    sse_stream(status=200; max_len=16*1024*1024, kwargs...) -> Response
+    sse_stream(f, status; max_len=16*1024*1024, kwargs...) -> Response
+    sse_stream(response[, f]) -> SSEStream
 
-Create or configure a server-sent events response.
+Build a server-sent event response for a `serve!` handler to return. It has an
+[`SSEStream`](@ref) body and the headers `Content-Type: text/event-stream` and
+`Cache-Control: no-cache`. The other keywords are those of
+[`Response`](@ref).
 
-`sse_stream(status; ...)` constructs a `Response` with an `SSEStream` body,
-sets the standard SSE headers, and returns the response for manual event
-emission.
+With a function `f`, usually a `do` block as in `sse_stream(200) do stream`,
+`f(stream)` runs on its own task and writes [`SSEEvent`](@ref)s to the stream;
+the response ends when `f` returns.
+Without `f`, write events to `response.body` and close it to end the response.
 
-`sse_stream(status) do stream ... end` is the usual server helper. It creates
-the response, runs the producer on a background task, and closes the stream
-automatically when the callback finishes.
-
-The `response`-accepting forms are for responses that already have an
-`SSEStream` body.
+The `response` forms take a `Response` whose body is already an `SSEStream`,
+set its headers, start `f` if given, and return the stream.
 """
 function sse_stream end
 

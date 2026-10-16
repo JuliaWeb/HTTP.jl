@@ -130,10 +130,8 @@ const _STATIC_TABLE = HeaderField[
     HeaderField("www-authenticate", "", false),
 ]
 
-# Pre-built indexes over the (immutable) HPACK static table for O(1) lookup
-# of (name, value) → exact-index and name → first-index. These are the hot
-# paths inside `encode_header_block`; the static table has 61 entries and
-# was previously linearly scanned twice per encoded header field.
+# Lookup tables over the immutable HPACK static table for `encode_header_block`:
+# (name, value) => exact index, and name => first index.
 const _STATIC_TABLE_EXACT_INDEX = let
     d = Dict{Tuple{String,String},Int}()
     @inbounds for i in 1:length(_STATIC_TABLE)

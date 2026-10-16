@@ -388,10 +388,9 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
 end
 
 # Returns `true` when all of `data` was written, `false` when the stream's send
-# side closed mid-body and the remaining payload must be abandoned.
-# `framebuf` holds one frame header plus payload so both go out in one transport
-# write, as before. Each body writer owns and reuses it across DATA frames instead
-# of allocating a frame per chunk.
+# side closed mid-body and the remaining payload must be abandoned. `framebuf`
+# is the caller's reusable buffer for one frame header plus payload, so each
+# DATA frame goes out in one transport write.
 function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request,
     data::AbstractVector{UInt8}, end_stream::Bool, framebuf::Vector{UInt8})::Bool
     offset = 1
@@ -690,9 +689,8 @@ function _try_register_stream_locked!(conn::H2Connection)::Union{Nothing,H2Strea
         state = H2StreamState(stream_id, conn.max_buffered_bytes)
         conn.streams[stream_id] = state
         conn.stream_send_window[stream_id] = conn.initial_stream_send_window
-        # Convert the caller's pending reservation into the real stream entry.
-        # The reservation was placed by `_acquire_h2_conn!` (or by the retry
-        # loop in `_register_stream_and_send_headers!` on the slow path).
+        # Convert the pending reservation from `_acquire_h2_conn!`, if any,
+        # into the real stream entry.
         if conn.pending_stream_count > 0
             conn.pending_stream_count -= 1
         end
@@ -857,11 +855,9 @@ function _handle_stream_header_fragment!(
         if !state.headers_complete
             status = _h2_header_block_status(decoded)
             if status !== nothing && 100 <= status < 200
-                # An informational (1xx) header block precedes the final
-                # response head and is not the response (RFC 9113 §8.1):
-                # validate it, discard it, and keep waiting for the final
-                # (>= 200) block. Storing it as the head made the real head
-                # look like trailers (#1360).
+                # An informational (1xx) header block is not the response
+                # (RFC 9113 §8.1): validate it, discard it, and keep waiting
+                # for the final (>= 200) block (#1360).
                 _check_h2_informational_response(decoded, block_end_stream)
             else
                 state.decoded_headers = decoded
@@ -1595,7 +1591,7 @@ end
 # the read loop can tell an informational (1xx) block from the final response
 # head. Returns `nothing` when the block has no parseable `:status`; such a
 # block is then treated as the head so `_decode_response_headers` reports the
-# malformed pseudo-header on the request's own thread, exactly as before.
+# malformed pseudo-header on the request's own thread.
 function _h2_header_block_status(headers::Vector{HeaderField})::Union{Nothing,Int}
     for header in headers
         header.name == ":status" || continue

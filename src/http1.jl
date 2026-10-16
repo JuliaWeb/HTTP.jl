@@ -120,11 +120,8 @@ end
 """
     trailers(body)
 
-Return parsed trailer headers for a chunked body; empty headers for other body
-types.
-
-The returned `Headers` object is copied so callers can inspect or mutate it
-without racing the body reader.
+Return a copy of the trailers that ended a chunked `body`, or empty `Headers`
+for other bodies. Read the body to the end first.
 """
 function trailers(body::ChunkedBody)::Headers
     return copy(body.trailers)
@@ -252,15 +249,9 @@ function _parse_transfer_encoding!(hdrs::Headers, proto_major::UInt8, proto_mino
     values = headers(hdrs, "Transfer-Encoding")
     isempty(values) && return false
     if proto_major < UInt8(1) || (proto_major == UInt8(1) && proto_minor < UInt8(1))
-        # RFC 9112 §6.1: an HTTP/1.0 message must not use Transfer-Encoding; a
-        # recipient that receives one has faulty framing. The old behavior
-        # silently dropped the header and fell back to Content-Length while
-        # leaving a keep-alive connection open, so a reverse proxy that framed
-        # the body as chunked could leave the trailing chunked bytes on the
-        # reused connection for HTTP.jl to parse as a smuggled pipelined request
-        # (ANT-2026-YD5QTQDZ). Reject instead: this surfaces as a 400 and the
-        # server closes the connection (Response close=true), so no ambiguous
-        # bytes remain on the transport.
+        # RFC 9112 §6.1: Transfer-Encoding in an HTTP/1.0 message means faulty
+        # framing. Reject it so leftover chunked bytes on a kept-alive
+        # connection cannot be read as a smuggled request.
         throw(ProtocolError("Transfer-Encoding is not allowed in HTTP/1.0 messages"))
     end
     length(values) == 1 || throw(ProtocolError("too many Transfer-Encoding header values"))
@@ -373,16 +364,10 @@ function _consume_crlf(io::IO)
 end
 
 function _parse_chunk_size(line::AbstractString)::Int64
-    # RFC 9112 §7.1: chunk = chunk-size [ chunk-ext ] CRLF, where
-    #   chunk-size = 1*HEXDIG. The chunk-size token must be one or more ASCII
-    # hex digits with no sign, no "0x" prefix, and no surrounding whitespace.
-    # We split off any chunk extension at the first ';' and then validate the
-    # remaining token byte-by-byte instead of using Base.parse(Int64,...;base=16),
-    # which silently tolerates '+'/'-', a "0x" prefix, and isspace padding
-    # (including a trailing bare CR). Accepting those forms lets HTTP.jl disagree
-    # with an RFC-strict front-end proxy about where the chunked body ends, which
-    # enables HTTP request smuggling (ANT-2026-SRPX7DN1). This mirrors the strict
-    # decimal parser used for Content-Length (_parse_int64_decimal_header_value).
+    # RFC 9112 §7.1: chunk-size = 1*HEXDIG, optionally followed by `;` and an
+    # extension. Parse the digits by hand because `Base.parse` also accepts a
+    # sign and surrounding whitespace (even a bare CR); any leniency a strict
+    # front-end proxy lacks enables request smuggling.
     semi = findfirst(';', line)
     token = semi === nothing ? line : SubString(line, firstindex(line), prevind(line, semi))
     units = codeunits(token)
@@ -733,17 +718,15 @@ function _request_has_body(request::Request)::Bool
     return true
 end
 
-# RFC 9112 §3.2: "A user agent that sends Host SHOULD send it as the first
-# field line after the request-line." curl, Go's net/http and Python's
+# RFC 9110 §7.2: "A user agent that sends Host SHOULD send it as the first
+# field in the header section of a request." curl, Go's net/http and Python's
 # http.client all do, and some CDN/WAF front ends reject an otherwise identical
-# request whose Host arrives after other fields (#1361). `setheader` appends a
-# key that is not already stored, which used to land the injected `Host` after
-# every caller-supplied and client-default header.
+# request whose Host arrives after other fields (#1361).
 #
 # The value is the caller's `Host` header when one is stored with a non-empty
 # value, otherwise `request.host` (the URL authority as written); an
 # empty-valued caller `Host` is kept as-is when there is no `request.host`
-# (RFC 9112 §3.2.2 requires an empty Host for authority-less targets). Exactly
+# (RFC 9112 §3.2 requires an empty Host for authority-less targets). At most
 # one `Host` line is written: a caller-supplied `Host` is moved to the front
 # rather than duplicated, and any further stored `Host` entries are dropped.
 function _hoist_host_header!(headers::Headers, request_host::Union{Nothing,String})::Nothing
@@ -829,18 +812,12 @@ end
 """
     write_request!(io, request)
 
-Serialize an HTTP/1 request to `io`, including body framing.
+Write `request` to `io` in HTTP/1.1 format, with its body.
 
-Behavior:
-- writes exactly one `Host` line as the first header field (RFC 9112 §3.2),
-  taking the value from a caller-supplied `Host` header when present and from
-  `request.host` otherwise
-- normalizes connection-close signaling
-- chooses between `Content-Length` and chunked transfer-coding
-- serializes trailers only for chunked bodies
-
-Returns `nothing`. May throw `ProtocolError` for inconsistent framing or
-propagate exceptions from `io` and the request body.
+The `Host` header comes first (RFC 9110 §7.2), taken from the request's `Host`
+header or else from `request.host`. A body of known length is sent with
+`Content-Length`, and any other body with chunked encoding, the only framing
+that carries trailers.
 """
 function write_request!(
     io::IO,
@@ -866,11 +843,9 @@ end
 """
     write_response!(io, response)
 
-Serialize an HTTP/1 response to `io`, including body framing.
-
-Body suppression rules for status codes like `1xx`, `204`, and `304` are
-enforced here so callers can hand the function a regular `Response` object and
-let the serializer apply wire-level HTTP/1 rules.
+Write `response` to `io` in HTTP/1.1 format, with its body. No body is written
+for `1xx`, `204`, and `304` responses, or when `response.request` is a `HEAD`
+request.
 """
 function write_response!(io::IO, response::Response)
     headers = copy(response.headers)
@@ -977,31 +952,21 @@ function _parse_status_line(line::AbstractString)::Tuple{UInt8,UInt8,Int,String}
 end
 
 """
-    read_request(io; max_line_bytes=..., max_header_bytes=...)
+    read_request(io; max_line_bytes=64*1024, max_header_bytes=1024*1024) -> Request
 
-Parse one HTTP/1 request from `io`.
-
-Returns a `Request` whose body is one of `EmptyBody`, `FixedLengthBody`, or
-`ChunkedBody` depending on the incoming framing headers.
-
-Throws:
-- `ArgumentError` for invalid parser limits
-- `ParseError` for malformed syntax or truncated framed bodies
-- `ProtocolError` for invalid semantic combinations such as conflicting length
-  metadata
-- any exception propagated by the underlying `IO`
+Read one HTTP/1 request head from `io` and return it as a `Request` whose body
+reads the rest of the request from `io`. `max_line_bytes` limits each line and
+`max_header_bytes` the whole head. Throws [`ParseError`](@ref) or
+[`ProtocolError`](@ref) for an invalid request.
 """
 function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES, max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES)
     line = _readline_crlf(io, max_line_bytes)
     method, target, proto_major, proto_minor = _parse_request_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
     chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
-    # A request that carries BOTH Transfer-Encoding and Content-Length has
-    # ambiguous framing (RFC 9112 §6.1/§6.3): a front-end proxy may frame by one
-    # header while HTTP.jl frames by the other, leaving trailing bytes on a
-    # reused keep-alive connection that get parsed as a smuggled request
-    # (ANT-2026-YD5QTQDZ). Reject such requests outright (surfaced as 400 with
-    # the connection closed) instead of silently preferring Transfer-Encoding.
+    # RFC 9112 §6.1: Transfer-Encoding plus Content-Length is ambiguous framing
+    # that a front-end proxy may read differently (request smuggling), so the
+    # request is rejected (400, connection closed).
     if chunked && hasheader(headers, "Content-Length")
         throw(ProtocolError("request must not include both Transfer-Encoding and Content-Length"))
     end
