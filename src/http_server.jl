@@ -234,6 +234,9 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     # Set by an explicit `startwrite`: an h1 FIXED body is sent as it is
     # written once it outgrows `_FIXED_BODY_COALESCE_BYTES`.
     stream_fixed_body::Bool
+    # The last error the stream's own request reads or response writes raised:
+    # a client or network failure, unlike anything else a handler throws.
+    io_error::Any
 end
 
 # Rebuild through the positional internal constructor rather than the public
@@ -303,6 +306,7 @@ function Stream(server::Server, tracked::_ServerConn, request::Req) where {Req<:
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
         false,
+        nothing,
     )
 end
 
@@ -353,6 +357,7 @@ function Stream(request::Req) where {Req<:Request}
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
         false,
+        nothing,
     )
 end
 
@@ -411,6 +416,7 @@ function Stream(
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
         false,
+        nothing,
     )
 end
 
@@ -1015,9 +1021,9 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
-function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
+function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, head::Bool=_is_head_request(response.request))::Nothing
     try
-        write_response!(conn, response)
+        _write_response!(conn, response, head)
     finally
         if response.body isa AbstractBody
             @try_ignore body_close!(response.body::AbstractBody)
@@ -1065,17 +1071,8 @@ end
     _H2_CONN_CLOSE_INTERNAL = 3
 end
 
-# Reseau reports a TLS read deadline as a `TLSError` wrapping the
-# `DeadlineExceededError` that a TCP read throws directly.
-@inline function _is_server_timeout(err)::Bool
-    err isa IOPoll.DeadlineExceededError && return true
-    err isa TLS.TLSError || return false
-    tls_err = err::TLS.TLSError
-    return tls_err.op == "read" && tls_err.cause isa IOPoll.DeadlineExceededError
-end
-
 @inline function _classify_server_conn_error(err::Exception)::_ServerConnErrAction
-    _is_server_timeout(err) && return _SERVER_CONN_ERR_TIMEOUT
+    _is_read_timeout(err) && return _SERVER_CONN_ERR_TIMEOUT
     if err isa ParseError || err isa ProtocolError || err isa EOFError ||
        err isa IOPoll.NetClosingError || err isa TLS.TLSError ||
        err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err)
@@ -1112,9 +1109,22 @@ function _server_error_status(err)::Union{Nothing,Int}
         end
         return 400
     end
-    if _is_server_timeout(err)
+    if _is_read_timeout(err)
         return 408
     end
+    return nothing
+end
+
+# A stream handler error is a 500 unless the stream's own I/O raised it; that
+# keeps its request-read status, such as 400 for a malformed body.
+function _stream_error_status(stream::Stream, err)::Int
+    err === stream.io_error || return 500
+    status = _server_error_status(err)
+    return status === nothing ? 500 : status::Int
+end
+
+function _log_handler_error(err, backtrace, request::Request, conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    @error "server handler error" exception = (err, backtrace) method = request.method target = request.target peer = _conn_remote_addr(conn)
     return nothing
 end
 
@@ -1222,10 +1232,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                         return nothing
                     end
                 catch err
-                    status = _server_error_status(err)
+                    # Failed reads or writes on the connection and WebSocket closes come from the peer.
+                    (err === stream.io_error || err isa WebSockets.WebSocketError) ||
+                        _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    status = _stream_error_status(stream, err)
                     if !(@atomic :acquire stream.response_started)
                         @try_ignore begin
-                            setstatus(stream, status === nothing ? 500 : status::Int)
+                            setstatus(stream, status)
                             stream.response.close = true
                             # The handler's response may declare framing for a
                             # body the error path never writes (e.g. a reused
@@ -1244,7 +1257,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                         # (h1 FIXED mode) and never reached the wire: answer
                         # with a raw error response instead of silently
                         # dropping the connection (#1303).
-                        _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
+                        _try_write_server_error!(tracked.conn, request, status)
                         return nothing
                     end
                     # Return without `closewrite`: the connection closes, and a body
@@ -1253,13 +1266,18 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     return nothing
                 end
             else
-                handler_request = request
-                response = try
-                    handler_request = _buffer_server_request(request, server.max_body_bytes)
-                    server.handler(handler_request)
+                handler_request = try
+                    _buffer_server_request(request, server.max_body_bytes)
                 catch err
                     status = _server_error_status(err)
                     _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
+                    return nothing
+                end
+                response = try
+                    server.handler(handler_request)
+                catch err
+                    _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
                 if !(response isa Response)
@@ -1267,26 +1285,20 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
+                # A handler may return one response for many requests at once: never store request state on it.
                 response_obj = response::Response
-                response_obj.request = handler_request
                 # A response whose streaming body was already sent cannot be
                 # serialized again. Answer 500 before any bytes go out instead
                 # of failing mid-response and dropping the connection (#1333).
                 try
-                    _check_response_body_unsent(response_obj)
+                    _check_response_body_unsent(response_obj, handler_request)
                 catch err
                     @error "server handler returned a response that cannot be sent" exception = err
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
-                if !_request_body_fully_consumed(handler_request)
-                    response_obj.close = true
-                    @try_ignore begin
-                        body_close!(handler_request.body)
-                    end
-                end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj)
+                _write_all_response!(tracked.conn, response_obj, _is_head_request(handler_request))
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
@@ -1336,24 +1348,26 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
     return nothing
 end
 
-function _run_server!(server::Server, ready::Threads.Event)
-    listener = TCP.listen(
-        server.network, _listen_address(server); backlog=server.backlog, reuseaddr=server.reuseaddr,
-    )
+# Bind in the caller, not in the server task, so a busy port throws
+# `AddressInUseError` instead of a `TaskFailedException`.
+function _listen_tcp(network::AbstractString, address::String, backlog::Integer, reuseaddr::Bool)::TCP.Listener
     try
-        _serve_listener!(server, listener, ready)
-    finally
-        @try_ignore begin
-            TCP.close(listener)
-        end
+        return TCP.listen(network, address; backlog=backlog, reuseaddr=reuseaddr)
+    catch err
+        wrapped = _wrap_server_listen_error(err, address)
+        wrapped === err ? rethrow() : throw(wrapped)
     end
+end
+
+function _check_server_startable(server::Server)::Nothing
+    state = _server_state(server)
+    state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
+    state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
     return nothing
 end
 
 function _start_server_task!(f::F, server::Server)::Server where {F}
-    state = _server_state(server)
-    state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
-    state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
+    _check_server_startable(server)
     ready = Threads.Event(true)
     task = @_spawn_interactive begin
         try
@@ -1370,15 +1384,11 @@ function _start_server_task!(f::F, server::Server)::Server where {F}
         unlock(server.lock)
     end
     wait(ready)
-    # If the spawned serve loop failed during startup, surface the failure
-    # synchronously to the caller. We rely on the synchronous bind path in
-    # the `serve!(handler, host, port; ...)` form to translate bind errors
-    # (EADDRINUSE etc.) to `HTTP.AddressInUseError` before the task is even
-    # spawned. Anything that fails inside the task itself is rethrown as
-    # `TaskFailedException` here without further unwrapping; the JuliaC
-    # trim verifier does not allow `current_exceptions(::Task)` and
-    # `getproperty(::TaskFailedException, :task)` is also trim-unsafe in
-    # the path that JuliaC compiles.
+    # Surface a startup failure to the caller. Bind errors are raised before
+    # the task starts (`_listen_tcp`); anything that fails inside the task is
+    # rethrown as `TaskFailedException` without unwrapping, because the JuliaC
+    # trim verifier rejects `current_exceptions(::Task)` and
+    # `getproperty(::TaskFailedException, :task)`.
     if istaskdone(task) && istaskfailed(task)
         wait(task)
     end
@@ -1392,8 +1402,19 @@ Start `server`, made with the [`Server`](@ref) constructor, in the background
 and return it.
 """
 function listen!(server::Server)::Server
-    return _start_server_task!(server) do ready
-        _run_server!(server, ready)
+    _check_server_startable(server)
+    listener = _listen_tcp(server.network, _listen_address(server), server.backlog, server.reuseaddr)
+    try
+        return _start_server_task!(server) do ready
+            try
+                _serve_listener!(server, listener, ready)
+            finally
+                @try_ignore TCP.close(listener)
+            end
+        end
+    catch
+        @try_ignore TCP.close(listener)
+        rethrow()
     end
 end
 
@@ -1710,12 +1731,7 @@ function serve!(
     backlog::Integer=128,
 ) where {F}
     bind_address = HostResolvers.join_host_port(host, listenany ? 0 : Int(port_num))
-    listener = try
-        TCP.listen("tcp", bind_address; backlog=backlog, reuseaddr=reuseaddr)
-    catch err
-        wrapped = _wrap_server_listen_error(err, bind_address)
-        wrapped === err ? rethrow() : throw(wrapped)
-    end
+    listener = _listen_tcp("tcp", bind_address, backlog, reuseaddr)
     try
         return serve!(
             handler,

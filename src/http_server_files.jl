@@ -233,7 +233,9 @@ function _servecontent_preconditions(
         end
     end
 
-    range_header = header(request.headers, "Range", "")
+    # RFC 9110 §14.2: only GET has range semantics (HEAD mirrors GET); other
+    # methods ignore `Range`.
+    range_header = request.method == "GET" || request.method == "HEAD" ? header(request.headers, "Range", "") : ""
     if !isempty(range_header)
         if_range = _if_range_satisfied(request, response_headers, modtime)
         if if_range === false
@@ -245,8 +247,11 @@ end
 
 function _parse_single_range(range_header::AbstractString, size::Int64)::Union{Nothing,_ServeContentRange,Symbol}
     isempty(range_header) && return nothing
-    startswith(range_header, "bytes=") || return :invalid
+    # Ignore an unknown range unit (RFC 9110 §14.2) and a request for several
+    # ranges, which would need a multipart response: send the whole content.
+    startswith(range_header, "bytes=") || return nothing
     specs = filter(!isempty, map(strip, split(String(SubString(String(range_header), 7)), ',')))
+    length(specs) > 1 && return nothing
     length(specs) == 1 || return :invalid
     spec = specs[1]
     dash = findfirst(isequal('-'), spec)
@@ -375,8 +380,10 @@ end
 Build the response to `request` for `source`, an `AbstractVector{UInt8}` or a
 seekable `IO`; pass `codeunits(str)` for a string. Conditional requests
 (`If-None-Match`, `If-Modified-Since`, `If-Match`, `If-Unmodified-Since`) get
-`304` or `412` when they apply. A request for one byte range gets
-`206 Partial Content`, and an unsatisfiable range gets `416`.
+`304` or `412` when they apply. A `GET` or `HEAD` request for one byte range
+gets `206 Partial Content`, and an unsatisfiable range gets `416`. Any other
+`Range`, such as several ranges or another unit, is ignored and the whole
+content is sent.
 
 - `name`: a file name whose extension sets the `Content-Type` when
   `content_type` is not given. Without either, the type is detected from the

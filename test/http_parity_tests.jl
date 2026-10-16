@@ -45,6 +45,12 @@ end
     parts = split(raw_head, "\r\n\r\n"; limit = 2)
     @test length(parts) == 2
     @test parts[2] == ""
+
+    # An explicit request decides HEAD handling without being stored on the response.
+    shared = HT.Response(200; body = "oops")
+    HT.write_response!(io, shared, head_request)
+    @test endswith(String(take!(io)), "Content-Length: 4\r\n\r\n")
+    @test shared.request === nothing
 end
 
 @testset "HTTP parity redirect semantics" begin
