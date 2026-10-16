@@ -87,6 +87,15 @@ end
     return ProtocolError("HTTP/2 connection is closed")
 end
 
+# A bodyless HTTP/2 status response. The request is set after construction:
+# callers pass a Union of request types, and a Union-typed keyword argument
+# makes the keyword call dynamically dispatched under juliac --trim.
+function _h2_status_response(status::Int, request::Request)
+    response = Response(status; proto_major=2, proto_minor=0)
+    response.request = request
+    return response
+end
+
 mutable struct _H2ServerBody <: AbstractBody
     conn::Union{TCP.Conn,TLS.Conn}
     write_lock::ReentrantLock
@@ -1273,11 +1282,10 @@ end
 """
     _write_h2_headers_and_first_batch!(...) -> Nothing
 
-Emit the HEADERS frame + as many DATA frames as the current send window
-allows in one socket write, holding `write_lock` across encoder + emit so
-HPACK state stays consistent. Any body bytes that don't fit in the first
-window reservation fall through to the regular `_write_data_frames_h2_server!`
-batching path (which re-acquires the lock per batch).
+Write the HEADERS frame and the first DATA frame in one socket write, holding
+`write_lock` across encoding and writing so HPACK state stays consistent. The
+rest of the body goes through `_write_data_frames_h2_server!`, which waits for
+send credit without holding `write_lock`.
 """
 function _write_h2_headers_and_first_batch!(
     conn::Union{TCP.Conn,TLS.Conn},
@@ -1315,38 +1323,17 @@ function _write_h2_headers_and_first_batch!(
             return nothing
         end
         # 2. Write HEADERS and the first DATA frame as one buffer.
-        _writev_headers_and_batch!(conn, stream_id, body, headers_bytes,
-                                   1, first_chunk, server_max, body_end_stream, total_len)
-        offset = 1 + first_chunk
-        # 3. More body? Same idea but no headers prelude.
-        while offset <= total_len
-            extra = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
-            extra <= 0 && break
-            _writev_headers_and_batch!(conn, stream_id, body, nothing,
-                                       offset, extra, server_max, body_end_stream, total_len)
-            offset += extra
-        end
+        _write_h2_batch_via_single_buffer!(conn, stream_id, body, headers_bytes,
+                                           1, first_chunk, server_max, body_end_stream, total_len)
     finally
         unlock(write_lock)
     end
-    return nothing
-end
-
-@inline function _writev_headers_and_batch!(
-    conn::Union{TCP.Conn,TLS.Conn},
-    stream_id::UInt32,
-    body::AbstractVector{UInt8},
-    headers_bytes::Union{Nothing,Vector{UInt8}},
-    body_offset::Int,
-    body_len::Int,
-    server_max::Int,
-    body_end_stream::Bool,
-    total_len::Int,
-)::Nothing
-    # Copy the optional HEADERS frame and the DATA frames into one buffer and
-    # write it once; this measured as fast as a vectored write.
-    _write_h2_batch_via_single_buffer!(conn, stream_id, body,
-        headers_bytes, body_offset, body_len, server_max, body_end_stream, total_len)
+    # 3. Wait for more credit without the lock: the read loop needs it to
+    # answer PING and SETTINGS before it can read the WINDOW_UPDATE.
+    first_chunk < total_len && _write_data_frames_h2_server!(
+        conn, write_lock, send_state, stream_id, @view(body[(first_chunk + 1):total_len]);
+        end_stream=body_end_stream, write_deadline_ns=write_deadline_ns,
+    )
     return nothing
 end
 
@@ -1354,7 +1341,7 @@ end
     conn::Union{TCP.Conn,TLS.Conn},
     stream_id::UInt32,
     body::AbstractVector{UInt8},
-    headers_bytes::Union{Nothing,Vector{UInt8}},
+    headers_bytes::Vector{UInt8},
     body_offset::Int,
     body_len::Int,
     server_max::Int,
@@ -1362,13 +1349,10 @@ end
     total_len::Int,
 )::Nothing
     n_data_frames = cld(body_len, server_max)
-    out_len = (headers_bytes === nothing ? 0 : length(headers_bytes)) + body_len + 9 * n_data_frames
+    out_len = length(headers_bytes) + body_len + 9 * n_data_frames
     out = Vector{UInt8}(undef, out_len)
-    out_pos = 1
-    if headers_bytes !== nothing
-        unsafe_copyto!(out, out_pos, headers_bytes, 1, length(headers_bytes))
-        out_pos += length(headers_bytes)
-    end
+    unsafe_copyto!(out, 1, headers_bytes, 1, length(headers_bytes))
+    out_pos = length(headers_bytes) + 1
     rem = body_len
     cur = body_offset
     while rem > 0
@@ -1382,33 +1366,6 @@ end
         rem -= payload
     end
     write(conn, out)
-    return nothing
-end
-
-function _write_h2_buffered_stream_response!(
-    conn::Union{TCP.Conn,TLS.Conn},
-    write_lock::ReentrantLock,
-    send_state::_H2SendWindowState,
-    stream_id::UInt32,
-    request::Request,
-    stream::Stream,
-    write_deadline_ns::Int64=Int64(0),
-)::Nothing
-    response = stream.response::Response
-    response.request = request
-    allows_body = _h2_response_allows_body(request, response)
-    body_bytes = take!(stream.request_buffer)
-    if !allows_body
-        empty!(body_bytes)
-    elseif response.content_length >= 0 && length(body_bytes) != response.content_length
-        throw(ProtocolError("response body bytes did not match Content-Length"))
-    end
-    has_body = !isempty(body_bytes)
-    has_trailers = !isempty(response.trailers)
-    end_stream = !has_body && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
-    has_body && _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body_bytes; end_stream=!has_trailers, write_deadline_ns=write_deadline_ns)
-    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
     return nothing
 end
 
@@ -1462,12 +1419,7 @@ function _handle_h2_stream!(
                 else
                     status = _server_error_status(err)
                     stream.request_buffer = IOBuffer()
-                    stream.response = Response(
-                        status === nothing ? 500 : status::Int;
-                        proto_major=2,
-                        proto_minor=0,
-                        request=request,
-                    )
+                    stream.response = _h2_status_response(status === nothing ? 500 : status::Int, request)
                     @atomic :release stream.response_started = false
                     @atomic :release stream.write_closed = false
                     @atomic :release stream.read_closed = false
@@ -1488,12 +1440,7 @@ function _handle_h2_stream!(
                     send_state,
                     stream_id,
                     request,
-                    Response(
-                        status === nothing ? 500 : status::Int;
-                        proto_major=2,
-                        proto_minor=0,
-                        request=request,
-                    ),
+                    _h2_status_response(status === nothing ? 500 : status::Int, request),
                     _server_write_deadline_ns(server),
                 )
                 @try_ignore body_close!(request.body)
@@ -1507,7 +1454,7 @@ function _handle_h2_stream!(
                     send_state,
                     stream_id,
                     request,
-                    Response(500; proto_major=2, proto_minor=0, request=request),
+                    _h2_status_response(500, request),
                     _server_write_deadline_ns(server),
                 )
                 return nothing
@@ -1517,7 +1464,7 @@ function _handle_h2_stream!(
                 _check_response_body_unsent(response_obj, handler_request)
             catch err
                 @error "h2 server handler returned an unusable response body" exception = err
-                response_obj = Response(500; proto_major=2, proto_minor=0, request=handler_request)
+                response_obj = _h2_status_response(500, handler_request)
             end
             _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
         end
