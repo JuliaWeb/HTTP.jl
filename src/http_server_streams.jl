@@ -561,8 +561,22 @@ function (adapter::_StreamHandlerAdapter)(stream::Stream)
     resp = adapter.handler(req)
     resp isa Response || throw(ProtocolError("streamhandler request handler must return HTTP.Response"))
     response = resp::Response
-    response.request = req
-    stream.response = response
+    # Writing updates the stream's response, and a handler may reuse one `Response`.
+    stream.response = _response_nocopy_exact(
+        response.status,
+        response.reason,
+        copy(response.headers),
+        copy(response.trailers),
+        response.body,
+        response.content_length,
+        response.proto_major,
+        response.proto_minor,
+        response.close,
+        req,
+        response.request_url,
+        response.previous,
+        response.redirect_count,
+    )
     _write_response_body_to_stream!(stream, response.body)
     closewrite(stream)
     closeread(stream)

@@ -2019,6 +2019,41 @@ end
     end
 end
 
+@testset "Servers leave a shared response unchanged" begin
+    # Concurrent requests share one response object, so per-request state
+    # stored on it (the request, the close flag) leaks between them: a HEAD
+    # could send the body and a GET could lose it.
+    shared = HT.Response(200; headers = ["X-Shared" => "1"], body = "0123456789")
+    request_server = HT.serve!(req -> shared, "127.0.0.1", 0; listenany = true)
+    stream_handler = HT.streamhandler(req -> shared)
+    # A failed write must close only its own connection.
+    failing_server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        close(stream.tracked.conn)
+        stream_handler(stream)
+    end
+    stream_server = HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true)
+    try
+        @test isempty(_raw_http_request(HT.port(failing_server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+        for server in (request_server, stream_server)
+            head_raw = _raw_http_request(HT.port(server), "HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(head_raw, "HTTP/1.1 200 OK\r\n")
+            @test endswith(head_raw, "\r\n\r\n")
+            get_raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test endswith(get_raw, "\r\n\r\n0123456789")
+            @test !occursin("connection: close", lowercase(get_raw))
+        end
+        @test shared.request === nothing
+        @test !shared.close
+        @test shared.content_length == 10
+        @test collect(shared.headers) == ["X-Shared" => "1"]
+    finally
+        for server in (request_server, failing_server, stream_server)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
 @testset "HTTP fixed-length stream responses across the coalescing boundary" begin
     for tls in (false, true)
         listener = if tls
