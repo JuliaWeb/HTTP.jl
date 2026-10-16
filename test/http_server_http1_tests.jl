@@ -1923,6 +1923,46 @@ end
     end
 end
 
+@testset "HTTP server answers a response body that does not match its Content-Length with 500" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        request.target == "/long" && return HT.Response(200; body = Vector{UInt8}("hello"), content_length = 3)
+        request.target == "/none" && return HT.Response(200; content_length = 10)
+        return HT.Response(200; body = "hello", content_length = 10)
+    end
+    try
+        for target in ("/short", "/long", "/none")
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+            @test !occursin("hello", raw)
+        end
+        # A HEAD response may describe a body it does not send.
+        raw = _raw_http_request(HT.port(server), "HEAD /short HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 200 OK\r\n")
+        @test occursin("Content-Length: 10\r\n", raw)
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
+@testset "HTTP server leaves a failed chunked response unterminated" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        HT.startread(stream)
+        write(stream, "partial")
+        error("late failure")
+    end
+    try
+        raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test occursin("Transfer-Encoding: chunked\r\n", raw)
+        # No last chunk: the client must not mistake the cut-off body for a complete one.
+        @test endswith(raw, "\r\n\r\n7\r\npartial\r\n")
+        @test_throws Exception HT.get("http://$(HT.server_addr(server))/"; retry = false)
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 @testset "HTTP streamhandler streams response bodies that are not in memory (#1384)" begin
     data = rand(UInt8, 8 * 1024 * 1024)
     source = _HeldBytesSource(IOBuffer(data), nothing, Int[])

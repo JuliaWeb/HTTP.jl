@@ -339,8 +339,9 @@ end
         @test resp.status == 201
         @test String(_read_all_handler_bytes(resp.body)) == "stream-body"
     finally
-        HT.forceclose(server)
-        wait(server)
+        # The record is logged once the response is finished, which can be
+        # after the client has it; a graceful close waits for the handler.
+        close(server)
     end
     record = only(logger.logs)
     @test record.level == Logging.Info
@@ -408,6 +409,26 @@ end
     @test record.kwargs[:status] == 500
     @test record.kwargs[:length] == ncodeunits("partial")
     @test record.kwargs[:exception][1] isa ErrorException
+
+    # A body shorter than its Content-Length fails when the response is
+    # finished: the record shows the 500 the client gets, not a 200.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(stream -> begin
+        HT.startread(stream)
+        HT.setheader(stream, "Content-Length", "10")
+        write(stream, "short")
+    end; logger = logger), "127.0.0.1", 0; listenany = true)
+    try
+        resp = HT.get("http://$(HT.server_addr(server))/short"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.level == Logging.Error
+    @test record.kwargs[:status] == 500
+    @test record.kwargs[:exception][1] isa HT.ProtocolError
 
     # A chunked response head reaches the wire on the first write, so the
     # record keeps the status the client saw.
