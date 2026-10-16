@@ -847,19 +847,26 @@ function write_request!(
     return nothing
 end
 
+@inline _is_head_request(request::Union{Nothing,Request})::Bool = request !== nothing && request.method == "HEAD"
+
 """
-    write_response!(io, response)
+    write_response!(io, response, request=response.request)
 
 Write `response` to `io` in HTTP/1.1 format, with its body. No body is written
-for `1xx`, `204`, and `304` responses, or when `response.request` is a `HEAD`
-request.
+for `1xx`, `204`, and `304` responses, or when `request` is a `HEAD` request.
 """
-function write_response!(io::IO, response::Response)
+write_response!(io::IO, response::Response) = _write_response!(io, response, _is_head_request(response.request))
+write_response!(io::IO, response::Response, request::Union{Nothing,Request}) =
+    _write_response!(io, response, _is_head_request(request))
+
+# Takes a `Bool`, not the request: `Request` is abstract, and passing an
+# abstractly typed request into a non-inlined call dispatches at runtime,
+# which `juliac --trim` rejects.
+function _write_response!(io::IO, response::Response, response_to_head::Bool)
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
     status_allows_body = _body_allowed_for_status(response.status)
-    response_to_head = response.request !== nothing && (response.request::Request).method == "HEAD"
     allows_body = status_allows_body && !response_to_head
     use_chunked = allows_body && _parse_transfer_encoding!(headers, response.proto_major, response.proto_minor)
     if !status_allows_body
@@ -889,7 +896,8 @@ function write_response!(io::IO, response::Response)
     end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
-    allows_body && _check_response_body_unsent(response)
+    # `allows_body` already rules out HEAD.
+    allows_body && _check_response_body_unsent(response, nothing)
     # Buffer the entire response head (status line + all header lines + blank
     # CRLF) into a single IOBuffer and write it to the transport in one
     # syscall. The transport's `write` does not buffer internally, so emitting

@@ -1,5 +1,9 @@
 # Internal request-scoped client timeout parsing and context helpers.
 
+# How long an `Expect: 100-continue` request waits for `100 Continue` before it
+# sends its body anyway, unless `expect_continue_timeout` says otherwise.
+const _DEFAULT_EXPECT_CONTINUE_TIMEOUT_NS = Int64(1_000_000_000)
+
 @inline function _min_nonzero_ns(a::Int64, b::Int64)::Int64
     a == 0 && return b
     b == 0 && return a
@@ -22,7 +26,7 @@ end
            config.response_header_timeout_ns == 0 &&
            config.read_idle_timeout_ns == 0 &&
            config.write_idle_timeout_ns == 0 &&
-           config.expect_continue_timeout_ns == 0
+           config.expect_continue_timeout_ns == _DEFAULT_EXPECT_CONTINUE_TIMEOUT_NS
 end
 
 function _timeout_ns_from_seconds(name::AbstractString, value)::Int64
@@ -62,7 +66,7 @@ end
     response_header_timeout_ns = _timeout_ns_from_seconds("response_header_timeout", response_header_timeout)
     read_idle_timeout_ns = _timeout_ns_from_seconds("read_idle_timeout", read_idle_timeout_value)
     write_idle_timeout_ns = _timeout_ns_from_seconds("write_idle_timeout", write_idle_timeout)
-    expect_continue_timeout_ns = expect_continue_timeout === nothing ? Int64(0) : _timeout_ns_from_seconds("expect_continue_timeout", expect_continue_timeout)
+    expect_continue_timeout_ns = expect_continue_timeout === nothing ? _DEFAULT_EXPECT_CONTINUE_TIMEOUT_NS : _timeout_ns_from_seconds("expect_continue_timeout", expect_continue_timeout)
     config = _RequestTimeoutConfig(
         connect_timeout_ns,
         response_header_timeout_ns,
@@ -128,6 +132,6 @@ end
 
 @inline function _request_expect_continue_timeout_ns(request::Request)::Int64
     config = get_request_context(request).timeout_config
-    config === nothing && return Int64(0)
+    config === nothing && return _DEFAULT_EXPECT_CONTINUE_TIMEOUT_NS
     return (config::_RequestTimeoutConfig).expect_continue_timeout_ns
 end

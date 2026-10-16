@@ -333,6 +333,36 @@ end
     end
 end
 
+@testset "HTTP.WebSockets client closes a client it owns when the handshake fails" begin
+    # A redirect to a Location without a host fails the handshake. The client
+    # is closed only when the handshake owns it.
+    for owns_client in (true, false)
+        listener = nothing
+        task = nothing
+        client = HT.Client()
+        try
+            listener, task, address = _ws_server() do conn
+                _read_ws_request(conn)
+                headers = HT.Headers()
+                HT.setheader(headers, "Location", "ws://:80/final")
+                _write_response_all!(conn, HT.Response(302, HT.EmptyBody(); headers = headers, content_length = 0))
+            end
+            err = try
+                HT.WebSockets._open_client_websocket("ws://$address/start", client, owns_client)
+                nothing
+            catch caught
+                caught
+            end
+            @test err isa HT.ProtocolError
+            @test isopen(client) == !owns_client
+        finally
+            close(client)
+            _close_quiet!(listener)
+            _close_quiet!(task)
+        end
+    end
+end
+
 @testset "HTTP.WebSockets client handshake response_header_timeout" begin
     listener = nothing
     task = nothing

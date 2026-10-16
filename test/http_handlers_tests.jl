@@ -143,6 +143,10 @@ end
     @test cookies[2].name == "mode"
     @test cookies[2].value == "test"
     @test HT.getcookies(req) === cookies
+    # Without the middleware, `getcookies` reads the header itself.
+    plain = HT.Request("GET", "/"; headers = copy(headers))
+    @test [(c.name, c.value) for c in HT.getcookies(plain)] == [("abc", "def"), ("mode", "test")]
+    @test isempty(HT.getcookies(HT.Request("GET", "/")))
 end
 
 @testset "HTTP handlers request timeout middleware" begin
@@ -247,11 +251,11 @@ end
     @test backtrace isa Vector
     @test_logs (:error, r"^POST /boom 500 [0-9.]+ms$") @test_throws ErrorException HT.Handlers.logging_middleware(_ -> error("boom"))(HT.Request("POST", "/boom"))
 
-    # The logged status follows the server's mapping of the exception.
+    # The server answers 500 for any error a request handler throws, even a ParseError.
     logger = Test.TestLogger()
     rejecting = HT.Handlers.logging_middleware(_ -> throw(HT.ParseError("bad request")); logger = logger)
     @test_throws HT.ParseError rejecting(HT.Request("GET", "/bad"))
-    @test only(logger.logs).kwargs[:status] == 400
+    @test only(logger.logs).kwargs[:status] == 500
     @test only(logger.logs).kwargs[:exception][1] isa HT.ParseError
 
     # A thrown non-Exception value is logged as a 500 and rethrown.
@@ -335,8 +339,9 @@ end
         @test resp.status == 201
         @test String(_read_all_handler_bytes(resp.body)) == "stream-body"
     finally
-        HT.forceclose(server)
-        wait(server)
+        # The record is logged once the response is finished, which can be
+        # after the client has it; a graceful close waits for the handler.
+        close(server)
     end
     record = only(logger.logs)
     @test record.level == Logging.Info
@@ -367,6 +372,18 @@ end
     @test record.kwargs[:peer] isa Reseau.TCP.SocketAddr
     @test record.kwargs[:exception][1] isa ErrorException
 
+    # A request-style error that a stream handler throws itself is still a 500.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(_ -> throw(HT.ParseError("handler bug")); logger = logger), "127.0.0.1", 0; listenany = true)
+    try
+        resp = HT.get("http://$(HT.server_addr(server))/parse"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    @test only(logger.logs).kwargs[:status] == 500
+
     # A fixed-length h1 response head is deferred until closewrite, so a
     # handler that throws after writing part of the body never gets its status
     # on the wire: the server answers 500 and the record reports that.
@@ -392,6 +409,26 @@ end
     @test record.kwargs[:status] == 500
     @test record.kwargs[:length] == ncodeunits("partial")
     @test record.kwargs[:exception][1] isa ErrorException
+
+    # A body shorter than its Content-Length fails when the response is
+    # finished: the record shows the 500 the client gets, not a 200.
+    logger = Test.TestLogger()
+    server = HT.listen!(HT.Handlers.logging_middleware(stream -> begin
+        HT.startread(stream)
+        HT.setheader(stream, "Content-Length", "10")
+        write(stream, "short")
+    end; logger = logger), "127.0.0.1", 0; listenany = true)
+    try
+        resp = HT.get("http://$(HT.server_addr(server))/short"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+    record = only(logger.logs)
+    @test record.level == Logging.Error
+    @test record.kwargs[:status] == 500
+    @test record.kwargs[:exception][1] isa HT.ProtocolError
 
     # A chunked response head reaches the wire on the first write, so the
     # record keeps the status the client saw.
