@@ -87,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `listen!` reports a port that is already in use with `AddressInUseError`, as
-  `serve!` does, instead of a `TaskFailedException`.
+  `serve!` does, instead of a `TaskFailedException`. ([#1432])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1116,3 +1116,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1432]: https://github.com/JuliaWeb/HTTP.jl/issues/1432
