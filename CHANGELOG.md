@@ -96,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that request's stream, and a connection draining after GOAWAY finishes its
   streams before it closes. A request that gets no reply at all still moves
   later requests to a new connection. ([#1426])
+- `examples/batch_server_example.jl` answers batch requests again. It called an
+  internal function with an outdated signature, so every request got `500`. ([#1435])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1160,8 +1162,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1424]: https://github.com/JuliaWeb/HTTP.jl/issues/1424
+[#1425]: https://github.com/JuliaWeb/HTTP.jl/issues/1425
 [#1426]: https://github.com/JuliaWeb/HTTP.jl/issues/1426
 [#1427]: https://github.com/JuliaWeb/HTTP.jl/issues/1427
 [#1428]: https://github.com/JuliaWeb/HTTP.jl/issues/1428
 [#1429]: https://github.com/JuliaWeb/HTTP.jl/issues/1429
 [#1430]: https://github.com/JuliaWeb/HTTP.jl/issues/1430
+[#1431]: https://github.com/JuliaWeb/HTTP.jl/issues/1431
+[#1432]: https://github.com/JuliaWeb/HTTP.jl/issues/1432
+[#1433]: https://github.com/JuliaWeb/HTTP.jl/issues/1433
+[#1434]: https://github.com/JuliaWeb/HTTP.jl/issues/1434
+[#1435]: https://github.com/JuliaWeb/HTTP.jl/issues/1435
+[#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436

@@ -109,14 +109,6 @@ function batch_handler(req::HTTP.Request)
         return HTTP.Response(400, "Expected multipart/mixed content type")
     end
 
-    # Manually read the request body if it's not buffered
-    # In HTTP 2.0 server, bodies default to EmptyBody for streaming
-    req = if req.body isa HTTP.EmptyBody || req.body isa HTTP.AbstractBody
-        HTTP._buffer_server_request(req)
-    else
-        req
-    end
-
     # Parse the batch request
     parts = HTTP.parse_multipart_mixed(req)
 
