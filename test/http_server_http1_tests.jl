@@ -1888,6 +1888,33 @@ end
     end
 end
 
+@testset "HTTP listen! reports a busy port as AddressInUseError" begin
+    first_server = HT.listen!(stream -> nothing, "127.0.0.1", 0; listenany = true)
+    port_num = HT.port(first_server)
+    starts = (
+        () -> HT.listen!(stream -> nothing, "127.0.0.1", port_num),
+        () -> HT.listen!(HT.Server(address = "127.0.0.1:$(port_num)", handler = stream -> nothing, stream = true)),
+    )
+    try
+        for start in starts
+            err = try
+                HT.forceclose(start())
+                nothing
+            catch e
+                e
+            end
+            if err === nothing
+                @test Sys.iswindows() # SO_REUSEADDR lets a second listener bind there
+            else
+                @test err isa HT.AddressInUseError
+            end
+        end
+    finally
+        HT.forceclose(first_server)
+        wait(first_server)
+    end
+end
+
 @testset "HTTP server shutdown rejects new requests" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request

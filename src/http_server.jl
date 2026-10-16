@@ -1337,24 +1337,26 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
     return nothing
 end
 
-function _run_server!(server::Server, ready::Threads.Event)
-    listener = TCP.listen(
-        server.network, _listen_address(server); backlog=server.backlog, reuseaddr=server.reuseaddr,
-    )
+# Bind in the caller, not in the server task, so a busy port throws
+# `AddressInUseError` instead of a `TaskFailedException`.
+function _listen_tcp(network::AbstractString, address::String, backlog::Integer, reuseaddr::Bool)::TCP.Listener
     try
-        _serve_listener!(server, listener, ready)
-    finally
-        @try_ignore begin
-            TCP.close(listener)
-        end
+        return TCP.listen(network, address; backlog=backlog, reuseaddr=reuseaddr)
+    catch err
+        wrapped = _wrap_server_listen_error(err, address)
+        wrapped === err ? rethrow() : throw(wrapped)
     end
+end
+
+function _check_server_startable(server::Server)::Nothing
+    state = _server_state(server)
+    state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
+    state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
     return nothing
 end
 
 function _start_server_task!(f::F, server::Server)::Server where {F}
-    state = _server_state(server)
-    state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
-    state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
+    _check_server_startable(server)
     ready = Threads.Event(true)
     task = @_spawn_interactive begin
         try
@@ -1371,15 +1373,11 @@ function _start_server_task!(f::F, server::Server)::Server where {F}
         unlock(server.lock)
     end
     wait(ready)
-    # If the spawned serve loop failed during startup, surface the failure
-    # synchronously to the caller. We rely on the synchronous bind path in
-    # the `serve!(handler, host, port; ...)` form to translate bind errors
-    # (EADDRINUSE etc.) to `HTTP.AddressInUseError` before the task is even
-    # spawned. Anything that fails inside the task itself is rethrown as
-    # `TaskFailedException` here without further unwrapping; the JuliaC
-    # trim verifier does not allow `current_exceptions(::Task)` and
-    # `getproperty(::TaskFailedException, :task)` is also trim-unsafe in
-    # the path that JuliaC compiles.
+    # Surface a startup failure to the caller. Bind errors are raised before
+    # the task starts (`_listen_tcp`); anything that fails inside the task is
+    # rethrown as `TaskFailedException` without unwrapping, because the JuliaC
+    # trim verifier rejects `current_exceptions(::Task)` and
+    # `getproperty(::TaskFailedException, :task)`.
     if istaskdone(task) && istaskfailed(task)
         wait(task)
     end
@@ -1393,8 +1391,19 @@ Start `server`, made with the [`Server`](@ref) constructor, in the background
 and return it.
 """
 function listen!(server::Server)::Server
-    return _start_server_task!(server) do ready
-        _run_server!(server, ready)
+    _check_server_startable(server)
+    listener = _listen_tcp(server.network, _listen_address(server), server.backlog, server.reuseaddr)
+    try
+        return _start_server_task!(server) do ready
+            try
+                _serve_listener!(server, listener, ready)
+            finally
+                @try_ignore TCP.close(listener)
+            end
+        end
+    catch
+        @try_ignore TCP.close(listener)
+        rethrow()
     end
 end
 
@@ -1711,12 +1720,7 @@ function serve!(
     backlog::Integer=128,
 ) where {F}
     bind_address = HostResolvers.join_host_port(host, listenany ? 0 : Int(port_num))
-    listener = try
-        TCP.listen("tcp", bind_address; backlog=backlog, reuseaddr=reuseaddr)
-    catch err
-        wrapped = _wrap_server_listen_error(err, bind_address)
-        wrapped === err ? rethrow() : throw(wrapped)
-    end
+    listener = _listen_tcp("tcp", bind_address, backlog, reuseaddr)
     try
         return serve!(
             handler,
