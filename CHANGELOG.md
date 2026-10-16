@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- HTTP/1 servers answer a request head or body read timeout on a TLS
+  connection with `408 Request Timeout`, as on plain TCP. A head timeout
+  closed the connection without a response, and a body timeout answered
+  `500`. ([#1403])
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
@@ -96,12 +100,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
+- The HTTP/1 server answers a request line whose HTTP major version is not 1,
+  such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
+  Go's server does. It served those requests, and a stream handler's status
+  line repeated the request's version. ([#1405])
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
+- `read_header_timeout` limits the first request head on a plain TCP connection
+  to one budget, as with `allow_h2c = false`. The cleartext HTTP/2 preface check
+  restarted the budget when the first bytes arrived, so a slow client could take
+  nearly twice the limit. ([#1406])
 - Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
   waits also propagate failed writer tasks instead of waiting indefinitely.
   ([#1390])
+- A byte-buffer `response_stream` receives only a 2xx body. A redirect that is
+  not followed, such as S3's 301 for the wrong region (it has no `Location`),
+  went into the buffer, and a body larger than the buffer raised `ArgumentError:
+  Unable to grow response stream` instead of returning the 301. A body kept out
+  of the buffer is read up to 1 MiB, or `max_decompressed_size` if smaller; it
+  was read in full, however large. ([#1407])
 - An empty `write` to a server stream (`write(stream, UInt8[])`, an empty
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the
@@ -1052,3 +1070,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
 [#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400
+[#1403]: https://github.com/JuliaWeb/HTTP.jl/issues/1403
+[#1404]: https://github.com/JuliaWeb/HTTP.jl/issues/1404
+[#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
+[#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
+[#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
