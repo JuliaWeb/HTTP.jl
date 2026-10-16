@@ -9,7 +9,6 @@ using Reseau.SOCKS
 
 const _CONN_READER_DEFAULT_BUFFER_BYTES = 16 * 1024
 const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
-const _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS = Int64(1_000_000_000)
 const _REQUEST_WRITE_CONTINUE_PENDING = UInt8(0x0)
 const _REQUEST_WRITE_CONTINUE_ALLOWED = UInt8(0x1)
 const _REQUEST_WRITE_CONTINUE_SUPPRESSED = UInt8(0x2)
@@ -456,15 +455,16 @@ function _wait_request_head!(write_state::_RequestWriteState, writer_task::Task,
     return nothing
 end
 
-function _expect_continue_deadline_ns(request_deadline::Int64)::Int64
-    now_ns = Int64(time_ns())
-    timeout_deadline = now_ns > typemax(Int64) - _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS ? typemax(Int64) : now_ns + _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS
+# When to stop waiting for `100 Continue`; a zero `timeout_ns` sends the body at once.
+function _expect_continue_deadline_ns(timeout_ns::Int64, request_deadline::Int64, now_ns::Int64=Int64(time_ns()))::Int64
+    timeout_ns == 0 && return now_ns
+    timeout_deadline = now_ns > typemax(Int64) - timeout_ns ? typemax(Int64) : now_ns + timeout_ns
     request_deadline == 0 && return timeout_deadline
     return min(request_deadline, timeout_deadline)
 end
 
-function _await_expect_continue!(write_state::_RequestWriteState, request_deadline::Int64)::Bool
-    deadline_ns = _expect_continue_deadline_ns(request_deadline)
+function _await_expect_continue!(write_state::_RequestWriteState, request::Request, request_deadline::Int64)::Bool
+    deadline_ns = _expect_continue_deadline_ns(_request_expect_continue_timeout_ns(request), request_deadline)
     while true
         state = _request_write_continue_state(write_state)
         state == _REQUEST_WRITE_CONTINUE_ALLOWED && return true
@@ -884,14 +884,14 @@ function _write_request_streaming!(
         _write_request_head!(request_io, request, plan)
         _write_request_bytes!(stream, request_io)
         _request_write_mark_head_written!(write_state)
-        !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request_deadline) || return false)
+        !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request, request_deadline) || return false)
         return _write_exact_bytes_body_transport!(stream, request.body::BytesBody, request.content_length, write_state)
     end
     use_chunked, trailer_values = _write_request_head!(request_io, request, plan)
     _write_request_bytes!(stream, request_io)
     _request_write_mark_head_written!(write_state)
     !_request_has_body(request) && return true
-    !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request_deadline) || return false)
+    !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request, request_deadline) || return false)
     if use_chunked
         return _write_chunked_body_transport!(stream, request.body, trailer_values, write_state)
     end

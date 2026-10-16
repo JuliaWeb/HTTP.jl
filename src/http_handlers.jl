@@ -17,7 +17,6 @@ import ..Request
 import ..RequestContext
 import ..Response
 import ..Stream
-import ..Cookie
 import ..Cookies
 import ..BytesBody
 import ..Headers
@@ -589,11 +588,9 @@ end
 """
     HTTP.getcookies(req) -> Vector{Cookie}
 
-Return the cookies that `HTTP.Handlers.cookie_middleware` stored on `req`, or
-an empty vector for a request that did not pass through it. [`HTTP.cookies`](@ref HTTP.Cookies.cookies)
-reads a request's cookies directly.
+Return the cookies in the `Cookie` header of `req`.
 """
-getcookies(req) = get(() -> Cookie[], req.context, :cookies)
+getcookies(req) = get(() -> Cookies.cookies(req), req.context, :cookies)
 
 # `handlertimeout` and `logging_middleware` are documented public API but not
 # exported; mark them public on Julia versions that support the mechanism (the

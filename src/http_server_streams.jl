@@ -515,7 +515,13 @@ function _write_response_body_to_stream!(stream::Stream, body)::Nothing
         return nothing
     end
     if body isa AbstractBody
-        if body_closed(body) && _server_stream_allows_body(stream)
+        # HEAD, 1xx, 204, and 304 responses send no body. Close it unread: a
+        # streaming body such as an SSE stream may never reach EOF.
+        if !_server_stream_allows_body(stream)
+            @try_ignore body_close!(body::AbstractBody)
+            return nothing
+        end
+        if body_closed(body)
             # The handler may declare an empty payload via the Content-Length
             # header alone; the content_length field stays -1 until startwrite
             # resolves it, so consult the header before rejecting the body.
