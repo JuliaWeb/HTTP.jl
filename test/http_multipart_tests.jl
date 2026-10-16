@@ -554,3 +554,16 @@ end
     @test String(read(parts[2])) == "{\"key\":\"value\"}"
 end
 
+
+@testset "examples/batch_server_example.jl serves a batch" begin
+    example = Module()
+    Base.include(example, joinpath(@__DIR__, "..", "examples", "batch_server_example.jl"))
+    server = HT.serve!(example.batch_handler, "127.0.0.1", 0; listenany = true)
+    try
+        # Throws on a non-2xx batch response.
+        @test example.send_batch_request("http://$(HT.server_addr(server))/\$batch") === nothing
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end

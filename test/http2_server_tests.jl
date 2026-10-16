@@ -1282,6 +1282,55 @@ end
     end
 end
 
+@testset "HTTP/2 server close finishes the streams its GOAWAY covered" begin
+    # During a graceful close the client keeps sending: WINDOW_UPDATE for the
+    # response it is reading, and a request the GOAWAY did not cover. The
+    # covered stream finishes, the new one is refused, and close returns.
+    payload = repeat("d", 100_000)
+    server = HT.serve!(_ -> HT.Response(200, payload), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = nothing
+    close_task = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/drain")
+        received = 0
+        while received < 65_535
+            frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.DataFrame)
+            received += length((frame::HT.DataFrame).data)
+        end
+        close_task = Threads.@spawn close(server)
+        goaway = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.GoAwayFrame)::HT.GoAwayFrame
+        @test goaway.last_stream_id == UInt32(1)
+        @test goaway.error_code == UInt32(0)
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/late"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(3), true, collect(codeunits("late"))))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(0), UInt32(1_000_000)))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(1_000_000)))
+        refused = nothing
+        finished = false
+        while refused === nothing || !finished
+            frame = HT.read_frame!(reader)
+            frame isa HT.RSTStreamFrame && (refused = frame::HT.RSTStreamFrame)
+            if frame isa HT.DataFrame && (frame::HT.DataFrame).stream_id == UInt32(1)
+                received += length((frame::HT.DataFrame).data)
+                finished = (frame::HT.DataFrame).end_stream
+            end
+        end
+        @test received == length(payload)
+        @test refused.stream_id == UInt32(3)
+        @test refused.error_code == UInt32(0x7)
+        fetch(close_task::Task)
+        @test !isopen(server)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        close_task === nothing || HTTP.@try_ignore fetch(close_task::Task)
+        isopen(server) && HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server splits large text response bodies into valid DATA frames" begin
     large_payload = repeat("z", 70_000)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
