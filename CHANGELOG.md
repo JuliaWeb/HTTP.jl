@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Content-Length` gets `500 Internal Server Error` before anything is sent,
   instead of a head without the body. `logging_middleware` finishes a stream
   handler's response before logging it, so a body shorter than its
-  `Content-Length` is logged as the `500` the client gets, not `200`.
+  `Content-Length` is logged as the `500` the client gets, not `200`. ([#1436])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1122,3 +1122,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
+[#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
