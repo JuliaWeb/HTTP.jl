@@ -105,6 +105,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
   machine. A redirect `Location` without a valid host, such as `//:` or
   `http:g`, throws a `ProtocolError` that names it. ([#1400])
+- `HTTP.isrecoverable` returns `true` for the `ConnectError` of a refused
+  connection and for a `TimeoutError` from a connect or TLS handshake timeout,
+  as the built-in retry rules retry their causes. It returned `false`, so a
+  retry loop around `HTTP.request` gave up on these transient failures.
+  ([#1412])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
 - Servers compiled with `juliac --trim=safe` verify when they close gracefully
@@ -1097,4 +1102,15 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
 [#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
