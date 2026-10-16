@@ -191,6 +191,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that sets only `read_header_timeout` keeps idle connections open. An idle
   timeout or client close between requests no longer writes a `408` or `400`.
   ([#1381])
+- `HTTP.getcookies(req)` returns the cookies in the request's `Cookie` header.
+  It returned an empty vector unless the non-public `cookie_middleware` had run
+  first. ([#1422])
 - HTTP/1 stream handlers no longer send `100 Continue` after the response head.
   A handler that called `startwrite` before reading the body of an
   `Expect: 100-continue` request put the interim response inside its own

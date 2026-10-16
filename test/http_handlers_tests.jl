@@ -143,6 +143,10 @@ end
     @test cookies[2].name == "mode"
     @test cookies[2].value == "test"
     @test HT.getcookies(req) === cookies
+    # Without the middleware, `getcookies` reads the header itself.
+    plain = HT.Request("GET", "/"; headers = copy(headers))
+    @test [(c.name, c.value) for c in HT.getcookies(plain)] == [("abc", "def"), ("mode", "test")]
+    @test isempty(HT.getcookies(HT.Request("GET", "/")))
 end
 
 @testset "HTTP handlers request timeout middleware" begin
