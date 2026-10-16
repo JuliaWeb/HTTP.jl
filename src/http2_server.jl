@@ -1666,7 +1666,9 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         _set_conn_shutdown_hook!(tracked, _H2ShutdownHook(write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
         while true
-            _server_shutting_down(server) && return nothing
+            # A graceful shutdown keeps reading until the streams its GOAWAY
+            # covered are done; they still need WINDOW_UPDATE, PING, and DATA.
+            _server_shutting_down(server) && !_h2_server_has_active_streams(states_lock, states) && return nothing
             _set_h2_frame_read_deadline!(server, conn, states_lock, states, continuation_stream)
             frame = try
                 read_frame!(reader)
@@ -1758,8 +1760,12 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 hf.stream_id == UInt32(0) && throw(ProtocolError("HEADERS stream id must be non-zero"))
                 iseven(hf.stream_id) && throw(ProtocolError("HEADERS stream id must be odd for client-initiated streams"))
                 hf.stream_id > peer_goaway_last_stream_id && throw(ProtocolError("client opened stream after GOAWAY"))
+                goaway_refused = false
                 if (@atomic :acquire conn_control.shutdown_requested) && hf.stream_id > (@atomic :acquire conn_control.graceful_last_stream_id)
-                    throw(ProtocolError("client opened stream after server GOAWAY"))
+                    # A graceful shutdown refuses the streams its GOAWAY did not
+                    # cover (RFC 9113 §6.8); after an error GOAWAY this is fatal.
+                    _server_shutting_down(server) || throw(ProtocolError("client opened stream after server GOAWAY"))
+                    goaway_refused = true
                 end
                 # A HEADERS frame either continues an already-tracked stream
                 # (e.g. request trailers) or opens a brand-new one. New streams
@@ -1789,8 +1795,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         # Even when refusing, advance `max_stream_id` so the same
                         # id can never be retried and HPACK ordering is preserved.
                         max_stream_id = hf.stream_id
-                        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
-                        if decision == _H2_NEW_STREAM_REFUSED
+                        goaway_refused || (@atomic :release conn_control.graceful_last_stream_id = max_stream_id)
+                        if goaway_refused || decision == _H2_NEW_STREAM_REFUSED
                             refuse_stream = true
                             nothing
                         elseif decision == _H2_NEW_STREAM_ENHANCE_CALM
@@ -1925,9 +1931,16 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 iseven(df.stream_id) && throw(ProtocolError("DATA stream id must be odd for client-initiated streams"))
                 lock(states_lock)
                 state = try
-                    get(() -> throw(ProtocolError("DATA frame received before HEADERS")), states, df.stream_id)
+                    get(states, df.stream_id, nothing)
                 finally
                     unlock(states_lock)
+                end
+                if state === nothing
+                    df.stream_id > max_stream_id && throw(ProtocolError("DATA frame received before HEADERS"))
+                    # A refused or finished stream: drop the DATA but return its
+                    # connection-level flow-control credit.
+                    _send_h2_server_window_updates!(conn, write_lock, df.stream_id, length(df.data) + df.padding, false)
+                    continue
                 end
                 stream_error = false
                 lock(state.lock)
