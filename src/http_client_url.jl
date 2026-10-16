@@ -295,6 +295,13 @@ function _uri_request_target(uri::URI)::String
     return has_query ? string(path, "?", query) : path
 end
 
+# RFC 3986 §3.2.3: a port is decimal digits; a connection also needs 1-65535.
+function _check_url_port(port::AbstractString)::Nothing
+    n = all(isdigit, port) ? tryparse(Int, port) : nothing
+    n !== nothing && 1 <= n <= 65535 && return nothing
+    throw(ArgumentError("invalid URL port: $(repr(port))"))
+end
+
 function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
     s = url isa String ? url : String(url)
     bytes = codeunits(s)
@@ -336,22 +343,25 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
     _text_range_empty(authority_range) && throw(ArgumentError("URL missing host: $s"))
 
     host_range = authority_range
-    has_explicit_port = false
+    port_first = 0
     if @inbounds bytes[authority_range.first] == UInt8('[')
         close_idx = _find_url_byte(bytes, authority_range.first, authority_range.last, UInt8(']'))
         close_idx === nothing && throw(ArgumentError("invalid IPv6 host authority: $(_text_range_string(s, authority_range))"))
         host_range = _text_range(nextind(s, authority_range.first), prevind(s, close_idx))
         if close_idx < authority_range.last
-            next_after_close = nextind(s, close_idx)
-            has_explicit_port = next_after_close <= authority_range.last && @inbounds(bytes[next_after_close] == UInt8(':'))
+            # Only `:port` may follow an IPv6 literal.
+            @inbounds(bytes[close_idx + 1] == UInt8(':')) || throw(ArgumentError("invalid IPv6 host authority: $(_text_range_string(s, authority_range))"))
+            port_first = close_idx + 2
         end
     else
         colon_idx = _find_last_url_byte(bytes, authority_range.first, authority_range.last, UInt8(':'))
         if colon_idx !== nothing
-            has_explicit_port = true
             host_range = _text_range(authority_range.first, prevind(s, colon_idx))
+            port_first = colon_idx + 1
         end
     end
+    has_explicit_port = port_first != 0
+    has_explicit_port && _check_url_port(SubString(s, port_first, authority_range.last))
     # RFC 9110 §4.2.1: an http(s) URI with an empty host is invalid. Dialing
     # one (`http://:8080/`) would reach the local machine.
     _text_range_empty(host_range) && throw(ArgumentError("URL missing host: $s"))
@@ -397,6 +407,7 @@ function _parse_http_url(url::URI, query=nothing)::_URLParts
     default_port = secure ? UInt16(443) : UInt16(80)
     # An absent or empty port means the scheme's default port.
     has_explicit_port = !isempty(url.port)
+    has_explicit_port && _check_url_port(url.port)
     address = if has_explicit_port
         string(URIs.hoststring(host), ":", String(url.port))
     else

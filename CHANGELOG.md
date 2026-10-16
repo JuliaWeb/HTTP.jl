@@ -167,6 +167,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
   fragment to the server, and absolute and `//host` locations kept their `.`
   and `..` segments.
+- A URL port must be 1-65535 in decimal digits, or the URL is rejected with an
+  `ArgumentError` when it is parsed. `http://a:abc/` failed later with a
+  confusing message, and `http://a:+80/` connected to port 80. The HTTP/1 server
+  answers an absolute-form request target with such a port with `400`. ([#1420])
 - A byte-buffer `response_stream` (a vector or view) is left untouched when the
   status is 300 or above, other than a 301, 302, 303, 307, or 308 redirect. The
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
