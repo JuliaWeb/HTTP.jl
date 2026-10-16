@@ -860,6 +860,21 @@ end
 
 function _open_client_websocket(
     url::AbstractString;
+    client::Union{Nothing,Client}=nothing,
+    connect_timeout::Real=30,
+    require_ssl_verification::Bool=true,
+    kwargs...,
+)::WebSocket
+    req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
+    return _open_client_websocket(url, req_client, owns_client; client=client, connect_timeout=connect_timeout, kwargs...)
+end
+
+# The handshake runs on `req_client`. When `owns_client`, a failed handshake
+# closes it; otherwise the WebSocket closes it when it closes.
+function _open_client_websocket(
+    url::AbstractString,
+    req_client::Client,
+    owns_client::Bool;
     headers=Pair{String,String}[],
     maxframesize::Integer=DEFAULT_MAX_FRAME_SIZE,
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
@@ -878,141 +893,142 @@ function _open_client_websocket(
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
-    require_ssl_verification::Bool=true,
     compress::Bool=false,
 )::WebSocket
-    parsed = _parse_websocket_url(url, query)
-    req_headers = _normalize_headers_input(headers)
-    normalized_cookies = _normalize_cookies_input(cookies)
-    if parsed.authorization !== nothing && !hasheader(req_headers, "Authorization")
-        setheader(req_headers, "Authorization", parsed.authorization::String)
-    end
-    pmce_offer = compress ? _pmce_client_offer_header() : nothing
-    key = ws_random_handshake_key()
-    _apply_websocket_request_headers!(req_headers, key, subprotocols, pmce_offer)
-    request = Request("GET", parsed.target; headers=req_headers, host=parsed.host_header, body=EmptyBody(), content_length=0)
-    request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
-        request_timeout,
-        connect_timeout,
-        response_header_timeout,
-        read_idle_timeout,
-        write_idle_timeout,
-    )
-    _apply_request_timeout_settings!(get_request_context(request), request_timeout_ns, timeout_config)
-    req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
-    client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
-    proxy_config = _proxy_config_for_request(req_client, proxy)
-    effective_cookiejar = _effective_cookiejar(client, cookiejar)
-    redirect_policy = _redirect_policy(req_client, redirect ? redirect_limit : 0, redirect_method, forwardheaders)
-    current_address = parsed.address
-    current_secure = parsed.secure
-    current_server_name = parsed.server_name
-    current_request = request
-    initial_address = current_address
-    # Remember the original scheme so the sensitive-header same-origin check can
-    # detect an https/wss -> http/ws downgrade across the redirect chain.
-    initial_secure = current_secure
-    for redirect_count in 0:redirect_policy.max_redirects
-        send_request = _copy_request(current_request)
-        host, path = _host_path_from_request(current_address, current_request)
-        manual_cookies = normalized_cookies === false ? Cookies.Cookie[] : Cookies.readcookies(send_request.headers, "")
-        cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path, manual_cookies)
-        cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
-        expected_accept = ws_compute_accept_key(header(send_request.headers, "Sec-WebSocket-Key")::String)
-        attempt = _websocket_roundtrip!(req_client, current_address, send_request, current_secure, current_server_name, proxy_config)
-        _store_set_cookies!(effective_cookiejar, normalized_cookies, current_secure, host, path, attempt.response.headers)
-        response = attempt.response
-        if response.status == 101
-            negotiated, pmce_ctx = try
-                sub = _validate_websocket_upgrade!(response, expected_accept, subprotocols)
-                ctx = nothing
-                if compress
-                    params = _pmce_client_accept(header(response.headers, "Sec-WebSocket-Extensions", nothing))
-                    params === nothing || (ctx = PMCEContext(params, true))
-                elseif header(response.headers, "Sec-WebSocket-Extensions", nothing) !== nothing
-                    # server must not enable an extension we did not offer
-                    throw(WebSocketError(CloseFrameBody(1002, "server enabled an unoffered websocket extension")))
-                end
-                sub, ctx
-            catch
-                attempt.conn === nothing || _close_conn!(attempt.conn::TransportConn)
-                owns_client && close(req_client)
-                rethrow()
-            end
-            conn = attempt.conn
-            if conn === nothing
-                owns_client && close(req_client)
-                throw(ProtocolError("websocket upgrade succeeded without an active connection"))
-            end
-            close_transport! = let conn = conn::TransportConn, owned_client = owns_client, local_client = req_client
-                () -> begin
-                    _close_conn!(conn)
-                    owned_client && close(local_client)
-                    return nothing
-                end
-            end
-            return _finish_client_websocket(
-                _conn_stream(conn),
-                close_transport!,
-                send_request,
-                response,
-                negotiated;
-                maxframesize=maxframesize,
-                maxfragmentation=maxfragmentation,
-                read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
-                buffered=attempt.buffered,
-                pmce=pmce_ctx,
-            )
+    try
+        parsed = _parse_websocket_url(url, query)
+        req_headers = _normalize_headers_input(headers)
+        normalized_cookies = _normalize_cookies_input(cookies)
+        if parsed.authorization !== nothing && !hasheader(req_headers, "Authorization")
+            setheader(req_headers, "Authorization", parsed.authorization::String)
         end
-        if !_is_redirect_status(response.status) || redirect_policy.max_redirects == 0
-            owns_client && close(req_client)
-            throw(WebSocketError(CloseFrameBody(1002, "websocket handshake failed: status $(response.status)")))
-        end
-        location = header(response.headers, "Location", nothing)
-        if location === nothing || isempty(location::String)
-            owns_client && close(req_client)
-            throw(WebSocketError(CloseFrameBody(1002, "websocket handshake failed: status $(response.status)")))
-        end
-        if redirect_count == redirect_policy.max_redirects
-            owns_client && close(req_client)
-            throw(TooManyRedirectsError(redirect_policy.max_redirects, response))
-        end
-        previous_secure = current_secure
-        previous_address = current_address
-        previous_target = current_request.target
-        current_address, current_secure, next_target, next_host_header = _resolve_redirect_target(
-            current_address,
-            current_secure,
-            _normalize_websocket_redirect_location(location::String),
-            current_request.target,
-            current_request.host,
-        )
-        current_server_name = _host_for_sni(current_address)
-        current_request = _prepare_request_for_redirect(current_request, response.status, next_target, redirect_policy)
+        pmce_offer = compress ? _pmce_client_offer_header() : nothing
         key = ws_random_handshake_key()
-        _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
-        current_request.host = next_host_header
-        next_ref = _redirect_referer(previous_secure, previous_address, previous_target, current_secure, header(current_request.headers, "Referer", nothing))
-        if next_ref === nothing
-            removeheader(current_request.headers, "Referer")
-        else
-            setheader(current_request.headers, "Referer", next_ref::String)
-        end
-        # Strip credential headers on any cross-origin hop: a change of scheme,
-        # host, or port.
-        if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
-            _strip_sensitive_redirect_headers!(current_request.headers)
+        _apply_websocket_request_headers!(req_headers, key, subprotocols, pmce_offer)
+        request = Request("GET", parsed.target; headers=req_headers, host=parsed.host_header, body=EmptyBody(), content_length=0)
+        request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
+            request_timeout,
+            connect_timeout,
+            response_header_timeout,
+            read_idle_timeout,
+            write_idle_timeout,
+        )
+        _apply_request_timeout_settings!(get_request_context(request), request_timeout_ns, timeout_config)
+        client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
+        proxy_config = _proxy_config_for_request(req_client, proxy)
+        effective_cookiejar = _effective_cookiejar(client, cookiejar)
+        redirect_policy = _redirect_policy(req_client, redirect ? redirect_limit : 0, redirect_method, forwardheaders)
+        current_address = parsed.address
+        current_secure = parsed.secure
+        current_server_name = parsed.server_name
+        current_request = request
+        initial_address = current_address
+        # Remember the original scheme so the sensitive-header same-origin check can
+        # detect an https/wss -> http/ws downgrade across the redirect chain.
+        initial_secure = current_secure
+        for redirect_count in 0:redirect_policy.max_redirects
+            send_request = _copy_request(current_request)
+            host, path = _host_path_from_request(current_address, current_request)
+            manual_cookies = normalized_cookies === false ? Cookies.Cookie[] : Cookies.readcookies(send_request.headers, "")
+            cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path, manual_cookies)
+            cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
+            expected_accept = ws_compute_accept_key(header(send_request.headers, "Sec-WebSocket-Key")::String)
+            attempt = _websocket_roundtrip!(req_client, current_address, send_request, current_secure, current_server_name, proxy_config)
+            _store_set_cookies!(effective_cookiejar, normalized_cookies, current_secure, host, path, attempt.response.headers)
+            response = attempt.response
+            if response.status == 101
+                negotiated, pmce_ctx = try
+                    sub = _validate_websocket_upgrade!(response, expected_accept, subprotocols)
+                    ctx = nothing
+                    if compress
+                        params = _pmce_client_accept(header(response.headers, "Sec-WebSocket-Extensions", nothing))
+                        params === nothing || (ctx = PMCEContext(params, true))
+                    elseif header(response.headers, "Sec-WebSocket-Extensions", nothing) !== nothing
+                        # server must not enable an extension we did not offer
+                        throw(WebSocketError(CloseFrameBody(1002, "server enabled an unoffered websocket extension")))
+                    end
+                    sub, ctx
+                catch
+                    attempt.conn === nothing || _close_conn!(attempt.conn::TransportConn)
+                    rethrow()
+                end
+                conn = attempt.conn
+                conn === nothing && throw(ProtocolError("websocket upgrade succeeded without an active connection"))
+                close_transport! = let conn = conn::TransportConn, owned_client = owns_client, local_client = req_client
+                    () -> begin
+                        _close_conn!(conn)
+                        owned_client && close(local_client)
+                        return nothing
+                    end
+                end
+                # Replaying `buffered` can fail on a bad frame from the server.
+                return try
+                    _finish_client_websocket(
+                        _conn_stream(conn),
+                        close_transport!,
+                        send_request,
+                        response,
+                        negotiated;
+                        maxframesize=maxframesize,
+                        maxfragmentation=maxfragmentation,
+                        read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
+                        buffered=attempt.buffered,
+                        pmce=pmce_ctx,
+                    )
+                catch
+                    _close_conn!(conn::TransportConn)
+                    rethrow()
+                end
+            end
+            if !_is_redirect_status(response.status) || redirect_policy.max_redirects == 0
+                throw(WebSocketError(CloseFrameBody(1002, "websocket handshake failed: status $(response.status)")))
+            end
+            location = header(response.headers, "Location", nothing)
+            if location === nothing || isempty(location::String)
+                throw(WebSocketError(CloseFrameBody(1002, "websocket handshake failed: status $(response.status)")))
+            end
+            if redirect_count == redirect_policy.max_redirects
+                throw(TooManyRedirectsError(redirect_policy.max_redirects, response))
+            end
+            previous_secure = current_secure
+            previous_address = current_address
+            previous_target = current_request.target
+            current_address, current_secure, next_target, next_host_header = _resolve_redirect_target(
+                current_address,
+                current_secure,
+                _normalize_websocket_redirect_location(location::String),
+                current_request.target,
+                current_request.host,
+            )
+            current_server_name = _host_for_sni(current_address)
+            current_request = _prepare_request_for_redirect(current_request, response.status, next_target, redirect_policy)
+            key = ws_random_handshake_key()
             _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
-            # Stop re-applying caller-supplied explicit cookies once we leave the
-            # original origin; otherwise `_cookie_header` re-attaches them on the
-            # next hop after the Cookie header was just stripped.
-            if normalized_cookies isa Vector{Cookies.Cookie}
-                normalized_cookies = Cookies.Cookie[]
+            current_request.host = next_host_header
+            next_ref = _redirect_referer(previous_secure, previous_address, previous_target, current_secure, header(current_request.headers, "Referer", nothing))
+            if next_ref === nothing
+                removeheader(current_request.headers, "Referer")
+            else
+                setheader(current_request.headers, "Referer", next_ref::String)
+            end
+            # Strip credential headers on any cross-origin hop: a change of scheme,
+            # host, or port.
+            if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
+                _strip_sensitive_redirect_headers!(current_request.headers)
+                _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
+                # Stop re-applying caller-supplied explicit cookies once we leave the
+                # original origin; otherwise `_cookie_header` re-attaches them on the
+                # next hop after the Cookie header was just stripped.
+                if normalized_cookies isa Vector{Cookies.Cookie}
+                    normalized_cookies = Cookies.Cookie[]
+                end
             end
         end
+        throw(ProtocolError("unexpected websocket redirect loop termination"))
+    catch
+        owns_client && close(req_client)
+        rethrow()
     end
-    owns_client && close(req_client)
-    throw(ProtocolError("unexpected websocket redirect loop termination"))
 end
 
 """

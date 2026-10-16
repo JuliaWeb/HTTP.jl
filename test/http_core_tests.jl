@@ -416,6 +416,12 @@ end
     op_error = Reseau.HostResolvers.OpError("dial", "tcp", nothing, nothing, tls_error)
     @test HT._wrap_client_transport_error(op_error) isa HT.TLSHandshakeError
 
+    # A TLS read deadline is a timeout, as on TCP, also when the transport
+    # passed it up as a TLSTransportError.
+    tls_timeout = Reseau.TLS.TLSError("read", Int32(0), "i/o timeout", Reseau.IOPoll.DeadlineExceededError())
+    @test HT._wrap_client_transport_error(tls_timeout) isa HT.TimeoutError
+    @test HT._wrap_client_transport_error(HT.TLSTransportError(tls_timeout)) isa HT.TimeoutError
+
     bytes = UInt8[0x41]
     @test HT._response_body_arg(bytes) === bytes
 
