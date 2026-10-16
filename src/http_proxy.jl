@@ -407,9 +407,10 @@ function _env_proxy(names::Vararg{String})::Union{Nothing,_ProxyTarget}
     return nothing
 end
 
-function _env_no_proxy()::Union{Nothing,NoProxy}
+# Always a matcher, even when NO_PROXY is unset, so that environment proxies
+# never apply to localhost and loopback addresses, as in Go's `httpproxy`.
+function _env_no_proxy()::NoProxy
     raw = get(() -> get(() -> "", ENV, "no_proxy"), ENV, "NO_PROXY")
-    isempty(strip(raw)) && return nothing
     return NoProxy(raw)
 end
 
