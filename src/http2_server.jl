@@ -349,7 +349,9 @@ function _wait_h2_send_window_locked!(
     return nothing
 end
 
-function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UInt32, wanted::Int, deadline_ns::Int64=Int64(0))::Int
+# Reserves up to `wanted` bytes of send credit, at most one frame's worth. It
+# waits for credit, or with `block=false` returns 0 when there is none.
+function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UInt32, wanted::Int, deadline_ns::Int64=Int64(0); block::Bool=true)::Int
     wanted > 0 || throw(ArgumentError("wanted send window must be > 0"))
     lock(send_state.state_lock)
     try
@@ -358,6 +360,7 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
             haskey(send_state.stream_send_window, stream_id) || throw(ProtocolError("HTTP/2 stream send window is closed"))
             stream_window = send_state.stream_send_window[stream_id]
             if stream_window <= 0 || send_state.conn_send_window <= 0
+                block || return 0
                 _wait_h2_send_window_locked!(send_state, deadline_ns)
                 continue
             end
@@ -1282,10 +1285,11 @@ end
 """
     _write_h2_headers_and_first_batch!(...) -> Nothing
 
-Write the HEADERS frame and the first DATA frame in one socket write, holding
-`write_lock` across encoding and writing so HPACK state stays consistent. The
-rest of the body goes through `_write_data_frames_h2_server!`, which waits for
-send credit without holding `write_lock`.
+Write the HEADERS frame, and the first DATA frame if the peer has granted
+credit, in one socket write, holding `write_lock` across encoding and writing
+so HPACK state stays consistent. The rest of the body goes through
+`_write_data_frames_h2_server!`, which waits for send credit without holding
+`write_lock`.
 """
 function _write_h2_headers_and_first_batch!(
     conn::Union{TCP.Conn,TLS.Conn},
@@ -1307,8 +1311,9 @@ function _write_h2_headers_and_first_batch!(
         send_state.peer_max_send_frame_size
     end
     server_max = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
-    # Reserve send window for the first DATA frame.
-    first_chunk = total_len == 0 ? 0 : _reserve_h2_send_window!(send_state, stream_id, total_len, write_deadline_ns)
+    # Take only the credit available now for the first DATA frame: HEADERS are
+    # not flow-controlled and must not wait for WINDOW_UPDATE.
+    first_chunk = total_len == 0 ? 0 : _reserve_h2_send_window!(send_state, stream_id, total_len; block=false)
     # Acquire write_lock and emit HEADERS + DATA batch atomically.
     lock(write_lock)
     try

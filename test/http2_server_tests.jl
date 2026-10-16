@@ -1941,6 +1941,45 @@ end
     @test waited == Int64[6]
 end
 
+@testset "HTTP/2 buffered responses send headers before waiting for send credit" begin
+    # HEADERS are not flow-controlled: with no stream credit yet, a String body
+    # still sends its headers at once, as a streamed body does.
+    listener = NC.listen("tcp", "127.0.0.1:0")
+    client = NC.connect(NC.addr(listener))
+    server_conn = NC.accept(listener)
+    write_lock = ReentrantLock()
+    send_state = HT._H2SendWindowState()
+    lock(() -> send_state.initial_stream_send_window = Int64(0), send_state.state_lock)
+    HT._register_h2_send_window!(send_state, UInt32(1))
+    writer = errormonitor(Threads.@spawn HT._write_h2_response!(
+        server_conn, write_lock, send_state, UInt32(1), HT.Request("GET", "/"), HT.Response(200, "abcdefgh"),
+    ))
+    try
+        reader = HT._ConnReader(client)
+        # Observe the writer parked on flow control, not elapsed time.
+        while lock(() -> isempty(send_state.window_condition.waitq), send_state.state_lock)
+            yield()
+        end
+        # This frame lands after whatever the writer sent before it parked.
+        HT._write_frame_h2_server_threadsafe!(write_lock, server_conn, HT.PingFrame(true, ntuple(UInt8, 8)))
+        @test HT.read_frame!(reader) isa HT.HeadersFrame
+        HT._apply_h2_window_update!(send_state, HT.WindowUpdateFrame(UInt32(1), UInt32(8)))
+        body = UInt8[]
+        while true
+            frame = HT.read_frame!(reader)
+            frame isa HT.DataFrame || continue
+            append!(body, (frame::HT.DataFrame).data)
+            (frame::HT.DataFrame).end_stream && break
+        end
+        @test String(body) == "abcdefgh"
+        wait(writer)
+    finally
+        close(client)
+        close(server_conn)
+        close(listener)
+    end
+end
+
 @testset "HTTP/2 buffered responses wait for send credit without the write lock" begin
     # The read loop takes the write lock to answer PING and SETTINGS before it
     # reads the next frame, so a response that waits for WINDOW_UPDATE while
