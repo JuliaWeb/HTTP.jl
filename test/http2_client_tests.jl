@@ -2341,6 +2341,60 @@ end
     end
 end
 
+@testset "HTTP/2 stream-slot waits end at the request deadline or cancel!" begin
+    # A server at SETTINGS_MAX_CONCURRENT_STREAMS (here 0) makes a new request
+    # wait for a slot; the wait must still end when the request expires or is
+    # canceled.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        c = NC.accept(listener)
+        reader = HT._ConnReader(c)
+        try
+            _ = _read_exact_h2_tcp!(c, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(c, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x3) => UInt32(0)]))
+            HTTP.@try_ignore while true
+                HT.read_frame!(reader)
+            end
+        finally
+            HTTP.@try_ignore NC.close(c)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    parked() = !lock(() -> isempty(h2_conn.stream_condition.waitq), h2_conn.state_lock)
+    # Start a request and return once it has ended or is parked waiting for a slot.
+    function start(request)
+        task = Threads.@spawn try
+            HT.h2_roundtrip!(h2_conn, request)
+        catch err
+            err
+        end
+        while !istaskdone(task) && !parked()
+            yield()
+        end
+        return task
+    end
+    try
+        expired = HT.Request("GET", "/expired"; host = address)
+        HT.set_deadline!(HT.get_request_context(expired), 1)
+        expired_task = start(expired)
+        @test istaskdone(expired_task)
+        canceled = HT.Request("GET", "/canceled"; host = address)
+        canceled_task = start(canceled)
+        HT.cancel!(HT.get_request_context(canceled))
+        @test !parked()
+        close(h2_conn)
+        @test fetch(expired_task) isa Reseau.IOPoll.DeadlineExceededError
+        @test fetch(canceled_task) isa HT.CanceledError
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
+end
+
 @testset "HTTP/2 client connection window stays non-negative under a raised stream window" begin
     # A raised SETTINGS_INITIAL_WINDOW_SIZE only enlarges the per-stream send
     # window; the connection-level window is separate and stays at the protocol

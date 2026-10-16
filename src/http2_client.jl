@@ -644,27 +644,61 @@ function _h2_conn_reusable(conn::H2Connection)::Bool
     end
 end
 
+# Whether a stream-slot waiter has something to act on. Callers hold `state_lock`.
+function _h2_stream_slot_ready_locked(conn::H2Connection, ctx::RequestContext)::Bool
+    canceled(ctx) && return true
+    (@atomic :acquire conn.closed) && return true
+    conn.conn_error === nothing || return true
+    (!conn.accepting_new_streams || conn.next_stream_id > conn.peer_goaway_last_stream_id) && return true
+    return length(conn.streams) < conn.peer_max_concurrent_streams
+end
+
 """
-    _wait_for_stream_slot!(conn)
+    _wait_for_stream_slot!(conn, request)
 
 Block until the connection has room for another concurrent client-initiated
-stream (or the connection has failed). Does not hold `write_lock`, so the
-read loop and other writers can keep making progress.
+stream, the connection fails, or `request` is canceled or reaches its
+deadline. Does not hold `write_lock`, so the read loop and other writers can
+keep making progress.
 """
-function _wait_for_stream_slot!(conn::H2Connection)
+function _wait_for_stream_slot!(conn::H2Connection, request::Request)
+    ctx = get_request_context(request)
+    deadline_ns = _request_deadline_ns(request)
+    wake = () -> lock(() -> notify(conn.stream_condition; all=true), conn.state_lock)
+    waiting = false
     lock(conn.state_lock)
     try
         while true
+            canceled(ctx) && throw(_canceled_error(ctx))
             (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
             conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
             if !conn.accepting_new_streams || conn.next_stream_id > conn.peer_goaway_last_stream_id
                 throw(H2GoAwayError("HTTP/2 connection is draining after GOAWAY", conn.peer_goaway_last_stream_id))
             end
             length(conn.streams) < conn.peer_max_concurrent_streams && return nothing
-            wait(conn.stream_condition)
+            if !waiting
+                # `cancel!` wakes the wait; runs `wake` now if already canceled.
+                waiting = true
+                _on_cancel!(ctx, wake)
+                continue
+            end
+            if deadline_ns == 0
+                wait(conn.stream_condition)
+                continue
+            end
+            remaining_ns = deadline_ns - Int64(time_ns())
+            remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+            unlock(conn.state_lock)
+            try
+                IOPoll.timedwait(() -> lock(() -> _h2_stream_slot_ready_locked(conn, ctx), conn.state_lock),
+                    remaining_ns / 1.0e9; pollint=0.001)
+            finally
+                lock(conn.state_lock)
+            end
         end
     finally
         unlock(conn.state_lock)
+        waiting && _remove_cancel_callback!(ctx, wake)
     end
 end
 
@@ -734,7 +768,7 @@ function _register_stream_and_send_headers!(
     success = false
     try
         while true
-            _wait_for_stream_slot!(conn)
+            _wait_for_stream_slot!(conn, request)
             stream_state = nothing
             lock(conn.write_lock)
             try
