@@ -108,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `200` for a `Range` it does not support, as RFC 9110 §14.2 allows: an
   unknown unit such as `items=0-4`, several ranges, or a `Range` on a method
   other than `GET` or `HEAD`. The first two got `416`, and a `POST` got `206`. ([#1433])
+- The HTTP/1 server and `streamhandler` no longer modify the `Response` a
+  handler returns, so one response object can answer many requests at once.
+  Under concurrent HEAD and GET requests, a shared response could send its body
+  to a HEAD request and drop it from a GET, and after one failed write on the
+  `streamhandler` path every later response carried `Connection: close`. ([#1424])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so

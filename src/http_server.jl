@@ -1021,9 +1021,9 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
-function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
+function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, head::Bool=_is_head_request(response.request))::Nothing
     try
-        write_response!(conn, response)
+        _write_response!(conn, response, head)
     finally
         if response.body isa AbstractBody
             @try_ignore body_close!(response.body::AbstractBody)
@@ -1286,26 +1286,20 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
+                # A handler may return one response for many requests at once: never store request state on it.
                 response_obj = response::Response
-                response_obj.request = handler_request
                 # A response whose streaming body was already sent cannot be
                 # serialized again. Answer 500 before any bytes go out instead
                 # of failing mid-response and dropping the connection (#1333).
                 try
-                    _check_response_body_unsent(response_obj)
+                    _check_response_body_unsent(response_obj, handler_request)
                 catch err
                     @error "server handler returned a response whose body was already sent or closed" exception = err
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
-                if !_request_body_fully_consumed(handler_request)
-                    response_obj.close = true
-                    @try_ignore begin
-                        body_close!(handler_request.body)
-                    end
-                end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj)
+                _write_all_response!(tracked.conn, response_obj, _is_head_request(handler_request))
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
