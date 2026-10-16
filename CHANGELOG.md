@@ -134,6 +134,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
   the buffer raises `StatusError` rather than `ArgumentError: Unable to grow
   response stream`. `IO` sinks still receive every final response body.
+- Cookie handling no longer throws `StringIndexError` on non-ASCII text. A
+  request to a path such as `/日本/a` threw when the response set a cookie, as did
+  a cookie name or quoted value that ended in a non-ASCII character. ([#1421])
 - HTTP/1 server read deadlines now follow the request phase. `read_header_timeout`
   no longer limits the request body (only `read_timeout` does) or the wait
   between keep-alive requests (`idle_timeout`, else `read_timeout`), so a server
@@ -1075,3 +1078,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
