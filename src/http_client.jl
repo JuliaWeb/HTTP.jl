@@ -2379,7 +2379,7 @@ Timeouts, in seconds:
 - `write_idle_timeout`: the time between writes.
 - `expect_continue_timeout`: how long a request with an
   `Expect: 100-continue` header waits for `100 Continue` before it sends the
-  body anyway.
+  body anyway, 1 second by default. `0` sends the body without waiting.
 - `context`: a [`RequestContext`](@ref) for cancellation and an absolute
   deadline.
 
