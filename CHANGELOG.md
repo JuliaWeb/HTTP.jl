@@ -144,6 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to one budget, as with `allow_h2c = false`. The cleartext HTTP/2 preface check
   restarted the budget when the first bytes arrived, so a slow client could take
   nearly twice the limit. ([#1406])
+- A client read timeout over HTTPS with HTTP/1 raises `TimeoutError`, as over
+  plain HTTP. It raised `TLSTransportError`. ([#1416])
 - Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
   waits also propagate failed writer tasks instead of waiting indefinitely.
   ([#1390])

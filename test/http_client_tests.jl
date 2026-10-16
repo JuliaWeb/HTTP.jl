@@ -2878,6 +2878,39 @@ end
     end
 end
 
+@testset "HTTP high-level read timeout over TLS raises TimeoutError" begin
+    listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = joinpath(@__DIR__, "resources", "unittests.crt"),
+            key_file = joinpath(@__DIR__, "resources", "unittests.key"),
+        );
+        backlog = 8,
+    )
+    release = Channel{Nothing}(1)
+    server = HT.serve!(req -> (take!(release); HT.Response(200)), listener)
+    try
+        err = try
+            HT.get(
+                "https://$(HT.server_addr(server))/slow";
+                require_ssl_verification = false,
+                protocol = :h1,
+                read_idle_timeout = 1.0e-9,
+                retry = false,
+            )
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa HT.TimeoutError
+    finally
+        put!(release, nothing)
+        HT.forceclose(server)
+    end
+end
+
 @testset "HTTP high-level response_header_timeout" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
