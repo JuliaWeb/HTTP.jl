@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- An HTTP/2 server connection no longer stalls when the client sends PING or
+  SETTINGS while a `String` or byte-vector response waits for flow-control
+  credit. The response kept the connection's write lock while it waited, so
+  the server could not answer and never read the WINDOW_UPDATE that followed.
+  ([#1410])
 - HTTP/1 servers answer a request head or body read timeout on a TLS
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
@@ -1078,3 +1083,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
