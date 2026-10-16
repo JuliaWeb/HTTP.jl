@@ -129,6 +129,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
   fragment to the server, and absolute and `//host` locations kept their `.`
   and `..` segments.
+- A URL port must be 1-65535 in decimal digits, or the URL is rejected with an
+  `ArgumentError` when it is parsed. `http://a:abc/` failed later with a
+  confusing message, and `http://a:+80/` connected to port 80. The HTTP/1 server
+  answers an absolute-form request target with such a port with `400`. ([#1420])
 - A byte-buffer `response_stream` (a vector or view) is left untouched when the
   status is 300 or above, other than a 301, 302, 303, 307, or 308 redirect. The
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
@@ -1075,3 +1079,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
