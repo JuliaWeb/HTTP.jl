@@ -124,6 +124,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the
   body end early and later writes went out after the terminator.
+- `HTTP.WebSockets.open` closes the client it creates for
+  `require_ssl_verification = false` when the handshake fails, for example on a
+  redirect to an invalid `Location`, and closes the connection when the server's
+  first frame is invalid. Both stayed open. ([#1419])
 - HTTP and WebSocket client redirects resolve `Location` against the current
   URL as RFC 3986 §5.2 specifies. A relative location lost repeated slashes
   (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
@@ -1075,3 +1079,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
