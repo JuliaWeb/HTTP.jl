@@ -1478,7 +1478,11 @@ function _handle_h2_stream!(
             unlock(state.lock)
         end
         if !(stream_cancelled || (@atomic :acquire send_state.closed))
-            rethrow(err)
+            # The response could not be sent; reset the stream so the client
+            # does not wait for it. A peer that went away needs no log.
+            peer_gone = _classify_h2_conn_close(err::Exception) == _H2_CONN_CLOSE_PEER || _is_peer_close_error(err::Exception)
+            peer_gone || @error "h2 server could not send the response" exception = err
+            _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_INTERNAL)
         end
     finally
         lock(state.lock)
