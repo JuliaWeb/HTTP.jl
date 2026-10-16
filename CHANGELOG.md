@@ -182,6 +182,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body goes to `response.body`, as in HTTP.jl 1.x, so an error body larger than
   the buffer raises `StatusError` rather than `ArgumentError: Unable to grow
   response stream`. `IO` sinks still receive every final response body.
+- Cookie handling no longer throws `StringIndexError` on non-ASCII text. A
+  request to a path such as `/日本/a` threw when the response set a cookie, as did
+  a cookie name or quoted value that ended in a non-ASCII character. ([#1421])
 - HTTP/1 server read deadlines now follow the request phase. `read_header_timeout`
   no longer limits the request body (only `read_timeout` does) or the wait
   between keep-alive requests (`idle_timeout`, else `read_timeout`), so a server
