@@ -1574,11 +1574,8 @@ end
 @inline _compat_body_arg(::Nothing) = EmptyBody()
 @inline _compat_body_arg(body::AbstractBody) = body
 @inline _compat_body_arg(body::AbstractVector{UInt8}) = BytesBody(body)
-# Wrap String/SubString bodies in a BytesBody that aliases the underlying
-# codeunits via the immutable string buffer — saves a length-of-body memcpy
-# on every Response construction. Strings are immutable so this is safe even
-# if the caller reuses the same String across multiple Responses; HTTP body
-# write paths only read via copyto!/unsafe_write.
+# Request bodies alias a `String`'s bytes instead of copying them; this is safe
+# because strings are immutable and body writers only read.
 @inline _compat_body_arg(body::AbstractString) = BytesBody(codeunits(String(body)))
 
 @inline _compat_body_length(::Nothing)::Int64 = Int64(0)
@@ -1595,12 +1592,9 @@ end
 @inline _response_body_arg(::Nothing) = EmptyBody()
 @inline _response_body_arg(body::AbstractBody) = body
 @inline _response_body_arg(body::AbstractVector{UInt8}) = body
-# Server-built responses keep `String` and `AbstractVector{UInt8}` bodies as given.
-# Both are stateless, so one `Response` can be sent any number of times (baked
-# responses), and every write path emits them zero-copy. Wrapping a string in a
-# cursor-based `BytesBody` made the first send consume it and left the second
-# send with a truncated or empty body (#1333). Requests keep `BytesBody`, since
-# `Request` requires an `AbstractBody`.
+# Responses keep `String` and `AbstractVector{UInt8}` bodies as given. They have
+# no read cursor, so one `Response` can be sent any number of times (#1333).
+# Requests wrap them in `BytesBody` because `Request` requires an `AbstractBody`.
 @inline _response_body_arg(body::AbstractString) = String(body)
 _response_body_arg(body) = _compat_body_arg(body)
 

@@ -800,18 +800,9 @@ function _write_data_frames_h2_server!(
     end
     max_frame_size = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
     write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
-    # Each "batch" drains as much of the body as the peer's current send
-    # window allows, builds it into a single contiguous byte buffer
-    # (interleaved 9-byte DATA-frame headers + payload slices), and writes
-    # the whole batch to the socket under one lock acquisition. The previous
-    # implementation paid one IOBuffer allocation, one frame-header
-    # allocation, and one socket write per frame; this version pays one
-    # allocation and one socket write per *batch*.
+    # Each pass reserves send window (at most one frame's worth), copies the
+    # DATA frame header and payload into one buffer, and writes it in one call.
     while offset <= total_len
-        # Probe the current allowed window with the size remaining.
-        # Reservation is bounded by stream/conn windows only; per-frame
-        # max-frame-size is applied below when slicing the reservation
-        # into DATA frames.
         first_chunk = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
         first_chunk <= 0 && continue
         # Pre-size an output Vector that fits this batch exactly.
@@ -1244,7 +1235,7 @@ function _write_h2_response!(
                  (response.body isa AbstractVector{UInt8} && isempty(response.body::AbstractVector{UInt8}))
     end_stream = body_empty && !has_trailers
     body = response.body
-    # Fallback path for streaming/empty bodies: original two-step path.
+    # Streaming or empty bodies: write HEADERS, then the body and trailers.
     if body_empty || !(body isa AbstractString || body isa AbstractVector{UInt8})
         body_empty || _check_response_body_unsent(response)
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
@@ -1308,7 +1299,7 @@ function _write_h2_headers_and_first_batch!(
         send_state.peer_max_send_frame_size
     end
     server_max = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
-    # Reserve send window for as much of the body as we can take immediately.
+    # Reserve send window for the first DATA frame.
     first_chunk = total_len == 0 ? 0 : _reserve_h2_send_window!(send_state, stream_id, total_len, write_deadline_ns)
     # Acquire write_lock and emit HEADERS + DATA batch atomically.
     lock(write_lock)
@@ -1323,10 +1314,7 @@ function _write_h2_headers_and_first_batch!(
             _write_all_h2_server!(conn, headers_bytes)
             return nothing
         end
-        # 2. Vectored write of [HEADERS][DATA-hdr_1][body_slice_1]…
-        # We build a single iovec list that points directly into the
-        # caller's body memory — no per-batch body copy. Only the small
-        # 9-byte DATA frame headers are freshly allocated.
+        # 2. Write HEADERS and the first DATA frame as one buffer.
         _writev_headers_and_batch!(conn, stream_id, body, headers_bytes,
                                    1, first_chunk, server_max, body_end_stream, total_len)
         offset = 1 + first_chunk
@@ -1355,13 +1343,8 @@ end
     body_end_stream::Bool,
     total_len::Int,
 )::Nothing
-    # Build a single contiguous buffer holding the optional HEADERS frame
-    # plus interleaved DATA frame headers and payload slices, then issue
-    # one socket write. Empirically this matches the throughput of the
-    # `Reseau.TCP.writev` (sendmsg/iovec) path on this workload while
-    # avoiding the Reseau version dependency. The Reseau `writev` API is
-    # still useful for other protocol implementations (gRPC, QUIC) where
-    # the cost of the body memcpy here would dominate.
+    # Copy the optional HEADERS frame and the DATA frames into one buffer and
+    # write it once; this measured as fast as a vectored write.
     _write_h2_batch_via_single_buffer!(conn, stream_id, body,
         headers_bytes, body_offset, body_len, server_max, body_end_stream, total_len)
     return nothing
@@ -1700,7 +1683,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     continuation_stream = UInt32(0)
     max_stream_id = UInt32(0)
     peer_goaway_last_stream_id = typemax(UInt32)
-    # Per-connection stream-flood limits (see ANT-2026 Rapid Reset fix).
+    # Per-connection stream-flood limits.
     max_concurrent_streams = server.max_concurrent_streams
     # Number of streams the peer has opened and then reset/closed via RST_STREAM.
     # Tracked to detect the CVE-2023-44487 "Rapid Reset" pattern, where the peer

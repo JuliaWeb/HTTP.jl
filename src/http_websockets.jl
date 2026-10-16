@@ -348,9 +348,8 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     end
     op = frame.opcode
     fin = frame.fin
-    # `frame.payload` is already a fresh owned Vector (the decoder builds each
-    # frame with `copy(dec.payload_buf)`) and the frame is discarded right after
-    # this call, so we can take it directly instead of copying a second time.
+    # The decoder hands each frame its own payload buffer, so use it without
+    # copying.
     frame_payload = frame.payload
     if op == UInt8(WsOpcode.PING) || op == UInt8(WsOpcode.PONG)
         return nothing
@@ -464,10 +463,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # frame arrives (#1062).
             ws.read_idle_timeout_ns > 0 &&
                 _ws_arm_read_deadline!(ws.stream, _ws_read_deadline_ns(ws.read_idle_timeout_ns))
-            # Read directly into the reusable `buf`. `readavailable` would
-            # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
-            # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
-            # `_blocking_readbytes!` does one blocking socket read into `buf`.
+            # Read into the reusable `buf`; `readavailable` would allocate a
+            # fresh 64 KiB buffer on every read.
             n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
             # Decode + flush under `ws.sendlock` so the auto-PONG/CLOSE-echo
@@ -577,8 +574,8 @@ function send(ws::WebSocket, x)
         if !isbinary(x) && !istext(x)
             # An iterable of chunks. With permessage-deflate the whole logical
             # message is compressed as one DEFLATE stream, so we gather the
-            # chunks and emit a single compressed frame; otherwise we stream the
-            # chunks as fragments as before.
+            # chunks and emit a single compressed frame; otherwise each chunk
+            # is sent as a fragment.
             if pmce !== nothing
                 buf = UInt8[]
                 msg_opcode = nothing
@@ -1001,9 +998,8 @@ function _open_client_websocket(
         else
             setheader(current_request.headers, "Referer", next_ref::String)
         end
-        # Strip credential headers on any cross-origin hop, where origin is the
-        # full (scheme, host, port) tuple rather than the host alone, so a scheme
-        # downgrade or a port change no longer replays Authorization/Cookie.
+        # Strip credential headers on any cross-origin hop: a change of scheme,
+        # host, or port.
         if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
             _strip_sensitive_redirect_headers!(current_request.headers)
             _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
@@ -1431,10 +1427,7 @@ end
 # is defined over the full (scheme, host, port) triple, so all three must match
 # the server's own origin. `server_secure` indicates whether the server speaks
 # wss/https (true) or ws/http (false) and provides the scheme component plus the
-# default port (443 vs 80) used when the Host header omits the port. Comparing
-# only the host (as a previous version did when the Host header had no port)
-# allowed cross-scheme and cross-port origins on the same hostname to open
-# authenticated WebSockets.
+# default port (443 vs 80) used when the Host header omits the port.
 function _origin_allowed_default(request::Request, server_secure::Bool=false)::Bool
     origin = header(request.headers, "Origin", nothing)
     origin === nothing && return true

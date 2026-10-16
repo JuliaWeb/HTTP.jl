@@ -734,13 +734,10 @@ function _cookie_header(
     if cookies !== true
         append!(merged, cookies::Vector{Cookie})
     end
-    # Merge a caller-set `Cookie` request header with the managed cookies (this restores
-    # the pre-2.0 behaviour, where a manual header was not silently dropped), but
-    # de-duplicate by name so the wire header never carries the same name twice. Managed
-    # cookies (the jar plus any `cookies=` dict) win; the manual header only contributes
-    # names they do not already cover. This keeps a rotated jar cookie from being
-    # shadowed by a stale manual one and preserves path-scoped same-name cookies held in
-    # the jar. Use `cookies=false` to send a manual `Cookie` header verbatim.
+    # Merge a caller-set `Cookie` header with the managed cookies (the jar plus
+    # `cookies=`). Managed cookies win: the manual header only adds names they
+    # do not already have, so a stale manual value never shadows a rotated jar
+    # cookie. `cookies=false` sends a manual `Cookie` header verbatim.
     if !isempty(manual)
         managed = Set(c.name for c in merged)
         for c in manual
@@ -859,13 +856,9 @@ function _do_incoming!(
     # Remember the original request scheme so the sensitive-header same-origin
     # check below can detect an https->http downgrade across the redirect chain.
     initial_secure = secure
-    # `request()` always supplies `server_name` (derived from the initial URL via
-    # `_urlparts_server_name!`), so `server_name !== nothing` is not a reliable
-    # signal of a user-pinned SNI host. Only treat the SNI host as user-pinned
-    # when it does NOT match the host auto-derived from the initial address;
-    # otherwise we must recompute it from the redirect target on every hop so TLS
-    # verifies the peer certificate against the host we actually connect to
-    # (an auto value pinned to the original host would verify the wrong cert).
+    # A `server_name` equal to the host in `address` is not treated as pinned,
+    # so SNI and certificate checks follow redirects to other hosts. Only a
+    # different, explicit `server_name` is kept on every hop.
     auto_server_name = _host_for_sni(current_address)
     user_pinned_server_name = server_name !== nothing && String(server_name::AbstractString) != auto_server_name
     current_server_name = user_pinned_server_name ? String(server_name::AbstractString) : auto_server_name

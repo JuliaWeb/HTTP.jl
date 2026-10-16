@@ -92,14 +92,8 @@ function isjson(bytes, i::Int=0, maxlen::Int=min(length(bytes), _SNIFF_MAX_LENGT
     elseif b == UInt8('"')
         i = _sniff_rest_of_string(bytes, i, maxlen)
     elseif (UInt8('0') <= b <= UInt8('9')) || b == UInt8('-')
-        # Parse the number with strtod. Two safety requirements:
-        #  * the end-pointer out-parameter must be per-call (a local Ref), not a
-        #    shared module-global, otherwise concurrent sniffs race on it and
-        #    compute a bogus consumed length (ANT-2026-5FMZ73VG);
-        #  * the bytes handed to strtod must be NUL-terminated, otherwise strtod
-        #    may read past the end of the buffer. We copy the remaining input
-        #    (from the current byte to the end) into a NUL-terminated buffer so
-        #    the scan is bounded by our copy rather than the caller's memory.
+        # strtod gets a NUL-terminated copy (so it cannot read past the input)
+        # and a per-call end pointer (so concurrent sniffs do not race).
         numbytes = _sniff_number_buffer(bytes, i, maxlen)
         endref = Ref{Ptr{UInt8}}(C_NULL)
         GC.@preserve numbytes begin
@@ -224,11 +218,8 @@ function _sniff_match(::_SniffMP4Sig, data::AbstractVector{UInt8}, firstnonws::I
     boxsize = Int(_big_endian_u32(data))
     (boxsize % 4 != 0 || length(data) < boxsize) && return false
     _byte_equal(data, 5, _SNIFF_MP4_FTYP) || return false
-    # The brand scan compares 3-byte windows via `_byte_equal(data, st, _SNIFF_MP4)`
-    # under `@inbounds`, reading data[st .. st+2]. The previous upper bound of
-    # `boxsize+1` allowed `st+2` to exceed `length(data)` when boxsize == length(data)
-    # (a 4-byte/3-byte out-of-bounds heap read; ANT-2026-07KFWYV3, ANT-2026-9PKP3RJA).
-    # Clamp the loop so every comparison window lies fully within the buffer.
+    # `_byte_equal` reads `data[st:st+2]` under `@inbounds`, so stop the brand
+    # scan where a 3-byte window still fits in `data`.
     laststart = min(boxsize + 1, length(data) - length(_SNIFF_MP4) + 1)
     for st in 9:4:laststart
         st == 13 && continue

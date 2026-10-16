@@ -104,8 +104,8 @@ function RetryBucket(;
     )
 end
 
-# Preserve the positional constructor that the five-field RetryBucket exposed
-# before the depleted-partition fast path was added.
+# Positional constructor without the depleted-partition count, kept for
+# compatibility. The count is derived from `partitions`.
 function RetryBucket(
     backoff_scale_factor_ms::Int,
     max_backoff_secs::Int,
@@ -124,10 +124,9 @@ function RetryBucket(
     )
 end
 
-# Preserve the six-field constructor exposed in HTTP 2.6.6. The set argument
-# is accepted only for compatibility; the pointer-free depleted-partition
-# count is derived from `partitions` so the count invariant holds even when
-# the caller's set disagrees with the partition states.
+# Positional constructor that also takes a `Set` of depleted keys, kept for
+# compatibility. The set is ignored; the count is derived from `partitions` so
+# it always matches the partition states.
 function RetryBucket(
     backoff_scale_factor_ms::Int,
     max_backoff_secs::Int,

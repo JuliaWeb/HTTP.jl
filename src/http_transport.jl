@@ -1458,14 +1458,9 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
             line_len = nl_idx - start + 1
             line_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
             reader.next = nl_idx + 1
-            # Require a strict CRLF terminator. A bare LF (no preceding CR) is
-            # rejected here so that request-line, header, and chunk-size framing
-            # is independent of socket-buffer fill state. Tolerating bare LF only
-            # on this fast path (while the slow path below and the generic
-            # _readline_crlf(::IO) reader both require CRLF) would make the
-            # accepted wire grammar depend on TCP segmentation, which is a parser
-            # differential that enables HTTP request smuggling behind a proxy
-            # (ANT-2026-CN279YCX, ANT-2026-MG2WTZ8Z).
+            # Require CRLF, as the slow path below does. Accepting a bare LF only
+            # here would make parsing depend on TCP segmentation, a parser
+            # differential that enables request smuggling behind a proxy.
             content_stop = nl_idx - 1
             (content_stop < start || @inbounds(reader.buf[content_stop]) != 0x0d) &&
                 throw(ParseError("HTTP/1 line not terminated by CRLF (bare LF)"))
@@ -1503,10 +1498,8 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
         append!(bytes, @view(reader.buf[start:nl_idx]))
         reader.next = nl_idx + 1
         nbytes = length(bytes)
-        # Require a strict CRLF terminator (see the fast-path comment above). An
-        # LF not immediately preceded by CR is a bare LF and is rejected rather
-        # than folded into the line body, so both code paths agree regardless of
-        # buffer-fill boundaries (ANT-2026-CN279YCX, ANT-2026-MG2WTZ8Z).
+        # Require CRLF, as the fast path above does: a bare LF is rejected,
+        # not kept in the line.
         if nbytes >= 2 && bytes[nbytes-1] == 0x0d && bytes[nbytes] == 0x0a
             resize!(bytes, nbytes - 2)
             return String(bytes)

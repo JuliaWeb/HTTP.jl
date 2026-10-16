@@ -249,15 +249,9 @@ function _parse_transfer_encoding!(hdrs::Headers, proto_major::UInt8, proto_mino
     values = headers(hdrs, "Transfer-Encoding")
     isempty(values) && return false
     if proto_major < UInt8(1) || (proto_major == UInt8(1) && proto_minor < UInt8(1))
-        # RFC 9112 §6.1: an HTTP/1.0 message must not use Transfer-Encoding; a
-        # recipient that receives one has faulty framing. The old behavior
-        # silently dropped the header and fell back to Content-Length while
-        # leaving a keep-alive connection open, so a reverse proxy that framed
-        # the body as chunked could leave the trailing chunked bytes on the
-        # reused connection for HTTP.jl to parse as a smuggled pipelined request
-        # (ANT-2026-YD5QTQDZ). Reject instead: this surfaces as a 400 and the
-        # server closes the connection (Response close=true), so no ambiguous
-        # bytes remain on the transport.
+        # RFC 9112 §6.1: Transfer-Encoding in an HTTP/1.0 message means faulty
+        # framing. Reject it so leftover chunked bytes on a kept-alive
+        # connection cannot be read as a smuggled request.
         throw(ProtocolError("Transfer-Encoding is not allowed in HTTP/1.0 messages"))
     end
     length(values) == 1 || throw(ProtocolError("too many Transfer-Encoding header values"))
@@ -370,16 +364,10 @@ function _consume_crlf(io::IO)
 end
 
 function _parse_chunk_size(line::AbstractString)::Int64
-    # RFC 9112 §7.1: chunk = chunk-size [ chunk-ext ] CRLF, where
-    #   chunk-size = 1*HEXDIG. The chunk-size token must be one or more ASCII
-    # hex digits with no sign, no "0x" prefix, and no surrounding whitespace.
-    # We split off any chunk extension at the first ';' and then validate the
-    # remaining token byte-by-byte instead of using Base.parse(Int64,...;base=16),
-    # which silently tolerates '+'/'-', a "0x" prefix, and isspace padding
-    # (including a trailing bare CR). Accepting those forms lets HTTP.jl disagree
-    # with an RFC-strict front-end proxy about where the chunked body ends, which
-    # enables HTTP request smuggling (ANT-2026-SRPX7DN1). This mirrors the strict
-    # decimal parser used for Content-Length (_parse_int64_decimal_header_value).
+    # RFC 9112 §7.1: chunk-size = 1*HEXDIG, optionally followed by `;` and an
+    # extension. Parse the digits by hand because `Base.parse` also accepts a
+    # sign and surrounding whitespace (even a bare CR); any leniency a strict
+    # front-end proxy lacks enables request smuggling.
     semi = findfirst(';', line)
     token = semi === nothing ? line : SubString(line, firstindex(line), prevind(line, semi))
     units = codeunits(token)
@@ -730,17 +718,15 @@ function _request_has_body(request::Request)::Bool
     return true
 end
 
-# RFC 9112 §3.2: "A user agent that sends Host SHOULD send it as the first
-# field line after the request-line." curl, Go's net/http and Python's
+# RFC 9110 §7.2: "A user agent that sends Host SHOULD send it as the first
+# field in the header section of a request." curl, Go's net/http and Python's
 # http.client all do, and some CDN/WAF front ends reject an otherwise identical
-# request whose Host arrives after other fields (#1361). `setheader` appends a
-# key that is not already stored, which used to land the injected `Host` after
-# every caller-supplied and client-default header.
+# request whose Host arrives after other fields (#1361).
 #
 # The value is the caller's `Host` header when one is stored with a non-empty
 # value, otherwise `request.host` (the URL authority as written); an
 # empty-valued caller `Host` is kept as-is when there is no `request.host`
-# (RFC 9112 §3.2.2 requires an empty Host for authority-less targets). Exactly
+# (RFC 9112 §3.2 requires an empty Host for authority-less targets). At most
 # one `Host` line is written: a caller-supplied `Host` is moved to the front
 # rather than duplicated, and any further stored `Host` entries are dropped.
 function _hoist_host_header!(headers::Headers, request_host::Union{Nothing,String})::Nothing
@@ -978,12 +964,9 @@ function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BY
     method, target, proto_major, proto_minor = _parse_request_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
     chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
-    # A request that carries BOTH Transfer-Encoding and Content-Length has
-    # ambiguous framing (RFC 9112 §6.1/§6.3): a front-end proxy may frame by one
-    # header while HTTP.jl frames by the other, leaving trailing bytes on a
-    # reused keep-alive connection that get parsed as a smuggled request
-    # (ANT-2026-YD5QTQDZ). Reject such requests outright (surfaced as 400 with
-    # the connection closed) instead of silently preferring Transfer-Encoding.
+    # RFC 9112 §6.1: Transfer-Encoding plus Content-Length is ambiguous framing
+    # that a front-end proxy may read differently (request smuggling), so the
+    # request is rejected (400, connection closed).
     if chunked && hasheader(headers, "Content-Length")
         throw(ProtocolError("request must not include both Transfer-Encoding and Content-Length"))
     end

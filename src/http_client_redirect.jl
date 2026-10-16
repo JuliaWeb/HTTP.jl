@@ -122,18 +122,11 @@ end
     end
 end
 
-# Decide whether Authorization/Cookie/Proxy-Authorization (and the other
-# credential-bearing headers stripped by `_strip_sensitive_redirect_headers!`)
-# may be retained when a request is redirected. Sensitive headers are only kept
-# when the redirect stays within the SAME security origin, i.e. the scheme, the
-# port, and the host all match exactly after normalization. Go's net/http also
-# trusts subdomains here, but explicit Authorization/Cookie headers are scoped to
-# the caller's request origin in HTTP.jl; domain-scoped cookies remain the cookie
-# jar's job. Comparing the host alone (the previous behaviour) leaked
-# credentials across an https->http downgrade or to a different service on
-# another port of the same host (cf. curl CVE-2022-27776, python-requests
-# CVE-2018-18074); the `initial_secure`/`redirect_secure` flags are supplied by
-# the callers, which already track scheme for `Referer`.
+# Keep credential headers (those `_strip_sensitive_redirect_headers!` removes)
+# only when the redirect stays on the same origin: scheme, port, and normalized
+# host all match. Unlike Go's net/http, subdomains are not trusted; the cookie
+# jar handles domain-scoped cookies. A scheme or port change can reach another
+# service (cf. curl CVE-2022-27776, python-requests CVE-2018-18074).
 function _should_copy_sensitive_headers_on_redirect(
     initial_address::String,
     redirect_address::String,
@@ -169,19 +162,11 @@ function _strip_sensitive_redirect_headers!(headers::Headers)
 end
 
 # Returns `(address, secure, target, host_header)` for the next hop. `address`
-# is the dial target (always carries a port); `host_header` is the authority as
-# written for the `Host` header (default port never synthesized) — see
-# `_urlparts_host_header!`. For a host-changing redirect both come from the
-# parsed Location; for a same-authority relative redirect the host is unchanged,
-# so `current_host_header` is carried through verbatim.
-#
-# `current_host_header` is the current hop's `request.host`, which is `nothing`
-# for low-level `do!` callers that pin `Host` only in the request headers. The
-# header is stripped on each hop by `_prepare_request_for_redirect`, so the next
-# `Host` is taken from this returned value; on a relative redirect with no parsed
-# host we fall back to the dial `address` (carrying the port, as before this
-# change) rather than returning `nothing`, which would drop the `Host` header
-# entirely. An absolute redirect always yields a proper parsed `host_header`.
+# is the dial target and always has a port; `host_header` is the `Host` value
+# as written in the Location (see `_urlparts_host_header!`). A relative redirect
+# keeps the current host: `current_host_header` (the hop's `request.host`), or
+# `address` when that is `nothing` (`do!` callers that set `Host` only in the
+# headers, which `_prepare_request_for_redirect` strips).
 function _resolve_redirect_target(current_address::String, current_secure::Bool, location::String, current_target::String, current_host_header::Union{Nothing,String})
     scheme_match = match(r"^([A-Za-z][A-Za-z0-9+\\.-]*):", location)
     if scheme_match !== nothing

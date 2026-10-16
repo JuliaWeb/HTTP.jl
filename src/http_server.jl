@@ -63,13 +63,12 @@ Base.:(==)(a::_ServerConn, b::_ServerConn) = a === b
 # open concurrently. RFC 9113 §6.5.2 recommends a value no smaller than 100 so
 # that legitimate multiplexing keeps working; it is advertised to the peer via
 # SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection in http2_server.jl.
-# A value <= 0 disables the cap (legacy "unlimited" behavior).
+# A value <= 0 disables the cap.
 const _H2_DEFAULT_MAX_CONCURRENT_STREAMS = 100
 
-# Default cap for request bodies that the ordinary `serve!` path buffers before
-# dispatching to a Request handler. Set `max_body_bytes=0` to opt back into the
-# legacy unbounded buffering behavior, or use `listen!`/stream handlers for
-# application-managed large uploads.
+# Default cap on request bodies that `serve!` buffers before calling a Request
+# handler. `max_body_bytes=0` removes the cap; stream handlers (`listen!`) can
+# manage large uploads themselves.
 const _SERVER_DEFAULT_MAX_BODY_BYTES = Int64(64 * 1024 * 1024)
 
 """
@@ -145,9 +144,8 @@ function Server(;
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     max_header_bytes > 0 || throw(ArgumentError("max_header_bytes must be > 0"))
     max_body_bytes >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
-    # `max_concurrent_streams <= 0` disables the HTTP/2 concurrent-stream cap
-    # (the legacy RFC-default "unlimited" behavior); positive values are
-    # advertised via SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection.
+    # No check on `max_concurrent_streams`: a value <= 0 disables the HTTP/2
+    # stream cap.
     backlog > 0 || throw(ArgumentError("backlog must be > 0"))
     return Server{F}(
         String(network),
@@ -240,8 +238,8 @@ end
 
 # Rebuild through the positional internal constructor rather than the public
 # keyword form: a `Core.kwcall` in this path is not statically resolvable
-# under `juliac --trim` on current Julia master, and the keyword
-# constructor's copy semantics are reproduced explicitly here.
+# under `juliac --trim`, and the keyword constructor's copy semantics are
+# reproduced explicitly here.
 function _stream_request_metadata(request::Request)::Request{EmptyBody}
     return _request_nocopy(
         request.method,
@@ -937,9 +935,8 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
     @try_ignore body_close!(body)
     # Positional internal constructor, one call per concrete body type: the
     # keyword form's `Core.kwcall` is not statically resolvable under
-    # `juliac --trim` on current Julia master, and a Union-typed body would
-    # widen the rebuilt request. Copy semantics of the keyword constructor
-    # are reproduced explicitly.
+    # `juliac --trim`, and a Union-typed body would widen the rebuilt request.
+    # Copy semantics of the keyword constructor are reproduced explicitly.
     return isempty(body_bytes) ?
            _rebuffered_request(request, EmptyBody(), Int64(0)) :
            _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))

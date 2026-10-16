@@ -121,11 +121,9 @@ function body_read!(stream::SSEStream, dst::Vector{UInt8})::Int
     return readbytes!(buf, dst, available)
 end
 
-# Split `value` into logical lines, treating CR, LF and CRLF all as line
-# terminators. The SSE wire format and browser EventSource parsers accept any of
-# these as a line break, so splitting on '\n' alone (as before) would let a bare
-# '\r' inside `data` smuggle additional wire-level lines/fields. This normalizes
-# every line break in `data` to a fresh `data:` prefix instead.
+# Split `value` on CR, LF, and CRLF. EventSource parsers treat each as a line
+# break, so each must start a new `data:` line; otherwise a bare '\r' in
+# `data` could smuggle extra fields onto the wire.
 function _split_sse_data_lines(value::AbstractString)
     return split(value, r"\r\n|\r|\n"; keepempty=true)
 end
