@@ -596,7 +596,7 @@ end
     HTTP.getcookies(req) -> Vector{Cookie}
 
 Return the cookies that `HTTP.Handlers.cookie_middleware` stored on `req`, or
-an empty vector for a request that did not pass through it. [`cookies`](@ref)
+an empty vector for a request that did not pass through it. [`HTTP.cookies`](@ref HTTP.Cookies.cookies)
 reads a request's cookies directly.
 """
 getcookies(req) = get(() -> Cookie[], req.context, :cookies)

@@ -496,7 +496,7 @@ const normal_url_char = Bool[
     CookieJar()
     CookieJar(entries::Dict{String, Dict{String, Cookie}})
 
-An in-memory cookie store for a [`Client`](@ref) or the `cookiejar` keyword of
+An in-memory cookie store for a [`Client`](@ref HTTP.Client) or the `cookiejar` keyword of
 a request. It stores cookies from responses and picks the ones to send by their
 domain, path, expiry, and `Secure` flag.
 
