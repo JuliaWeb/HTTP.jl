@@ -114,6 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an HTTP/1 upload hang in trimmed executables on Julia 1.13. Request-header
   waits also propagate failed writer tasks instead of waiting indefinitely.
   ([#1390])
+- The default `User-Agent` header and `HTTP.VERSION` give the installed HTTP.jl
+  version. They always said 2.0.0. ([#1417])
 - A byte-buffer `response_stream` receives only a 2xx body. A redirect that is
   not followed, such as S3's 301 for the wrong region (it has no `Location`),
   went into the buffer, and a body larger than the buffer raised `ArgumentError:
@@ -1075,3 +1077,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
