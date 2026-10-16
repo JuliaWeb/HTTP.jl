@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
+- `expect_continue_timeout` sets how long an HTTP/1 request with `Expect:
+  100-continue` waits for `100 Continue` before it sends the body, and `0` sends
+  it at once. The keyword was ignored, and the client always waited up to one
+  second. ([#1413])
 - The HTTP/1 server answers a request line whose HTTP major version is not 1,
   such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
   Go's server does. It served those requests, and a stream handler's status
@@ -1075,3 +1079,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
