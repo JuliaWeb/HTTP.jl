@@ -3113,6 +3113,7 @@ function _build_bare_h2_connection()
         UInt8[],
         0,
         Int64(0),
+        UInt32(0),
         false,
     )
     cleanup = () -> begin
@@ -3491,4 +3492,181 @@ end
         close(client)
         HTTP.@try_ignore NC.close(listener)
     end
+end
+
+# ── a failed request must not take down a shared pooled connection ─────────
+
+function _read_h2_frame_until!(reader, predicate)
+    while true
+        frame = HT.read_frame!(reader)
+        predicate(frame) && return frame
+    end
+end
+
+@testset "HTTP/2 pooled connection outlives a failed request" begin
+    # A request the server resets, or one whose body source fails, resets only
+    # its own stream; a request already in flight on the connection finishes.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    b_sent = Channel{Nothing}(1)
+    release_b = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        c = NC.accept(listener)
+        NC.close(listener)  # a request that dials again fails at once
+        reader = _h2_handshake_server!(c)
+        try
+            _read_h2_frame_until!(reader, f -> f isa HT.HeadersFrame && f.stream_id == UInt32(1))
+            put!(b_sent, nothing)
+            _read_h2_frame_until!(reader, f -> f isa HT.HeadersFrame && f.stream_id == UInt32(3))
+            _write_frame_to_conn!(c, HT.RSTStreamFrame(UInt32(3), UInt32(0x2)))
+            _read_h2_frame_until!(reader, f -> f isa HT.RSTStreamFrame && f.stream_id == UInt32(5))
+            take!(release_b)
+            blk = HT.encode_header_block(HT.Encoder(), HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(c, HT.HeadersFrame(UInt32(1), true, true, blk))
+            HTTP.@try_ignore while true
+                HT.read_frame!(reader)
+            end
+        finally
+            HTTP.@try_ignore NC.close(c)
+        end
+        return nothing
+    end)
+    client = HT.Client()
+    try
+        b = errormonitor(Threads.@spawn HT.get("http://$(address)/b"; client = client, protocol = :h2, retry = false))
+        take!(b_sent)
+        @test_throws HT.H2StreamResetError HT.get("http://$(address)/a"; client = client, protocol = :h2, retry = false)
+        reads = Ref(0)
+        failing_body = HT.CallbackBody(dst -> begin
+            reads[] += 1
+            reads[] == 1 || error("body source failed")
+            dst[1] = UInt8('x')
+            return 1
+        end, () -> nothing)
+        @test_throws ErrorException HT.request("POST", "http://$(address)/c"; client = client, protocol = :h2, retry = false, body = failing_body)
+        put!(release_b, nothing)
+        @test fetch(b).status == 200
+    finally
+        isready(release_b) || HTTP.@try_ignore put!(release_b, nothing)
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
+end
+
+@testset "HTTP/2 pool holds only the stream slots a server grants" begin
+    # With SETTINGS_MAX_CONCURRENT_STREAMS = 0 the request on a new connection
+    # holds no slot, so a failure before its stream opens returns none.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        c = NC.accept(listener)
+        reader = HT._ConnReader(c)
+        try
+            _ = _read_exact_h2_tcp!(c, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            settings = Pair{UInt16, UInt32}[UInt16(0x3) => UInt32(0), UInt16(0x6) => UInt32(16)]
+            _write_frame_to_conn!(c, HT.SettingsFrame(false, settings))
+            HTTP.@try_ignore while true
+                HT.read_frame!(reader)
+            end
+        finally
+            HTTP.@try_ignore NC.close(c)
+        end
+        return nothing
+    end)
+    client = HT.Client()
+    try
+        # The request headers exceed the 16-byte SETTINGS_MAX_HEADER_LIST_SIZE.
+        @test_throws HT.ProtocolError HT.get("http://$(address)/"; client = client, protocol = :h2, retry = false)
+        conn = lock(() -> only(only(values(client.h2_conns))), client.h2_lock)
+        @test conn.pending_stream_count == 0
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
+end
+
+@testset "HTTP/2 pool lets a connection finish its streams after GOAWAY" begin
+    # Streams up to a graceful GOAWAY's last stream id still complete. New
+    # requests go to a new connection, and the old one closes once drained.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    a_sent = Channel{Nothing}(1)
+    release_a = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        c1 = NC.accept(listener)
+        reader1 = _h2_handshake_server!(c1)
+        try
+            _read_h2_frame_until!(reader1, f -> f isa HT.HeadersFrame && f.stream_id == UInt32(1))
+            put!(a_sent, nothing)
+            _write_frame_to_conn!(c1, HT.GoAwayFrame(UInt32(1), UInt32(0), UInt8[]))
+            c2 = NC.accept(listener)
+            try
+                _h2_serve_one_get!(c2, _h2_handshake_server!(c2), HT.Encoder(), HT.Decoder())
+                take!(release_a)
+                blk = HT.encode_header_block(HT.Encoder(), HT.HeaderField[HT.HeaderField(":status", "200", false)])
+                _write_frame_to_conn!(c1, HT.HeadersFrame(UInt32(1), true, true, blk))
+                # Ends when the client closes the drained connection.
+                HTTP.@try_ignore while true
+                    HT.read_frame!(reader1)
+                end
+            finally
+                HTTP.@try_ignore NC.close(c2)
+            end
+        finally
+            HTTP.@try_ignore NC.close(c1)
+        end
+        return nothing
+    end)
+    client = HT.Client()
+    try
+        a = errormonitor(Threads.@spawn HT.get("http://$(address)/a"; client = client, protocol = :h2, retry = false))
+        take!(a_sent)
+        conn = lock(() -> only(only(values(client.h2_conns))), client.h2_lock)
+        # Observe the GOAWAY applied, not elapsed time.
+        while !(@atomic :acquire conn.closed) && lock(() -> conn.accepting_new_streams, conn.state_lock)
+            yield()
+        end
+        @test HT.get("http://$(address)/c"; client = client, protocol = :h2, retry = false).status == 200
+        put!(release_a, nothing)
+        @test fetch(a).status == 200
+        @test @atomic :acquire conn.closed
+    finally
+        isready(release_a) || HTTP.@try_ignore put!(release_a, nothing)
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
+end
+
+@testset "HTTP/2 pool stops using a connection that answers nothing before a timeout" begin
+    # No frame arrived after the timed-out request was sent, so the connection
+    # may be dead: it takes no new requests and closes once its streams are done.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        c = NC.accept(listener)
+        reader = _h2_handshake_server!(c)
+        try
+            _read_h2_frame_until!(reader, f -> f isa HT.HeadersFrame)
+            HTTP.@try_ignore while true
+                HT.read_frame!(reader)
+            end
+        finally
+            HTTP.@try_ignore NC.close(c)
+        end
+        return nothing
+    end)
+    client = HT.Client()
+    try
+        @test_throws HT.TimeoutError HT.get("http://$(address)/silent"; client = client, protocol = :h2, retry = false, response_header_timeout = 1.0e-9)
+        silent = lock(() -> only(only(values(client.h2_conns))), client.h2_lock)
+        @test @atomic :acquire silent.closed
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    _wait_task_h2!(server_task)
 end

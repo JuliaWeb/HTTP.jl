@@ -501,7 +501,7 @@ function _acquire_h2_conn!(
     server_name::Union{Nothing,String}=nothing;
     allow_h1_alpn::Bool=false,
     auto_protocol::Bool=false,
-)::H2Connection
+)::Tuple{H2Connection,Bool}
     key = _h2_key(plan)
     # Fail fast (and without touching `h2_lock`) when another task cached this
     # origin as HTTP/1.1 after our caller's `_use_h2` check.
@@ -541,9 +541,10 @@ function _acquire_h2_conn!(
                 continue
             end
             if !_h2_conn_available(existing::H2Connection)
-                if !_h2_conn_reusable(existing::H2Connection)
+                # A failed connection is already closed. One that takes no new
+                # streams stays until its last stream ends and it closes itself.
+                if @atomic :acquire (existing::H2Connection).closed
                     deleteat!(conns, i)
-                    push!(to_close, existing::H2Connection)
                     continue
                 end
             else
@@ -551,7 +552,7 @@ function _acquire_h2_conn!(
                 # entering this loop doesn't see the same `existing` as
                 # available before our caller calls `_register_stream!`.
                 if _try_claim_h2_pending_slot!(existing::H2Connection)
-                    return existing::H2Connection
+                    return existing::H2Connection, true
                 end
                 # Lost the race for the last slot; fall through to evaluate
                 # remaining cached connections (and ultimately open a new one).
@@ -609,11 +610,13 @@ function _acquire_h2_conn!(
             rethrow()
         end
         # Claim a slot on the freshly opened connection up front so subsequent
-        # acquirers that race in see this caller's pending request.
-        _try_claim_h2_pending_slot!(conn::H2Connection)
+        # acquirers that race in see this caller's pending request. The claim
+        # fails when the peer allows no streams yet; the request then waits
+        # for a slot without holding one.
+        claimed = _try_claim_h2_pending_slot!(conn::H2Connection)
         push!(conns, conn)
         client.h2_conns[key] = conns
-        return conn::H2Connection
+        return conn::H2Connection, claimed
     finally
         unlock(client.h2_lock)
         for culled in to_close
@@ -626,32 +629,6 @@ end
 
 @inline function _should_fallback_h2_to_h1(err)::Bool
     return err isa H2NegotiationError
-end
-
-function _drop_h2_conn!(client::Client, plan::_ProxyPlan, target::Union{Nothing,H2Connection}=nothing)
-    key = _h2_key(plan)
-    lock(client.h2_lock)
-    try
-        conns = get(() -> H2Connection[], client.h2_conns, key)
-        kept = H2Connection[]
-        for conn in conns
-            if target === nothing || conn === target
-                @try_ignore begin
-                    close(conn)
-                end
-            else
-                push!(kept, conn)
-            end
-        end
-        if isempty(kept)
-            pop!(client.h2_conns, key, H2Connection[])
-        else
-            client.h2_conns[key] = kept
-        end
-    finally
-        unlock(client.h2_lock)
-    end
-    return nothing
 end
 
 function _use_h2(client::Client, plan::_ProxyPlan, secure::Bool, protocol::Symbol)::Bool
@@ -891,9 +868,11 @@ function _do_incoming!(
             end
             response = try
                 if use_h2
-                    conn = nothing
+                    # A failed request leaves its pooled connection to the other
+                    # requests on it; a failed connection is already closed and
+                    # leaves the pool on the next acquire.
                     try
-                        conn = _acquire_h2_conn!(
+                        conn, claimed = _acquire_h2_conn!(
                             client,
                             proxy_plan,
                             current_address,
@@ -903,9 +882,8 @@ function _do_incoming!(
                             allow_h1_alpn=(protocol == :auto),
                             auto_protocol=(protocol == :auto),
                         )
-                        _h2_roundtrip_incoming!(conn::H2Connection, send_request; pending_slot_claimed=true)
+                        _h2_roundtrip_incoming!(conn, send_request; pending_slot_claimed=claimed)
                     catch err
-                        _drop_h2_conn!(client, proxy_plan, conn)
                         if protocol == :auto && _should_fallback_h2_to_h1(err)
                             _roundtrip_incoming!(
                                 client.transport,

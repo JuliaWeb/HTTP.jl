@@ -201,6 +201,10 @@ mutable struct H2Connection
     # onto such a connection stalls until the kernel's retransmission limit
     # (~15 min on Linux) because no RST/FIN ever arrives (#1331).
     idle_since_ns::Int64
+    # Every stream below this id was followed by a frame from the peer. A
+    # request abandoned at or above it saw no sign the connection is alive.
+    # Guarded by `state_lock`.
+    read_before_stream_id::UInt32
     @atomic closed::Bool
 end
 
@@ -272,14 +276,21 @@ function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame, w
     return nothing
 end
 
-# Writes pre-encoded frame bytes under the connection write lock.
+# Writes pre-encoded request DATA frame bytes under the connection write lock.
+# A failed write can leave part of a frame on the wire, so it fails the
+# connection; other upload failures end only their own stream.
 function _write_bytes_h2_threadsafe!(conn::H2Connection, bytes::AbstractVector{UInt8}, write_deadline_ns::Int64)
-    lock(conn.write_lock)
     try
-        _set_h2_write_deadline!(conn, write_deadline_ns)
-        _write_all_h2!(conn, bytes)
-    finally
-        unlock(conn.write_lock)
+        lock(conn.write_lock)
+        try
+            _set_h2_write_deadline!(conn, write_deadline_ns)
+            _write_all_h2!(conn, bytes)
+        finally
+            unlock(conn.write_lock)
+        end
+    catch err
+        _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed", err::Exception))
+        rethrow()
     end
     return nothing
 end
@@ -585,6 +596,7 @@ function _release_h2_pending_slot!(conn::H2Connection)
     finally
         unlock(conn.state_lock)
     end
+    _close_h2_if_drained!(conn)
     return nothing
 end
 
@@ -669,13 +681,15 @@ function _wait_for_stream_slot!(conn::H2Connection)
 end
 
 """
-    _try_register_stream_locked!(conn) -> Union{Nothing,H2StreamState}
+    _try_register_stream_locked!(conn, claimed=false) -> Union{Nothing,H2StreamState}
 
 Allocate a stream id and bookkeeping entry without blocking. Returns
 `nothing` if the connection is at `peer_max_concurrent_streams` so the caller
 can release `write_lock` and wait for a slot to free up before retrying.
+`claimed` says whether the caller holds a reservation from
+`_try_claim_h2_pending_slot!`, which the new stream then replaces.
 """
-function _try_register_stream_locked!(conn::H2Connection)::Union{Nothing,H2StreamState}
+function _try_register_stream_locked!(conn::H2Connection, claimed::Bool=false)::Union{Nothing,H2StreamState}
     lock(conn.state_lock)
     try
         (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
@@ -689,11 +703,7 @@ function _try_register_stream_locked!(conn::H2Connection)::Union{Nothing,H2Strea
         state = H2StreamState(stream_id, conn.max_buffered_bytes)
         conn.streams[stream_id] = state
         conn.stream_send_window[stream_id] = conn.initial_stream_send_window
-        # Convert the pending reservation from `_acquire_h2_conn!`, if any,
-        # into the real stream entry.
-        if conn.pending_stream_count > 0
-            conn.pending_stream_count -= 1
-        end
+        claimed && (conn.pending_stream_count -= 1)
         return state
     finally
         unlock(conn.state_lock)
@@ -740,7 +750,7 @@ function _register_stream_and_send_headers!(
             try
                 (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
                 conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
-                stream_state = _try_register_stream_locked!(conn)
+                stream_state = _try_register_stream_locked!(conn, pending_owned)
                 if stream_state !== nothing
                     pending_owned = false
                     try
@@ -786,6 +796,25 @@ function _unregister_stream!(conn::H2Connection, stream_id::UInt32)
     finally
         unlock(conn.state_lock)
     end
+    _close_h2_if_drained!(conn)
+    return nothing
+end
+
+# A connection that takes no new streams (after GOAWAY, or retired by
+# `_retire_h2_if_unanswered!`) closes once the streams it still carries are
+# done, as Go's transport does. This does not wait for the read loop, so
+# callers may hold a stream lock.
+function _close_h2_if_drained!(conn::H2Connection)
+    lock(conn.state_lock)
+    try
+        conn.accepting_new_streams && return nothing
+        (isempty(conn.streams) && conn.pending_stream_count == 0) || return nothing
+        (@atomic :acquire conn.closed) && return nothing
+        @atomic :release conn.closed = true
+    finally
+        unlock(conn.state_lock)
+    end
+    _close_h2_transports!(conn)
     return nothing
 end
 
@@ -936,22 +965,44 @@ end
 
 Unregister a stream whose response never reached a reader (the request failed
 before an `H2Body` existed) and return the connection-level window credit for
-any response DATA already buffered on it.
+any response DATA already buffered on it. A stream the peer has not finished
+is reset with CANCEL, which ends only this request.
 """
 function _discard_h2_stream!(conn::H2Connection, state::H2StreamState)
     unread = 0
+    reset = false
     lock(state.lock)
     try
         if !state.stream_done
             state.stream_done = true
+            reset = !state.conn_errored
             notify(state.condition)
         end
         state.conn_errored || (unread = _take_unread_h2_body_bytes!(state))
     finally
         unlock(state.lock)
     end
+    if reset
+        @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(state.stream_id, UInt32(0x8)))
+        _retire_h2_if_unanswered!(conn, state.stream_id)
+    end
     @try_ignore _send_window_updates!(conn, state.stream_id, unread; stream_level=false)
     _unregister_stream!(conn, state.stream_id)
+    return nothing
+end
+
+# A request given up before any frame arrived after it was sent may be on a dead
+# connection, as Go's transport also assumes. New requests then go elsewhere,
+# and this connection closes once its other streams are done.
+function _retire_h2_if_unanswered!(conn::H2Connection, stream_id::UInt32)
+    lock(conn.state_lock)
+    try
+        conn.read_before_stream_id > stream_id && return nothing
+        conn.accepting_new_streams = false
+        notify(conn.stream_condition; all=true)
+    finally
+        unlock(conn.state_lock)
+    end
     return nothing
 end
 
@@ -1084,6 +1135,7 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         for failed in to_fail
             _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY", goaway.last_stream_id))
         end
+        _close_h2_if_drained!(conn)
         return nothing
     elseif frame isa RSTStreamFrame
         rst = frame::RSTStreamFrame
@@ -1195,11 +1247,22 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     return nothing
 end
 
+function _note_h2_frame_read!(conn::H2Connection)
+    lock(conn.state_lock)
+    try
+        conn.read_before_stream_id = conn.next_stream_id
+    finally
+        unlock(conn.state_lock)
+    end
+    return nothing
+end
+
 function _run_h2_read_loop!(conn::H2Connection)
     try
         while true
             (@atomic :acquire conn.closed) && return nothing
             frame = read_frame!(conn.reader)
+            _note_h2_frame_read!(conn)
             _process_incoming_frame!(conn, frame)
         end
     catch err
@@ -1384,6 +1447,7 @@ function _connect_h2_from_tcp!(
             UInt8[],
             0,
             Int64(time_ns()),
+            UInt32(0),
             false,
         )
         _verify_h2_alpn!(conn)
@@ -1522,7 +1586,8 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
             end
         end
         _h2_send_closed(conn, stream_id) && return false
-        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]), _request_write_deadline_ns(request))
+        end_frame = _encode_header_bytes(FrameHeader(0, FRAME_DATA, FLAG_END_STREAM, stream_id))
+        _write_bytes_h2_threadsafe!(conn, end_frame, _request_write_deadline_ns(request))
         return true
     finally
         @try_ignore body_close!(request.body)
@@ -1965,24 +2030,19 @@ function _h2_roundtrip_incoming!(
         if canceled(request_ctx)
             throw(_canceled_error(request_ctx))
         end
-        try
-            end_stream = request.body isa EmptyBody
-            if !end_stream && !_write_request_body_h2!(conn, stream_state.stream_id, request)
-                # The upload was abandoned because the peer finished with the
-                # stream first. When that was a benign early complete response
-                # (no stream error), actively cancel our half of the stream
-                # with NO_ERROR so the peer can release its stream state; a
-                # peer-initiated reset or cancellation needs no reply.
-                send_rst = lock(stream_state.lock) do
-                    stream_state.stream_error === nothing && !stream_state.conn_errored
-                end
-                if send_rst
-                    @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x0)))
-                end
+        end_stream = request.body isa EmptyBody
+        if !end_stream && !_write_request_body_h2!(conn, stream_state.stream_id, request)
+            # The upload was abandoned because the peer finished with the
+            # stream first. When that was a benign early complete response
+            # (no stream error), actively cancel our half of the stream
+            # with NO_ERROR so the peer can release its stream state; a
+            # peer-initiated reset or cancellation needs no reply.
+            send_rst = lock(stream_state.lock) do
+                stream_state.stream_error === nothing && !stream_state.conn_errored
             end
-        catch err
-            _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed", err::Exception))
-            rethrow()
+            if send_rst
+                @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x0)))
+            end
         end
         _wait_stream_headers!(conn, stream_state, _request_response_header_deadline_ns(request))
         lock(stream_state.lock)
