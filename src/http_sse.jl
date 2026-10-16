@@ -146,20 +146,31 @@ function write(stream::SSEStream, event::SSEEvent)::Int
     bytes = lock(stream.lock) do
         buf = stream.format_buffer
         truncate(buf, 0)
+        # One value per `write`: Base's varargs `write(io, x1, xs...)` is not
+        # specialized on `xs`, so its writes dispatch dynamically, which
+        # juliac --trim cannot resolve.
         if event.event !== nothing
-            write(buf, "event: ", event.event, "\n")
+            write(buf, "event: ")
+            write(buf, event.event)
+            write(buf, '\n')
         end
         if event.id !== nothing
-            write(buf, "id: ", event.id, "\n")
+            write(buf, "id: ")
+            write(buf, event.id)
+            write(buf, '\n')
         end
         if event.retry !== nothing
             # `retry` is an Int, so `string` yields digits (plus possibly a
             # leading '-' which the constructor already rejects) and cannot
             # contain a line break.
-            write(buf, "retry: ", string(event.retry), "\n")
+            write(buf, "retry: ")
+            write(buf, string(event.retry))
+            write(buf, '\n')
         end
         for line in _split_sse_data_lines(event.data)
-            write(buf, "data: ", line, "\n")
+            write(buf, "data: ")
+            write(buf, line)
+            write(buf, '\n')
         end
         write(buf, "\n")
         return take!(buf)
