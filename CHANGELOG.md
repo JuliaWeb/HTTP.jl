@@ -107,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
+- A space in a request URL, a `query` string, or a redirect `Location` is sent
+  as `%20`. It went into the request line as is, so `HTTP.get("http://h/a b")`
+  sent the invalid `GET /a b HTTP/1.1`. ([#1415])
 - `read_header_timeout` limits the first request head on a plain TCP connection
   to one budget, as with `allow_h2c = false`. The cleartext HTTP/2 preface check
   restarted the budget when the first bytes arrived, so a slow client could take
@@ -1075,3 +1078,16 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
+[#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
+[#1413]: https://github.com/JuliaWeb/HTTP.jl/issues/1413
+[#1414]: https://github.com/JuliaWeb/HTTP.jl/issues/1414
+[#1415]: https://github.com/JuliaWeb/HTTP.jl/issues/1415
+[#1416]: https://github.com/JuliaWeb/HTTP.jl/issues/1416
+[#1417]: https://github.com/JuliaWeb/HTTP.jl/issues/1417
+[#1418]: https://github.com/JuliaWeb/HTTP.jl/issues/1418
+[#1419]: https://github.com/JuliaWeb/HTTP.jl/issues/1419
+[#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
+[#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
+[#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
