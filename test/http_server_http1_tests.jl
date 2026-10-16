@@ -2,6 +2,7 @@ using Test
 using HTTP
 using Reseau
 using Dates
+using Logging
 
 const HT = HTTP
 const NC = Reseau.TCP
@@ -1098,6 +1099,62 @@ end
         _run_test_operation(() -> HT.forceclose(bad_return_server))
         _run_test_operation(() -> wait(bad_return_server))
     end
+end
+
+@testset "HTTP server answers handler errors with 500 and logs them" begin
+    # Only a failure reading the request keeps a 4xx status. A handler that
+    # throws a request-style error, or sets an invalid Content-Length, has a
+    # bug: the client gets 500 and the server logs it. Peer failures are not
+    # logged.
+    logger = Test.TestLogger()
+    function request_handler(request)
+        request.target == "/timeout" && throw(IOP.DeadlineExceededError())
+        throw(HT.ProtocolError("handler bug"))
+    end
+    function stream_handler(stream)
+        request = HT.startread(stream)
+        if request.target == "/framing"
+            HT.setheader(stream, "Content-Length" => "abc")
+            write(stream, "x")
+        elseif request.target == "/read"
+            read(stream)
+        elseif request.target == "/ws"
+            HT.WebSockets.upgrade(HT.WebSockets.receive, stream)
+        else
+            throw(HT.ParseError("handler bug"))
+        end
+    end
+    # Server tasks log to the logger that is current when the server starts.
+    request_server, stream_server = Logging.with_logger(logger) do
+        return (
+            HT.serve!(request_handler, "127.0.0.1", 0; listenany = true),
+            HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true),
+        )
+    end
+    try
+        for (server, target) in ((request_server, "/protocol"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        end
+        raw = _raw_http_request(HT.port(stream_server), "POST /read HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n")
+        @test startswith(raw, "HTTP/1.1 400 Bad Request\r\n")
+        # A WebSocket client that drops the connection is not a handler error.
+        sock = ND.connect("tcp", "127.0.0.1:$(HT.port(stream_server))")
+        write(sock, Vector{UInt8}(codeunits("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" *
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")))
+        @test startswith(_read_until_server_marker(sock, "\r\n\r\n"), "HTTP/1.1 101 ")
+        NC.close(sock)
+    finally
+        # Graceful close returns once every connection, and its logging, is done.
+        close(request_server)
+        close(stream_server)
+    end
+    records = filter(record -> record.message == "server handler error", logger.logs)
+    @test map(record -> record.kwargs[:target], records) == ["/protocol", "/timeout", "/parse", "/framing"]
+    @test all(record -> record.level == Logging.Error, records)
+    @test records[1].kwargs[:exception][1] isa HT.ProtocolError
+    @test records[1].kwargs[:method] == "GET"
+    @test records[1].kwargs[:peer] isa Reseau.TCP.SocketAddr
 end
 
 @testset "HTTP server idle timeout closes keep-alive connections" begin

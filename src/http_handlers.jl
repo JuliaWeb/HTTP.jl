@@ -34,7 +34,7 @@ import ..body_close!
 import ..get_request_context
 import .._request_with_context
 import ..peeraddr
-import .._server_error_status
+import .._stream_error_status
 import ..@_spawn_interactive
 import ..@try_ignore
 
@@ -426,13 +426,6 @@ end
     return response === nothing ? 0 : response.status
 end
 
-# The status the server writes when a handler throws before its response head
-# is on the wire (mirrors the `_serve_h1_conn!` and h2 catch blocks).
-@inline function _access_error_status(err)::Int
-    status = _server_error_status(err)
-    return status === nothing ? 500 : status::Int
-end
-
 function _log_access(
     middleware::_LoggingMiddleware,
     level::LogLevel,
@@ -456,8 +449,9 @@ function (middleware::_LoggingMiddleware)(req::Request)
     response = try
         middleware.handler(req)
     catch err
+        # The server answers 500 for any error a request handler throws.
         _log_access(
-            middleware, Logging.Error, req.method, req.target, _access_error_status(err), nothing, start_ns,
+            middleware, Logging.Error, req.method, req.target, 500, nothing, start_ns,
             (; exception=(err, catch_backtrace())),
         )
         rethrow()
@@ -480,7 +474,7 @@ function (middleware::_LoggingMiddleware)(stream::Stream)
         # may have sent part of it. Before commitment the server can still send
         # an error status; fixed-length h1 heads can be deferred until
         # closewrite.
-        status = (@atomic :acquire stream.head_committed) ? _access_stream_status(stream) : _access_error_status(err)
+        status = (@atomic :acquire stream.head_committed) ? _access_stream_status(stream) : _stream_error_status(stream, err)
         _log_access(
             middleware, Logging.Error, request.method, request.target, status, stream.written_bytes, start_ns,
             (; peer=peer, exception=(err, catch_backtrace())),
