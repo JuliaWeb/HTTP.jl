@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   later requests to a new connection. ([#1426])
 - `examples/batch_server_example.jl` answers batch requests again. It called an
   internal function with an outdated signature, so every request got `500`. ([#1435])
+- The HTTP/1 server answers any exception a handler throws with
+  `500 Internal Server Error` and logs it at `Error` level with the request
+  method, target, and client address. A `ProtocolError`, `ParseError`, or
+  timeout thrown by a handler, or an invalid `Content-Length` set by a stream
+  handler, got `400` or `408` and no log. Errors reading the request body keep
+  their `4xx` status, and peer disconnects are not logged. ([#1425])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so

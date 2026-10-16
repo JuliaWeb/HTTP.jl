@@ -63,10 +63,11 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
             n > 0 || throw(ProtocolError("server stream write made no progress"))
             total += n
         end
-    catch
+    catch err
         # A transport error can follow a partial write, including a complete
         # head. A replacement response, a retry, and connection reuse are all
         # unsafe, even when the handler catches this error.
+        stream.io_error = err
         stream.response.close = true
         @atomic :release stream.head_committed = true
         @atomic :release stream.response_started = true
@@ -184,9 +185,14 @@ function _server_readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Int
     nb >= 0 || throw(ArgumentError("nb must be >= 0"))
     nb == 0 && return 0
     nb <= length(dest) || throw(ArgumentError("nb must be <= length(dest)"))
-    _maybe_write_continue!(stream)
     buf = Vector{UInt8}(undef, nb)
-    n = _stream_request_body_read!(stream, buf)
+    n = try
+        _maybe_write_continue!(stream)
+        _stream_request_body_read!(stream, buf)
+    catch err
+        stream.io_error = err
+        rethrow()
+    end
     n == 0 && (@atomic :release stream.read_closed = true)
     n > 0 && copyto!(dest, 1, buf, 1, n)
     _stream_request_body_fully_consumed(stream) && (@atomic :release stream.read_closed = true)
@@ -195,13 +201,18 @@ end
 
 function _server_read(stream::Stream)::Vector{UInt8}
     _require_server_stream(stream)
-    _maybe_write_continue!(stream)
     out = UInt8[]
     buf = Vector{UInt8}(undef, 16 * 1024)
-    while true
-        n = _stream_request_body_read!(stream, buf)
-        n == 0 && break
-        append!(out, @view(buf[1:n]))
+    try
+        _maybe_write_continue!(stream)
+        while true
+            n = _stream_request_body_read!(stream, buf)
+            n == 0 && break
+            append!(out, @view(buf[1:n]))
+        end
+    catch err
+        stream.io_error = err
+        rethrow()
     end
     @atomic :release stream.read_closed = true
     return out

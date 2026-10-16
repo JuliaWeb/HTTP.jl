@@ -234,6 +234,9 @@ mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     # Set by an explicit `startwrite`: an h1 FIXED body is sent as it is
     # written once it outgrows `_FIXED_BODY_COALESCE_BYTES`.
     stream_fixed_body::Bool
+    # The last error the stream's own request reads or response writes raised:
+    # a client or network failure, unlike anything else a handler throws.
+    io_error::Any
 end
 
 # Rebuild through the positional internal constructor rather than the public
@@ -303,6 +306,7 @@ function Stream(server::Server, tracked::_ServerConn, request::Req) where {Req<:
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
         false,
+        nothing,
     )
 end
 
@@ -353,6 +357,7 @@ function Stream(request::Req) where {Req<:Request}
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
         false,
+        nothing,
     )
 end
 
@@ -411,6 +416,7 @@ function Stream(
         _ServerStreamWriteMode.UNDECIDED,
         Int64(0),
         false,
+        nothing,
     )
 end
 
@@ -1109,6 +1115,19 @@ function _server_error_status(err)::Union{Nothing,Int}
     return nothing
 end
 
+# A stream handler error is a 500 unless the stream's own I/O raised it; that
+# keeps its request-read status, such as 400 for a malformed body.
+function _stream_error_status(stream::Stream, err)::Int
+    err === stream.io_error || return 500
+    status = _server_error_status(err)
+    return status === nothing ? 500 : status::Int
+end
+
+function _log_handler_error(err, backtrace, request::Request, conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    @error "server handler error" exception = (err, backtrace) method = request.method target = request.target peer = _conn_remote_addr(conn)
+    return nothing
+end
+
 function _try_write_server_error!(conn::Union{TCP.Conn,TLS.Conn}, request::Union{Nothing,Request}, status::Int)::Nothing
     response = Response(
         status;
@@ -1213,10 +1232,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                         return nothing
                     end
                 catch err
-                    status = _server_error_status(err)
+                    # Failed reads or writes on the connection and WebSocket closes come from the peer.
+                    (err === stream.io_error || err isa WebSockets.WebSocketError) ||
+                        _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    status = _stream_error_status(stream, err)
                     if !(@atomic :acquire stream.response_started)
                         @try_ignore begin
-                            setstatus(stream, status === nothing ? 500 : status::Int)
+                            setstatus(stream, status)
                             stream.response.close = true
                             # The handler's response may declare framing for a
                             # body the error path never writes (e.g. a reused
@@ -1235,7 +1257,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                         # (h1 FIXED mode) and never reached the wire: answer
                         # with a raw error response instead of silently
                         # dropping the connection (#1303).
-                        _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
+                        _try_write_server_error!(tracked.conn, request, status)
                         return nothing
                     end
                     @try_ignore begin
@@ -1245,13 +1267,18 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     return nothing
                 end
             else
-                handler_request = request
-                response = try
-                    handler_request = _buffer_server_request(request, server.max_body_bytes)
-                    server.handler(handler_request)
+                handler_request = try
+                    _buffer_server_request(request, server.max_body_bytes)
                 catch err
                     status = _server_error_status(err)
                     _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
+                    return nothing
+                end
+                response = try
+                    server.handler(handler_request)
+                catch err
+                    _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
                 if !(response isa Response)
