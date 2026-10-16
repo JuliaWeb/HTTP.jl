@@ -3643,29 +3643,42 @@ end
 
 @testset "HTTP/2 pool stops using a connection that answers nothing before a timeout" begin
     # No frame arrived after the timed-out request was sent, so the connection
-    # may be dead: it takes no new requests and closes once its streams are done.
+    # may be dead: a pooled one takes no new requests and closes once its
+    # streams are done. A connection the caller opened stays theirs to use.
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
     server_task = errormonitor(Threads.@spawn begin
-        c = NC.accept(listener)
-        reader = _h2_handshake_server!(c)
-        try
-            _read_h2_frame_until!(reader, f -> f isa HT.HeadersFrame)
-            HTTP.@try_ignore while true
-                HT.read_frame!(reader)
-            end
-        finally
-            HTTP.@try_ignore NC.close(c)
+        @sync for _ in 1:2
+            c = NC.accept(listener)
+            errormonitor(Threads.@spawn begin
+                reader = _h2_handshake_server!(c)
+                try
+                    _read_h2_frame_until!(reader, f -> f isa HT.HeadersFrame)
+                    HTTP.@try_ignore while true
+                        HT.read_frame!(reader)
+                    end
+                finally
+                    HTTP.@try_ignore NC.close(c)
+                end
+            end)
         end
         return nothing
     end)
     client = HT.Client()
+    direct = nothing
     try
         @test_throws HT.TimeoutError HT.get("http://$(address)/silent"; client = client, protocol = :h2, retry = false, response_header_timeout = 1.0e-9)
         silent = lock(() -> only(only(values(client.h2_conns))), client.h2_lock)
         @test @atomic :acquire silent.closed
+        direct = HT.connect_h2!(address; secure = false)
+        request = HT.Request("GET", "/silent"; host = address)
+        _, config = HT._resolve_request_timeout_settings(0, 0, 1.0e-9)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), Int64(0), config)
+        @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(direct, request)
+        @test HT._h2_conn_reusable(direct)
     finally
         close(client)
+        direct === nothing || close(direct)
         HTTP.@try_ignore NC.close(listener)
     end
     _wait_task_h2!(server_task)

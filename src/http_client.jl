@@ -882,7 +882,7 @@ function _do_incoming!(
                             allow_h1_alpn=(protocol == :auto),
                             auto_protocol=(protocol == :auto),
                         )
-                        _h2_roundtrip_incoming!(conn, send_request; pending_slot_claimed=claimed)
+                        _h2_roundtrip_incoming!(conn, send_request; pending_slot_claimed=claimed, pooled=true)
                     catch err
                         if protocol == :auto && _should_fallback_h2_to_h1(err)
                             _roundtrip_incoming!(

@@ -961,14 +961,15 @@ function _take_unread_h2_body_bytes!(state::H2StreamState)::Int
 end
 
 """
-    _discard_h2_stream!(conn, state)
+    _discard_h2_stream!(conn, state, pooled=false)
 
 Unregister a stream whose response never reached a reader (the request failed
 before an `H2Body` existed) and return the connection-level window credit for
 any response DATA already buffered on it. A stream the peer has not finished
-is reset with CANCEL, which ends only this request.
+is reset with CANCEL, which ends only this request. For a `pooled` connection
+that sent nothing back since the stream opened, the pool also stops using it.
 """
-function _discard_h2_stream!(conn::H2Connection, state::H2StreamState)
+function _discard_h2_stream!(conn::H2Connection, state::H2StreamState, pooled::Bool=false)
     unread = 0
     reset = false
     lock(state.lock)
@@ -984,7 +985,7 @@ function _discard_h2_stream!(conn::H2Connection, state::H2StreamState)
     end
     if reset
         @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(state.stream_id, UInt32(0x8)))
-        _retire_h2_if_unanswered!(conn, state.stream_id)
+        pooled && _retire_h2_if_unanswered!(conn, state.stream_id)
     end
     @try_ignore _send_window_updates!(conn, state.stream_id, unread; stream_level=false)
     _unregister_stream!(conn, state.stream_id)
@@ -992,8 +993,8 @@ function _discard_h2_stream!(conn::H2Connection, state::H2StreamState)
 end
 
 # A request given up before any frame arrived after it was sent may be on a dead
-# connection, as Go's transport also assumes. New requests then go elsewhere,
-# and this connection closes once its other streams are done.
+# connection, as Go's transport also assumes. The pool then sends new requests
+# elsewhere, and this connection closes once its other streams are done.
 function _retire_h2_if_unanswered!(conn::H2Connection, stream_id::UInt32)
     lock(conn.state_lock)
     try
@@ -1985,6 +1986,7 @@ function _h2_roundtrip_incoming!(
     conn::H2Connection,
     request::Request;
     pending_slot_claimed::Bool=false,
+    pooled::Bool=false,
 )::_IncomingResponse
     request_ctx = get_request_context(request)
     if canceled(request_ctx)
@@ -2110,7 +2112,7 @@ function _h2_roundtrip_incoming!(
         end
     finally
         cleanup_cancel_callback && _remove_cancel_callback!(request_ctx, cancel_cb)
-        cleanup_on_exit && _discard_h2_stream!(conn, stream_state)
+        cleanup_on_exit && _discard_h2_stream!(conn, stream_state, pooled)
     end
 end
 
