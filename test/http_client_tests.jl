@@ -2017,11 +2017,18 @@ end
     end
 end
 
-@testset "HTTP failing responses stay out of byte-buffer response_stream sinks" begin
+@testset "HTTP byte-buffer response_stream sinks only receive 2xx bodies" begin
     error_body = repeat("<Error>NoSuchKey</Error>", 4)
+    huge = repeat("x", HT._MAX_NON_2XX_BODY_BYTES + 1)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do req
         req.target == "/moved" && return HT.Response(302; headers = ["Location" => "/missing"], body = "moved")
+        # S3 answers a request for the wrong region with a 301 that has no Location.
+        req.target == "/region" && return HT.Response(301; body = error_body)
         req.target == "/unavailable" && return HT.Response(503; body = error_body)
+        req.target == "/huge" && return HT.Response(500; body = huge)
+        if req.target == "/huge-gzip"
+            return HT.Response(500; headers = ["Content-Encoding" => "gzip"], body = _gzip_bytes_client(huge))
+        end
         if req.target == "/gzip"
             return HT.Response(404; headers = ["Content-Encoding" => "gzip"], body = _gzip_bytes_client(error_body))
         end
@@ -2071,11 +2078,29 @@ end
             @test resp.body == codeunits(error_body)
             @test small == fill(0xff, 4)
 
-            # An unfollowed redirect is a result, as for `status_exception`.
-            resp = HT.get(base_url * "/moved"; protocol, response_stream = large, redirect = false)
-            @test resp.status == 302
-            @test resp.body === large
-            @test large == codeunits("moved")
+            # A redirect that is not followed is a result, as for
+            # `status_exception`, but its body is not the one requested.
+            for (path, status, body) in (("/moved", 302, "moved"), ("/region", 301, error_body))
+                resp = HT.get(base_url * path; protocol, response_stream = small, redirect = path == "/region")
+                @test resp.status == status
+                @test resp.body == codeunits(body)
+                @test small == fill(0xff, 4)
+            end
+
+            # Only the first 1 MiB of such a body is kept, whatever the buffer's size.
+            for path in ("/huge", "/huge-gzip")
+                resp = HT.get(base_url * path; protocol, response_stream = small, status_exception = false)
+                @test resp.status == 500
+                @test resp.body == codeunits(huge)[1:HT._MAX_NON_2XX_BODY_BYTES]
+                @test small == fill(0xff, 4)
+            end
+            # A smaller max_decompressed_size bounds it instead.
+            resp = HT.get(base_url * "/gzip"; protocol, response_stream = small, status_exception = false, max_decompressed_size = 10)
+            @test resp.status == 404
+            @test resp.body == codeunits(error_body)[1:10]
+            # The unread rest of the body does not reach the next response.
+            resp = HT.get(base_url * "/missing"; protocol, status_exception = false)
+            @test resp.body == codeunits(error_body)
 
             # IO sinks still receive the final body, as in HTTP.jl 1.x.
             io = IOBuffer()

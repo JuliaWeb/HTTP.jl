@@ -1744,6 +1744,23 @@ function _resolve_response_sink(response_stream)
     throw(ArgumentError("unsupported response stream sink $(typeof(response_stream)); expected nothing, IO, or AbstractVector{UInt8}"))
 end
 
+# Bounds the body kept for a response whose byte-buffer sink is left untouched.
+const _MAX_NON_2XX_BODY_BYTES = 1 << 20
+
+# Reads at most `limit` body bytes; closing the reader discards the rest.
+function _read_response_prefix(incoming::_IncomingResponse, decompress::Union{Nothing,Bool}, limit::Int)::Vector{UInt8}
+    return _with_response_reader(incoming, decompress) do reader
+        out = UInt8[]
+        buf = Vector{UInt8}(undef, _RESPONSE_SMALL_COPY_BUFFER_BYTES)
+        while length(out) < limit
+            n = readbytes!(reader, buf, min(length(buf), limit - length(out)))
+            n == 0 && break
+            append!(out, @view(buf[1:n]))
+        end
+        return out
+    end
+end
+
 function _consume_incoming_response!(
     incoming::_IncomingResponse,
     sink,
@@ -2252,10 +2269,15 @@ function request(
                     return sse_response
                 end
             end
-            # As in HTTP.jl 1.x, a failing response's body goes to a new vector,
-            # so it can't overflow or overwrite a caller's byte buffer.
-            body_sink = sink isa AbstractVector{UInt8} && _status_throws(incoming.head.status) ? nothing : sink
-            final_body, final_length = _consume_incoming_response!(incoming, body_sink, decompress, Int(max_decompressed_size))
+            final_body, final_length = if sink isa AbstractVector{UInt8} && incoming.head.status >= 300
+                # Only a 2xx body goes into a byte buffer, so an error or an
+                # unfollowed redirect can't overflow or overwrite it.
+                limit = max_decompressed_size > 0 ? min(_MAX_NON_2XX_BODY_BYTES, Int(max_decompressed_size)) : _MAX_NON_2XX_BODY_BYTES
+                prefix = _read_response_prefix(incoming, decompress, limit)
+                prefix, Int64(length(prefix))
+            else
+                _consume_incoming_response!(incoming, sink, decompress, Int(max_decompressed_size))
+            end
             response = _finalize_request_response(incoming, final_body, final_length, resolved_request, parsed.url)
             final_response = response
             status_exception && _status_throws(response) && throw(StatusError(response))
@@ -2326,9 +2348,9 @@ Keyword arguments:
   shared `HTTP.COOKIEJAR`
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body.
-  A byte buffer is left untouched when the status is a failure (300 or above,
-  other than a 301, 302, 303, 307, or 308 redirect); that body is returned in
-  `response.body` instead
+  A byte buffer is left untouched when the status is 300 or above, including a
+  redirect that is not followed; up to 1 MiB of that body (or
+  `max_decompressed_size`, if smaller) is returned in `response.body` instead
 - `copyheaders`: `true` copies caller headers (the default). `false` transfers
   an existing `HTTP.Headers` collection to the operation. Do not access or
   mutate it until the call completes; final contents are unspecified. Other
@@ -2382,8 +2404,8 @@ failures.
 Returns a high-level `Response`. When no response body sink is provided,
 `response.body` is a fully materialized `Vector{UInt8}`. When `response_stream`
 is provided, the final `Response` contains either the filled buffer/view or
-`nothing` for `IO` sinks. A failing response given a byte-buffer sink has its
-body in a new `Vector{UInt8}`.
+`nothing` for `IO` sinks. A response with status 300 or above given a
+byte-buffer sink has up to 1 MiB of its body in a new `Vector{UInt8}`.
 
 # Working with the response body
 
