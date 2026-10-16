@@ -140,6 +140,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
   `500`. ([#1403])
+- When the HTTP/2 server cannot send a response, for example because its
+  headers exceed the client's `SETTINGS_MAX_HEADER_LIST_SIZE`, it resets the
+  stream with RST_STREAM(INTERNAL_ERROR) and logs the error. The client waited
+  for the response forever. ([#1428])
 - HTTP/2 header blocks over 16 KiB are sent when the peer's
   `SETTINGS_MAX_FRAME_SIZE` allows larger frames, as Go's HTTP/2 server and
   client do (1 MiB). A client request threw
