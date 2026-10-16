@@ -356,6 +356,35 @@ end
     end
 end
 
+@testset "HTTP/2 server resets a stream whose handler breaks its Content-Length" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setheader(stream, "Content-Length", "5")
+        HT.startwrite(stream)
+        write(stream, "hi")
+        return nothing
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        req = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        # The reset can arrive before or after the response head.
+        err = try
+            _read_all_h2_server(HT.h2_roundtrip!(conn, req).body)
+            nothing
+        catch caught
+            caught
+        end
+        # The head has gone out, so the server error is a stream reset rather than a 500.
+        @test err isa HT.H2StreamResetError
+        @test HT._h2_error_code_name(err.error_code) == "INTERNAL_ERROR"
+    finally
+        close(conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server writes vector responses with trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
         _ = request
@@ -1910,6 +1939,41 @@ end
         unlock(send_state.state_lock)
     end
     @test waited == Int64[6]
+end
+
+@testset "HTTP/2 buffered responses wait for send credit without the write lock" begin
+    # The read loop takes the write lock to answer PING and SETTINGS before it
+    # reads the next frame, so a response that waits for WINDOW_UPDATE while
+    # holding the lock stalls the connection for good.
+    listener = NC.listen("tcp", "127.0.0.1:0")
+    client = NC.connect(NC.addr(listener))
+    server_conn = NC.accept(listener)
+    write_lock = ReentrantLock()
+    send_state = HT._H2SendWindowState()
+    HT._register_h2_send_window!(send_state, UInt32(1))
+    lock(() -> send_state.conn_send_window = Int64(4), send_state.state_lock)
+    writer = errormonitor(Threads.@spawn HT._write_h2_response!(
+        server_conn, write_lock, send_state, UInt32(1), HT.Request("GET", "/"), HT.Response(200, "abcdefgh"),
+    ))
+    try
+        reader = HT._ConnReader(client)
+        @test HT.read_frame!(reader) isa HT.HeadersFrame
+        @test (HT.read_frame!(reader)::HT.DataFrame).data == codeunits("abcd")
+        # Observe the writer parked on flow control, not elapsed time.
+        while lock(() -> isempty(send_state.window_condition.waitq), send_state.state_lock)
+            yield()
+        end
+        @test !islocked(write_lock)
+        HT._apply_h2_window_update!(send_state, HT.WindowUpdateFrame(UInt32(0), UInt32(4)))
+        rest = HT.read_frame!(reader)::HT.DataFrame
+        @test rest.data == codeunits("efgh")
+        @test rest.end_stream
+        wait(writer)
+    finally
+        close(client)
+        close(server_conn)
+        close(listener)
+    end
 end
 
 @testset "HTTP/2 server keeps the connection usable after stream resets" begin
