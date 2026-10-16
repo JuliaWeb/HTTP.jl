@@ -1566,6 +1566,21 @@ Base.convert(::Type{Vector{UInt8}}, body::BytesBody) = copy(body)
 
 Base.String(::EmptyBody) = ""
 
+# The same collection view as an empty `BytesBody`, so code such as
+# `isempty(req.body)` works whether or not the request had a body.
+Base.length(::EmptyBody) = 0
+Base.isempty(::EmptyBody) = true
+Base.eltype(::Type{EmptyBody}) = UInt8
+Base.firstindex(::EmptyBody) = 1
+Base.lastindex(::EmptyBody) = 0
+Base.getindex(body::EmptyBody, i::Integer) = throw(BoundsError(body, i))
+Base.iterate(::EmptyBody, state=nothing) = nothing
+Base.copy(::EmptyBody) = UInt8[]
+Base.convert(::Type{Vector{UInt8}}, ::EmptyBody) = UInt8[]
+(::Type{Array})(::EmptyBody) = UInt8[]
+(::Type{Array{UInt8}})(::EmptyBody) = UInt8[]
+(::Type{Vector{UInt8}})(::EmptyBody) = UInt8[]
+
 """
     CallbackBody(read_cb, close_cb)
 
