@@ -1247,10 +1247,9 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                         _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
                         return nothing
                     end
-                    @try_ignore begin
-                        stream.response.close = true
-                        close(stream)
-                    end
+                    # Return without `closewrite`: the connection closes, and a body
+                    # that already started stays unterminated, so the client can tell
+                    # the response is incomplete.
                     return nothing
                 end
             else
@@ -1276,7 +1275,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 try
                     _check_response_body_unsent(response_obj)
                 catch err
-                    @error "server handler returned a response whose body was already sent or closed" exception = err
+                    @error "server handler returned a response that cannot be sent" exception = err
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end

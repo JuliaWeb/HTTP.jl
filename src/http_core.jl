@@ -1907,12 +1907,19 @@ mutable struct Response{B}
     redirect_count::Int
 end
 
-# Check single-use bodies before committing a response head to the wire.
+# Check the body before committing a response head to the wire: single-use
+# bodies must be unsent, and a body of known size must match its Content-Length.
 function _check_response_body_unsent(response::Response, request=response.request)::Nothing
     _body_allowed_for_status(response.status) || return nothing
     request !== nothing && request.method == "HEAD" && return nothing
     body = response.body
     declared = response.content_length
+    # Chunked framing ignores the declared length.
+    if body isa Union{AbstractString,AbstractVector{UInt8},EmptyBody} && declared >= 0 && !hasheader(response.headers, "Transfer-Encoding")
+        actual = body isa AbstractString ? ncodeunits(body) : body isa EmptyBody ? 0 : length(body)
+        actual == declared || throw(ProtocolError("response body length $actual does not match Content-Length $declared", _PROTOCOL_ERROR_RESPONSE_LENGTH))
+        return nothing
+    end
     declared == 0 && return nothing
     if body isa Union{BytesBody,CallbackBody} && body_closed(body)
         throw(ArgumentError("response body is closed: use a String or Vector{UInt8} body for a reusable response"))

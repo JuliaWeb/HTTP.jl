@@ -685,6 +685,11 @@ end
     HT.body_close!(spent.body)
     @test_throws ArgumentError HT.write_response!(again, spent)
     @test position(again) == 0
+    # An in-memory body that does not match its Content-Length is refused
+    # before the head is written too.
+    @test_throws HT.ProtocolError HT.write_response!(again, HT.Response(200; body = "hello", content_length = 10))
+    @test_throws HT.ProtocolError HT.write_response!(again, HT.Response(200; body = Vector{UInt8}("hello"), content_length = 0))
+    @test position(again) == 0
     # A closed body that declared no payload is still fine to send.
     empty_closed = HT.Response(200; body = HT.BytesBody(UInt8[]), content_length = 0)
     HT.body_close!(empty_closed.body)

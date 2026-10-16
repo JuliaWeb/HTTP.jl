@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- Failed HTTP/1 responses no longer look complete. A stream handler that throws
+  after its chunked body started gets no terminating chunk; the connection
+  closes, so the client sees an incomplete body. A request handler's response
+  whose `String`, byte-vector, or missing body does not match its
+  `Content-Length` gets `500 Internal Server Error` before anything is sent,
+  instead of a head without the body. `logging_middleware` finishes a stream
+  handler's response before logging it, so a body shorter than its
+  `Content-Length` is logged as the `500` the client gets, not `200`.
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so

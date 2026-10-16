@@ -397,7 +397,10 @@ with the exception and the status the server sends, and the exception is
 rethrown.
 
 It wraps request handlers and stream handlers. Stream handler records also have
-the client's `peer` address from [`peeraddr`](@ref).
+the client's `peer` address from [`peeraddr`](@ref). For a stream handler, the
+middleware finishes the response (`closewrite`) before logging, so a response
+that fails then, such as a body shorter than its `Content-Length`, is logged as
+that failure.
 
 ```julia
 server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
@@ -475,6 +478,9 @@ function (middleware::_LoggingMiddleware)(stream::Stream)
     peer = peeraddr(stream)
     try
         middleware.handler(stream)
+        # Finish the response first, so the record shows what the client got,
+        # such as a 500 for a body shorter than its Content-Length.
+        closewrite(stream)
     catch err
         # A committed head keeps its status, including transport failures that
         # may have sent part of it. Before commitment the server can still send
