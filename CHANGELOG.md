@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- A failed HTTP/2 request no longer closes the pooled connection it shares
+  with other requests. A request timeout, a stream reset by the server, a
+  request rejected by GOAWAY, or an error from the request body resets only
+  that request's stream, and a connection draining after GOAWAY finishes its
+  streams before it closes. A request that gets no reply at all still moves
+  later requests to a new connection. ([#1426])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1090,3 +1096,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1426]: https://github.com/JuliaWeb/HTTP.jl/issues/1426
+[#1427]: https://github.com/JuliaWeb/HTTP.jl/issues/1427
+[#1428]: https://github.com/JuliaWeb/HTTP.jl/issues/1428
+[#1429]: https://github.com/JuliaWeb/HTTP.jl/issues/1429
+[#1430]: https://github.com/JuliaWeb/HTTP.jl/issues/1430
