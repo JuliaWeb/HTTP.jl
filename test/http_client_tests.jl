@@ -2802,6 +2802,21 @@ end
     @test HT._request_write_deadline_needs_refresh(request)
 end
 
+@testset "HTTP expect_continue_timeout sets the 100 Continue wait" begin
+    request = HT.Request("POST", "/upload")
+    @test HT._request_expect_continue_timeout_ns(request) == 1_000_000_000
+    @test HT._resolve_request_timeout_settings(0, 0, 0, 0, 0, nothing)[2] === nothing
+    for (seconds, expected_ns) in ((0, 0), (0.25, 250_000_000), (3, 3_000_000_000))
+        _, config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0, seconds)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), Int64(0), config)
+        @test HT._request_expect_continue_timeout_ns(request) == expected_ns
+    end
+    # Zero sends the body at once; otherwise the earlier of the wait and the request deadline.
+    @test HT._expect_continue_deadline_ns(Int64(0), Int64(0), Int64(100)) == 100
+    @test HT._expect_continue_deadline_ns(Int64(250_000_000), Int64(0), Int64(100)) == 250_000_100
+    @test HT._expect_continue_deadline_ns(Int64(250_000_000), Int64(5_000), Int64(100)) == 5_000
+end
+
 @testset "HTTP high-level readtimeout" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

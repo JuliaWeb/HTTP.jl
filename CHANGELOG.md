@@ -123,6 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
+- `expect_continue_timeout` sets how long an HTTP/1 request with `Expect:
+  100-continue` waits for `100 Continue` before it sends the body, and `0` sends
+  it at once. The keyword was ignored, and the client always waited up to one
+  second. ([#1413])
 - The HTTP/1 server answers a request line whose HTTP major version is not 1,
   such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
   Go's server does. It served those requests, and a stream handler's status
