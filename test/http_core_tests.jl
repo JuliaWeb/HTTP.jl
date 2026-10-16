@@ -279,6 +279,18 @@ end
     @test isempty(body)
     HT.body_close!(body)
     @test HT.body_closed(body)
+    # An empty body offers the same collection view as an empty BytesBody.
+    for empty in (HT.EmptyBody(), HT.BytesBody(UInt8[]))
+        @test isempty(empty)
+        @test length(empty) == 0
+        @test collect(empty) == UInt8[]
+        @test copy(empty) == UInt8[]
+        @test convert(Vector{UInt8}, empty) == UInt8[]
+        @test Array(empty) == UInt8[]
+        @test Vector{UInt8}(empty) == UInt8[]
+        @test String(empty) == ""
+        @test_throws BoundsError empty[1]
+    end
     cb_closed = Ref(false)
     cb_reads = Ref(0)
     cb = HT.CallbackBody(
@@ -415,6 +427,12 @@ end
     # handshake error.
     op_error = Reseau.HostResolvers.OpError("dial", "tcp", nothing, nothing, tls_error)
     @test HT._wrap_client_transport_error(op_error) isa HT.TLSHandshakeError
+
+    # A TLS read deadline is a timeout, as on TCP, also when the transport
+    # passed it up as a TLSTransportError.
+    tls_timeout = Reseau.TLS.TLSError("read", Int32(0), "i/o timeout", Reseau.IOPoll.DeadlineExceededError())
+    @test HT._wrap_client_transport_error(tls_timeout) isa HT.TimeoutError
+    @test HT._wrap_client_transport_error(HT.TLSTransportError(tls_timeout)) isa HT.TimeoutError
 
     bytes = UInt8[0x41]
     @test HT._response_body_arg(bytes) === bytes
@@ -684,6 +702,11 @@ end
     @test position(again) == 0
     HT.body_close!(spent.body)
     @test_throws ArgumentError HT.write_response!(again, spent)
+    @test position(again) == 0
+    # An in-memory body that does not match its Content-Length is refused
+    # before the head is written too.
+    @test_throws HT.ProtocolError HT.write_response!(again, HT.Response(200; body = "hello", content_length = 10))
+    @test_throws HT.ProtocolError HT.write_response!(again, HT.Response(200; body = Vector{UInt8}("hello"), content_length = 0))
     @test position(again) == 0
     # A closed body that declared no payload is still fine to send.
     empty_closed = HT.Response(200; body = HT.BytesBody(UInt8[]), content_length = 0)

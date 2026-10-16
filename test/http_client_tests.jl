@@ -1154,6 +1154,22 @@ end
     for url in ("http://:8080/", "http://:", "http://user@:80/", "http://[]:80/")
         @test_throws ArgumentError HT._parse_http_url(url)
     end
+    # A port is 1-65535 in decimal digits; only `:port` may follow an IPv6 literal.
+    @test HT._parse_http_url("http://a:0080/").address == "a:0080"
+    @test HT._parse_http_url("http://[::1]:65535/").address == "[::1]:65535"
+    for url in ("http://a:abc/", "http://a:+80/", "http://a:-1/", "http://a:8 0/", "http://a:０８０/",
+                "http://a:0/", "http://a:65536/", "http://a:99999999999999999999/",
+                "http://[::1]:abc/", "http://[::1]::/", "http://[::1]x/", "http://[::1]x:80/")
+        err = try
+            HT._parse_http_url(url)
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+    end
+    @test_throws "invalid URL port: \"abc\"" HT._parse_http_url("http://a:abc/")
+    @test_throws ArgumentError HT._parse_http_url(HT.URI("http://a:99999/"))
+    @test_throws "invalid URL port: \"abc\"" HT.get("http://a:abc/"; retry = false)
 
     # Strict RFC 3986 parsing: `http:g` has no host, like `//:` and `//`.
     @test HT._resolve_redirect_target("a:80", false, "//b:/x", "/", "a") == ("b:80", false, "/x", "b")
@@ -1178,6 +1194,26 @@ end
             @test err isa HT.ProtocolError
             @test occursin("invalid redirect location: $location", sprint(showerror, err))
         end
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "HTTP client sends spaces in URLs as %20" begin
+    @test HT._parse_http_url("http://h/a b?x=c d").target == "/a%20b?x=c%20d"
+    @test HT._parse_http_url("http://h/p", "x=c d").target == "/p?x=c%20d"
+    @test HT._parse_http_url(HT.URI("http://h/p"), "x=c d").target == "/p?x=c%20d"
+    @test HT._resolve_redirect_target("h:80", false, "b c?d e", "/a/", "h")[3] == "/a/b%20c?d%20e"
+    @test HT._resolve_redirect_target("h:80", false, "//g/b c?d e", "/a", "h")[3] == "/b%20c?d%20e"
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        req.target == "/start" && return HT.Response(302, ["Location" => "/b c?d e"], "")
+        return HT.Response(200, req.target)
+    end
+    try
+        base = "http://127.0.0.1:$(HT.port(server))"
+        @test String(HT.get("$base/a b?x=c d"; retry = false).body) == "/a%20b?x=c%20d"
+        @test String(HT.get("$base/p"; query = "x=c d", retry = false).body) == "/p?x=c%20d"
+        @test String(HT.get("$base/start"; retry = false).body) == "/b%20c?d%20e"
     finally
         HT.forceclose(server)
     end
@@ -2753,6 +2789,13 @@ end
     end
 end
 
+@testset "HTTP 1.x compat keywords each warn once" begin
+    @test_logs (:warn, r"`pool`") (:warn, r"`retry_check`") (:warn, r"`logtag`") begin
+        HT._handle_client_compat_kwargs(pool = 1, retry_check = 1, logtag = 1)
+        HT._handle_client_compat_kwargs(pool = 1, retry_check = 1, logtag = 1)
+    end
+end
+
 @testset "HTTP request timeout configuration parsing" begin
     request_timeout_ns, config = HT._resolve_request_timeout_settings(
         1.25,
@@ -2802,6 +2845,21 @@ end
     @test HT._request_write_deadline_needs_refresh(request)
 end
 
+@testset "HTTP expect_continue_timeout sets the 100 Continue wait" begin
+    request = HT.Request("POST", "/upload")
+    @test HT._request_expect_continue_timeout_ns(request) == 1_000_000_000
+    @test HT._resolve_request_timeout_settings(0, 0, 0, 0, 0, nothing)[2] === nothing
+    for (seconds, expected_ns) in ((0, 0), (0.25, 250_000_000), (3, 3_000_000_000))
+        _, config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0, seconds)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), Int64(0), config)
+        @test HT._request_expect_continue_timeout_ns(request) == expected_ns
+    end
+    # Zero sends the body at once; otherwise the earlier of the wait and the request deadline.
+    @test HT._expect_continue_deadline_ns(Int64(0), Int64(0), Int64(100)) == 100
+    @test HT._expect_continue_deadline_ns(Int64(250_000_000), Int64(0), Int64(100)) == 250_000_100
+    @test HT._expect_continue_deadline_ns(Int64(250_000_000), Int64(5_000), Int64(100)) == 5_000
+end
+
 @testset "HTTP high-level readtimeout" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -2817,6 +2875,39 @@ end
         @test err isa HT.TimeoutError
     finally
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP high-level read timeout over TLS raises TimeoutError" begin
+    listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = joinpath(@__DIR__, "resources", "unittests.crt"),
+            key_file = joinpath(@__DIR__, "resources", "unittests.key"),
+        );
+        backlog = 8,
+    )
+    release = Channel{Nothing}(1)
+    server = HT.serve!(req -> (take!(release); HT.Response(200)), listener)
+    try
+        err = try
+            HT.get(
+                "https://$(HT.server_addr(server))/slow";
+                require_ssl_verification = false,
+                protocol = :h1,
+                read_idle_timeout = 1.0e-9,
+                retry = false,
+            )
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa HT.TimeoutError
+    finally
+        put!(release, nothing)
+        HT.forceclose(server)
     end
 end
 
@@ -3339,7 +3430,7 @@ end
         @test derived_lines[2] == "Host: $(address)"
         @test count(startswith("Host:"), derived_lines) == 1
         @test "X-Test: 1" in derived_lines
-        @test any(startswith("User-Agent:"), derived_lines)
+        @test "User-Agent: HTTP.jl/$(pkgversion(HTTP))" in derived_lines
         @test supplied_lines[1] == "GET /second HTTP/1.1"
         @test supplied_lines[2] == "Host: override.example"
         @test count(startswith("Host:"), supplied_lines) == 1

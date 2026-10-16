@@ -407,9 +407,10 @@ function _env_proxy(names::Vararg{String})::Union{Nothing,_ProxyTarget}
     return nothing
 end
 
-function _env_no_proxy()::Union{Nothing,NoProxy}
+# Always a matcher, even when NO_PROXY is unset, so that environment proxies
+# never apply to localhost and loopback addresses, as in Go's `httpproxy`.
+function _env_no_proxy()::NoProxy
     raw = get(() -> get(() -> "", ENV, "no_proxy"), ENV, "NO_PROXY")
-    isempty(strip(raw)) && return nothing
     return NoProxy(raw)
 end
 
@@ -459,7 +460,8 @@ end
 
 Return a [`ProxyConfig`](@ref) read from the `HTTP_PROXY`, `HTTPS_PROXY`,
 `ALL_PROXY`, and `NO_PROXY` environment variables, in upper or lower case. The
-variables are read once, when it is called.
+variables are read once, when it is called. Requests to `localhost` and
+loopback addresses never use these proxies.
 """
 function ProxyFromEnvironment()::ProxyConfig
     return ProxyConfig(; env=true)
