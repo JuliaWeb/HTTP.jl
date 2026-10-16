@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The HTTP/1 server answers a request line whose HTTP major version is not 1,
   such as `HTTP/2.0` or `HTTP/0.9`, with `505 HTTP Version Not Supported`, as
   Go's server does. It served those requests, and a stream handler's status
-  line repeated the request's version.
+  line repeated the request's version. ([#1405])
 - Fixed-length HTTP/1 streaming bodies reuse one bounded buffer across reads,
   reducing allocation for both uploads and response serialization. Short reads
   no longer allocate a new buffer each time.
@@ -1056,3 +1056,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
 [#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400
+[#1403]: https://github.com/JuliaWeb/HTTP.jl/issues/1403
+[#1404]: https://github.com/JuliaWeb/HTTP.jl/issues/1404
+[#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
+[#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
+[#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
