@@ -113,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under concurrent HEAD and GET requests, a shared response could send its body
   to a HEAD request and drop it from a GET, and after one failed write on the
   `streamhandler` path every later response carried `Connection: close`. ([#1424])
+- `listen!` reports a port that is already in use with `AddressInUseError`, as
+  `serve!` does, instead of a `TaskFailedException`. ([#1432])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
