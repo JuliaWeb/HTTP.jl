@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `HTTP.streamhandler` closes a streaming response body that a HEAD, 204, or
+  304 response does not send, instead of reading it to the end. A HEAD request
+  to a server-sent events route kept the event producer running and blocked
+  `close(server)`.
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
