@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http:g`, throws a `ProtocolError` that names it. ([#1400])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
+- A stream handler that writes more or fewer bytes than its declared
+  `Content-Length` is answered with `500 Internal Server Error` instead of
+  `400 Bad Request` while the HTTP/1 response head is still held. ([#1404])
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
