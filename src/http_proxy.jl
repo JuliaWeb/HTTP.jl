@@ -460,7 +460,8 @@ end
 
 Return a [`ProxyConfig`](@ref) read from the `HTTP_PROXY`, `HTTPS_PROXY`,
 `ALL_PROXY`, and `NO_PROXY` environment variables, in upper or lower case. The
-variables are read once, when it is called.
+variables are read once, when it is called. Requests to `localhost` and
+loopback addresses never use these proxies.
 """
 function ProxyFromEnvironment()::ProxyConfig
     return ProxyConfig(; env=true)
