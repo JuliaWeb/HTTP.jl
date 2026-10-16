@@ -162,6 +162,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `codeunits` or view) is now a no-op. On a chunked HTTP/1 response it was
   framed as a zero-length chunk, the last-chunk marker, so the client saw the
   body end early and later writes went out after the terminator.
+- `HTTP.WebSockets.open` closes the client it creates for
+  `require_ssl_verification = false` when the handshake fails, for example on a
+  redirect to an invalid `Location`, and closes the connection when the server's
+  first frame is invalid. Both stayed open. ([#1419])
 - HTTP and WebSocket client redirects resolve `Location` against the current
   URL as RFC 3986 §5.2 specifies. A relative location lost repeated slashes
   (`d//e` requested `d/e`), `?` dropped the empty query, `?q=1#top` sent the
