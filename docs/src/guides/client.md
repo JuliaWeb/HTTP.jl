@@ -170,7 +170,7 @@ client = HTTP.Client(
     transport = HTTP.Transport(max_idle_per_host = 4),
     cookiejar = HTTP.CookieJar(),
 )
-resp = HTTP.get(client, "https://example.com")  # same as HTTP.get(url; client = client)
+resp = HTTP.get(client, "https://example.com")
 close(client)
 ```
 
@@ -190,8 +190,9 @@ Settings are split between the two types:
   `http2_settings`), and per-request defaults.
 
 A `Client` created without a `transport` reads its proxy from the
-`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment variables.
-A `Transport` you create yourself connects directly unless you pass `proxy`.
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment variables
+when it is created. A `Transport` you create yourself connects directly unless
+you pass `proxy`.
 Proxy URLs may use `http://`, `socks5://`, or `socks5h://`.
 
 ### Per-client defaults
@@ -284,8 +285,9 @@ hold:
 
 Retries wait a random, exponentially growing delay, or the delay that a 429 or
 503 response asks for in its `Retry-After` header, up to 20 seconds. Pass
-`retry = false` to turn retries off. Each `Transport` also has a [`HTTP.RetryBucket`](@ref) that limits
-how many retries a burst of failures can trigger.
+`retry = false` to turn retries off. Each `Transport` also has a
+[`HTTP.RetryBucket`](@ref) that limits how many retries a burst of failures can
+trigger.
 
 Pass `retry_if` to make your own decision:
 
