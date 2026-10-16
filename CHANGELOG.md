@@ -86,10 +86,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- An HTTP/2 server connection no longer stalls when the client sends PING or
+  SETTINGS while a `String` or byte-vector response waits for flow-control
+  credit. The response kept the connection's write lock while it waited, so
+  the server could not answer and never read the WINDOW_UPDATE that followed.
+  ([#1410])
 - HTTP/1 servers answer a request head or body read timeout on a TLS
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
   `500`. ([#1403])
+- HTTP/2 header blocks over 16 KiB are sent when the peer's
+  `SETTINGS_MAX_FRAME_SIZE` allows larger frames, as Go's HTTP/2 server and
+  client do (1 MiB). A client request threw
+  `HTTP/2 frame exceeds max_frame_size` and closed its connection, and the
+  server never sent the response. ([#1411])
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
@@ -97,6 +107,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http:g`, throws a `ProtocolError` that names it. ([#1400])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
+- Servers compiled with `juliac --trim=safe` verify when they close gracefully
+  with `close(server)`, serve byte ranges with `servecontent`, answer HTTP/2
+  requests with an error status, or send server-sent events (on Julia 1.14,
+  where multi-argument `write` is not specialized on its arguments).
+  ([#1399], [#1401], [#1423])
+- A stream handler that writes more or fewer bytes than its declared
+  `Content-Length` is answered with `500 Internal Server Error` instead of
+  `400 Bad Request` while the HTTP/1 response head is still held. ([#1404])
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
@@ -1073,7 +1091,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1385]: https://github.com/JuliaWeb/HTTP.jl/issues/1385
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
+[#1399]: https://github.com/JuliaWeb/HTTP.jl/issues/1399
 [#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400
+[#1401]: https://github.com/JuliaWeb/HTTP.jl/issues/1401
 [#1403]: https://github.com/JuliaWeb/HTTP.jl/issues/1403
 [#1404]: https://github.com/JuliaWeb/HTTP.jl/issues/1404
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
@@ -1092,3 +1112,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1420]: https://github.com/JuliaWeb/HTTP.jl/issues/1420
 [#1421]: https://github.com/JuliaWeb/HTTP.jl/issues/1421
 [#1422]: https://github.com/JuliaWeb/HTTP.jl/issues/1422
+[#1423]: https://github.com/JuliaWeb/HTTP.jl/issues/1423
