@@ -204,7 +204,7 @@ validcookievaluebyte(b) = (' ' <= b < '\x7f') && b != '"' && b != ';' && b != '\
 
 function parsecookievalue(raw, allowdoublequote::Bool)
     if allowdoublequote && length(raw) > 1 && raw[1] == '"' && raw[end] == '"'
-        raw = raw[2:(end-1)]
+        raw = raw[2:prevind(raw, lastindex(raw))]
     end
     for i in eachindex(raw)
         !validcookievaluebyte(raw[i]) && return "", false
@@ -297,7 +297,7 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
         part = strip(parts[1])
         j = findfirst(isequal('='), part)
         if j !== nothing
-            name, val = SubString(part, 1:(j-1)), SubString(part, j + 1)
+            name, val = SubString(part, 1, prevind(part, j)), SubString(part, j + 1)
         else
             name, val = part, ""
         end
@@ -310,7 +310,7 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
             isempty(part) && continue
             j = findfirst(isequal('='), part)
             if j !== nothing
-                attr, val = SubString(part, 1:(j-1)), SubString(part, j + 1)
+                attr, val = SubString(part, 1, prevind(part, j)), SubString(part, j + 1)
             else
                 attr, val = part, ""
             end
@@ -404,7 +404,7 @@ function readcookies(hdrs::Headers, filter::String="")::Vector{Cookie}
             length(part) <= 1 && continue
             j = findfirst(isequal('='), part)
             if j !== nothing
-                name, val = part[1:(j-1)], part[(j+1):end]
+                name, val = part[1:prevind(part, j)], part[(j+1):end]
             else
                 name, val = part, ""
             end
@@ -523,7 +523,8 @@ function domainmatch(cookie::Cookie, host)::Bool
 end
 
 function hasdotsuffix(s, suffix)::Bool
-    return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[(length(s)-length(suffix)+1):end] == suffix
+    n = ncodeunits(s) - ncodeunits(suffix)
+    return n > 0 && codeunit(s, n) == UInt8('.') && endswith(s, suffix)
 end
 
 function ispublicsuffix(domain::String)::Bool
@@ -537,7 +538,7 @@ function pathmatch(cookie::Cookie, requestpath)::Bool
     if startswith(requestpath, cookie.path)
         if !isempty(cookie.path) && cookie.path[end] == '/'
             return true
-        elseif length(requestpath) >= length(cookie.path) + 1 && requestpath[length(cookie.path)+1] == '/'
+        elseif ncodeunits(requestpath) > ncodeunits(cookie.path) && codeunit(requestpath, ncodeunits(cookie.path) + 1) == UInt8('/')
             return true
         end
     end
@@ -722,7 +723,7 @@ function defaultPath(path)
     if i == 0 || i == 1
         return "/"
     end
-    return path[1:(i-1)]
+    return path[1:prevind(path, i)]
 end
 
 const endOfTime = DateTime(9999, 12, 31, 23, 59, 59, 0)
@@ -793,15 +794,15 @@ function splithostport(hostport)
     if hostport[1] == '['
         z = findfirst(']', hostport)
         z === nothing && return "", "", true
-        z == length(hostport) && return "", "", true
+        z == ncodeunits(hostport) && return "", "", true
         if (z + 1) != i
             return "", "", true
         end
-        host = SubString(hostport, 2:(z-1))
+        host = SubString(hostport, 2, prevind(hostport, z))
         j = 2
         k = z + 1
     else
-        host = SubString(hostport, 1:(i-1))
+        host = SubString(hostport, 1, prevind(hostport, i))
     end
     if occursin(":", host)
         return "", "", true
@@ -813,7 +814,7 @@ function splithostport(hostport)
     if j < i && hostport[j] == '['
         return "", "", true
     end
-    if k + 1 > length(hostport)
+    if k + 1 > ncodeunits(hostport)
         return "", "", true
     end
     port = SubString(hostport, i + 1)
