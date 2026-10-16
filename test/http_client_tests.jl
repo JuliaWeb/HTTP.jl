@@ -1154,6 +1154,22 @@ end
     for url in ("http://:8080/", "http://:", "http://user@:80/", "http://[]:80/")
         @test_throws ArgumentError HT._parse_http_url(url)
     end
+    # A port is 1-65535 in decimal digits; only `:port` may follow an IPv6 literal.
+    @test HT._parse_http_url("http://a:0080/").address == "a:0080"
+    @test HT._parse_http_url("http://[::1]:65535/").address == "[::1]:65535"
+    for url in ("http://a:abc/", "http://a:+80/", "http://a:-1/", "http://a:8 0/", "http://a:０８０/",
+                "http://a:0/", "http://a:65536/", "http://a:99999999999999999999/",
+                "http://[::1]:abc/", "http://[::1]::/", "http://[::1]x/", "http://[::1]x:80/")
+        err = try
+            HT._parse_http_url(url)
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+    end
+    @test_throws "invalid URL port: \"abc\"" HT._parse_http_url("http://a:abc/")
+    @test_throws ArgumentError HT._parse_http_url(HT.URI("http://a:99999/"))
+    @test_throws "invalid URL port: \"abc\"" HT.get("http://a:abc/"; retry = false)
 
     # Strict RFC 3986 parsing: `http:g` has no host, like `//:` and `//`.
     @test HT._resolve_redirect_target("a:80", false, "//b:/x", "/", "a") == ("b:80", false, "/x", "b")
