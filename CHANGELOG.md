@@ -145,6 +145,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the built-in retry rules retry their causes. It returned `false`, so a
   retry loop around `HTTP.request` gave up on these transient failures.
   ([#1412])
+- HTTP/2 `String` and byte-vector responses send their headers before waiting
+  for flow-control credit, as other bodies do. With no credit yet, the headers
+  waited for a WINDOW_UPDATE, so a client that waits for the headers before
+  granting credit never got a response. ([#1430])
 - `HTTP.sniff`, and `servecontent` without a `content_type`, now compile under
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
 - Servers compiled with `juliac --trim=safe` verify when they close gracefully
