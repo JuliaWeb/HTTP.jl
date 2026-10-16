@@ -368,8 +368,9 @@ end
     conn = HT.connect_h2!(address; secure = false)
     try
         req = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        # The reset can arrive before or after the response head.
         err = try
-            HT.h2_roundtrip!(conn, req)
+            _read_all_h2_server(HT.h2_roundtrip!(conn, req).body)
             nothing
         catch caught
             caught
