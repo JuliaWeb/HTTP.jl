@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client do (1 MiB). A client request threw
   `HTTP/2 frame exceeds max_frame_size` and closed its connection, and the
   server never sent the response. ([#1411])
+- `close(server)` lets the HTTP/2 streams its GOAWAY covered finish. Any frame
+  the client sent after the GOAWAY, such as the WINDOW_UPDATE a large response
+  needs, closed the connection mid-response. Streams opened after the GOAWAY
+  are refused with REFUSED_STREAM. ([#1429])
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
@@ -1090,3 +1094,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
+[#1426]: https://github.com/JuliaWeb/HTTP.jl/issues/1426
+[#1427]: https://github.com/JuliaWeb/HTTP.jl/issues/1427
+[#1428]: https://github.com/JuliaWeb/HTTP.jl/issues/1428
+[#1429]: https://github.com/JuliaWeb/HTTP.jl/issues/1429
+[#1430]: https://github.com/JuliaWeb/HTTP.jl/issues/1430
