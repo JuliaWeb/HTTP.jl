@@ -95,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection with `408 Request Timeout`, as on plain TCP. A head timeout
   closed the connection without a response, and a body timeout answered
   `500`. ([#1403])
+- HTTP/2 header blocks over 16 KiB are sent when the peer's
+  `SETTINGS_MAX_FRAME_SIZE` allows larger frames, as Go's HTTP/2 server and
+  client do (1 MiB). A client request threw
+  `HTTP/2 frame exceeds max_frame_size` and closed its connection, and the
+  server never sent the response. ([#1411])
 - Client URLs: a non-ASCII host (`http://日本/p`) no longer throws
   `StringIndexError`, an empty port (`http://host:/`) means the default port,
   and an empty host (`http://:8080/`) is rejected instead of dialing the local
