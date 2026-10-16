@@ -1047,6 +1047,34 @@ end
     end
 end
 
+@testset "HTTP streamhandler closes an unsent streaming body for HEAD, 204, and 304" begin
+    # An SSE body without a producer never reaches EOF, so reading it to discard
+    # it would hold the handler (and graceful close) forever. The body must be
+    # closed before the response head goes out.
+    sent = Channel{HT.SSEStream}(3)
+    bodies = HT.SSEStream[]
+    server = HT.listen!(HT.streamhandler() do request
+            status = request.target == "/nocontent" ? 204 : request.target == "/notmodified" ? 304 : 200
+            response = HT.sse_stream(status)
+            put!(sent, response.body)
+            return response
+        end, "127.0.0.1", 0; listenany = true)
+    try
+        for (method, target, status) in (("HEAD", "/", 200), ("GET", "/nocontent", 204), ("GET", "/notmodified", 304))
+            response = HT.request(method, "http://$(HT.server_addr(server))$(target)";
+                headers = ["Connection" => "close"], retry = false, status_exception = false)
+            @test response.status == status
+            body = take!(sent)
+            push!(bodies, body)
+            @test HT.body_closed(body)
+        end
+    finally
+        foreach(close, bodies)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server timeout and handler error responses" begin
     timeout_server = HT.Server(
         address = "127.0.0.1:0",
