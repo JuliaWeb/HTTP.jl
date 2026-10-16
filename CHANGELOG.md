@@ -89,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HTTP.streamhandler` closes a streaming response body that a HEAD, 204, or
   304 response does not send, instead of reading it to the end. A HEAD request
   to a server-sent events route kept the event producer running and blocked
-  `close(server)`.
+  `close(server)`. ([#1409])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
@@ -1104,6 +1104,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
 [#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
 [#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
+[#1409]: https://github.com/JuliaWeb/HTTP.jl/issues/1409
 [#1410]: https://github.com/JuliaWeb/HTTP.jl/issues/1410
 [#1411]: https://github.com/JuliaWeb/HTTP.jl/issues/1411
 [#1412]: https://github.com/JuliaWeb/HTTP.jl/issues/1412
