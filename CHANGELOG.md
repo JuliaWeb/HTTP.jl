@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `juliac --trim=safe`. Content sniffing no longer dispatches at runtime.
 - A stream handler that writes more or fewer bytes than its declared
   `Content-Length` is answered with `500 Internal Server Error` instead of
-  `400 Bad Request` while the HTTP/1 response head is still held.
+  `400 Bad Request` while the HTTP/1 response head is still held. ([#1404])
 - Requests with a zero-length streaming body can be copied for retries and
   redirects. The first send retains and closes the producer; later sends replay
   the empty payload without trying to clone the producer.
@@ -1055,3 +1055,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1386]: https://github.com/JuliaWeb/HTTP.jl/issues/1386
 [#1390]: https://github.com/JuliaWeb/HTTP.jl/issues/1390
 [#1400]: https://github.com/JuliaWeb/HTTP.jl/issues/1400
+[#1403]: https://github.com/JuliaWeb/HTTP.jl/issues/1403
+[#1404]: https://github.com/JuliaWeb/HTTP.jl/issues/1404
+[#1405]: https://github.com/JuliaWeb/HTTP.jl/issues/1405
+[#1406]: https://github.com/JuliaWeb/HTTP.jl/issues/1406
+[#1407]: https://github.com/JuliaWeb/HTTP.jl/issues/1407
