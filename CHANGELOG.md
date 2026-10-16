@@ -104,6 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout thrown by a handler, or an invalid `Content-Length` set by a stream
   handler, got `400` or `408` and no log. Errors reading the request body keep
   their `4xx` status, and peer disconnects are not logged. ([#1425])
+- `servecontent` (and so `servefile` and `fileserver`) sends the whole content
+  with `200` for a `Range` it does not support, as RFC 9110 §14.2 allows: an
+  unknown unit such as `items=0-4`, several ranges, or a `Range` on a method
+  other than `GET` or `HEAD`. The first two got `416`, and a `POST` got `206`. ([#1433])
 - An HTTP/2 server connection no longer stalls when the client sends PING or
   SETTINGS while a `String` or byte-vector response waits for flow-control
   credit. The response kept the connection's write lock while it waited, so
