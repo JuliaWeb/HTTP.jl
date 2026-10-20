@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- HTTP 2.11.1 requires Reseau 1.6.1 or later, which rejects the eight eMudhra
+  CA public keys compromised in October 2026, including cross-signed
+  certificates and chains using explicit CA bundles. The check also applies
+  when revalidating cached TLS sessions. See the
+  [incident report](https://emudhra.we-have-a-problem.com/).
+
 ### Added
 - The HTTP/1 connection pool now honors a server-advertised
   `Keep-Alive: timeout=<seconds>` response header: the connection is not reused

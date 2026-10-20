@@ -45,6 +45,20 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      # Reseau 1.6.1 must be registered before this PR is merged/released.
+      # Until then, test this PR against the exact reviewed dependency commit.
+      # Normal branch/tag CI continues to resolve packages from the registry.
+      - name: Check out Reseau security fix for this PR
+        if: github.event_name == 'pull_request' && github.head_ref == 'security/reseau-emudhra-release'
+        uses: actions/checkout@v6
+        with:
+          repository: JuliaServices/Reseau.jl
+          ref: a482b765f73e8b3ecef81451bd090e2c8b69bbb6
+          path: .ci-reseau
+          persist-credentials: false
+      - name: Use unreleased Reseau for PR validation
+        if: github.event_name == 'pull_request' && github.head_ref == 'security/reseau-emudhra-release'
+        run: julia --project=. -e 'using Pkg; Pkg.develop(PackageSpec(path=".ci-reseau"))'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - name: Check buffered upload allocations
@@ -62,6 +76,26 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - name: Check out Reseau security fix for this PR
+        if: github.event_name == 'pull_request' && github.head_ref == 'security/reseau-emudhra-release'
+        uses: actions/checkout@v6
+        with:
+          repository: JuliaServices/Reseau.jl
+          ref: a482b765f73e8b3ecef81451bd090e2c8b69bbb6
+          path: .ci-reseau
+          persist-credentials: false
+      - name: Use unreleased Reseau for PR validation
+        if: github.event_name == 'pull_request' && github.head_ref == 'security/reseau-emudhra-release'
+        run: |
+          julia --project=. -e '
+            using Pkg
+            root = pwd()
+            Pkg.develop(PackageSpec(path=joinpath(root, ".ci-reseau")))
+            Pkg.activate("docs")
+            Pkg.develop([PackageSpec(path=root), PackageSpec(path=joinpath(root, ".ci-reseau"))])'
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-docdeploy@latest
         env:

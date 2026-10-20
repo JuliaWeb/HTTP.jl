@@ -89,6 +89,7 @@ test_files = [
     "http2_refused_stream_retry_tests.jl",
     "http2_server_tests.jl",
     "http_integration_tests.jl",
+    "http_tls_distrust_tests.jl",
     "http_parity_tests.jl",
     "precompile_tests.jl",
     "trim_compile_tests.jl",
