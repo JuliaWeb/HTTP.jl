@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: JuliaServices/Reseau.jl
-          ref: 7a03cdbc2d84f41e69250ba8a8a77a69c73bbf35
+          ref: 672fb51c52f26db740171ec173ad9534f0b02fcb
           path: .ci-reseau
           persist-credentials: false
       - name: Use unreleased Reseau for PR validation
@@ -84,7 +84,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: JuliaServices/Reseau.jl
-          ref: 7a03cdbc2d84f41e69250ba8a8a77a69c73bbf35
+          ref: 672fb51c52f26db740171ec173ad9534f0b02fcb
           path: .ci-reseau
           persist-credentials: false
       - name: Use unreleased Reseau for PR validation
