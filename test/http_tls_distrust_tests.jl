@@ -35,7 +35,8 @@ end
         write_ephemeral_key(key_file)
         for version in (TLS.TLS1_2_VERSION, TLS.TLS1_3_VERSION),
             protocol in (:h1, :h2),
-            host in ("dv-g3b-emudhra.we-have-a-problem.com", "dv-g3b-aaa-emudhra.we-have-a-problem.com")
+            host in ("dv-g3b-emudhra.we-have-a-problem.com", "dv-g3b-aaa-emudhra.we-have-a-problem.com"),
+            request in (HTTP.get, HTTP.head)
             alpn = protocol == :h2 ? "h2" : "http/1.1"
             listener = TLS.listen("tcp", "127.0.0.1:0", TLS.Config(
                 cert_file = joinpath(FIXTURES, host * ".pem"),
@@ -47,6 +48,9 @@ end
                 conn = nothing
                 try
                     conn = TLS.accept(listener)
+                    # An accidental retry must fail immediately, rather than
+                    # waiting for a second handshake that this server won't serve.
+                    close(listener)
                     TLS.handshake!(conn)
                 catch err
                     # Client rejection is expected; preserve the exception for the
@@ -64,16 +68,32 @@ end
             )))
             try
                 port = Int(TLS.addr(listener).port)
-                err = try
-                    HTTP.get("https://127.0.0.1:$(port)/"; client, protocol,
-                        retry = false, redirect = false)
-                    nothing
-                catch ex
-                    ex
+                url = "https://127.0.0.1:$(port)/"
+                method = request === HTTP.get ? "GET" : "HEAD"
+                err, output = open(joinpath(dir, "request.log"), "w+") do log
+                    err = redirect_stdout(log) do
+                        try
+                            request(url; client, protocol, retry = true, retries = 1,
+                                redirect = false, verbose = true)
+                            nothing
+                        catch ex
+                            ex
+                        end
+                    end
+                    flush(log)
+                    seekstart(log)
+                    return err, read(log, String)
                 end
                 @test err isa HTTP.TLSHandshakeError
                 @test occursin("certificate signed by unknown authority", sprint(showerror, err))
                 @test !HTTP.isrecoverable(err)
+                # Health checks and regular requests must both surface the TLS
+                # rejection, without retrying or masking its diagnostic.
+                @test occursin("[http] request attempt 1 $(method) $(url) via $(protocol)", output)
+                @test count("[http] request attempt ", output) == 1
+                @test !occursin("[http] retry ", output)
+                @test occursin("[http] done with error for $(url):", output)
+                @test occursin("certificate signed by unknown authority", output)
             finally
                 close(client)
                 close(listener)
