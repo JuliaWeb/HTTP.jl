@@ -7,13 +7,32 @@ using Reseau
 const TLS = Reseau.TLS
 const FIXTURES = joinpath(@__DIR__, "resources", "emudhra")
 
+function write_ephemeral_key(path)
+    # Julia's bundled OpenSSL_jll exposes libcrypto but not the openssl CLI.
+    key = TLS._tls_ec_generate_private_key(TLS.P256)
+    bio = Ptr{Cvoid}(C_NULL)
+    try
+        bio = ccall((:BIO_new_file, TLS._LIBCRYPTO_PATH), Ptr{Cvoid},
+            (Cstring, Cstring), path, "w")
+        bio == C_NULL && error("could not open temporary key file")
+        ok = ccall((:PEM_write_bio_PrivateKey, TLS._LIBCRYPTO_PATH), Cint,
+            (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{UInt8}, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
+            bio, key, C_NULL, C_NULL, 0, C_NULL, C_NULL)
+        ok == 1 || error("could not write temporary key")
+    finally
+        TLS._free_bio!(bio)
+        TLS._free_evp_pkey!(key)
+    end
+    return nothing
+end
+
 @testset "HTTPS rejects compromised eMudhra CA keys" begin
     mktempdir() do dir
         # Generate an unrelated ephemeral key only to let the local server emit its
         # certificate flight. No eMudhra private key is available or needed: the
         # client must reject the chain before checking the handshake signature.
         key_file = joinpath(dir, "server.key")
-        run(`$(TLS.OpenSSL_jll.openssl()) genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out $key_file`)
+        write_ephemeral_key(key_file)
         for version in (TLS.TLS1_2_VERSION, TLS.TLS1_3_VERSION),
             protocol in (:h1, :h2),
             host in ("dv-g3b-emudhra.we-have-a-problem.com", "dv-g3b-aaa-emudhra.we-have-a-problem.com")
