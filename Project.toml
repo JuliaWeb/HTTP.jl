@@ -1,6 +1,6 @@
 name = "HTTP"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "2.11.0"
+version = "2.11.1"
 authors = ["Jacob Quinn", "contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors"]
 
 [deps]
@@ -21,7 +21,7 @@ Zlib_jll = "83775a58-1f1d-513f-b197-d71354ab007a"
 CodecZlib = "0.7"
 EnumX = "1"
 PrecompileTools = "1.2.1"
-Reseau = "1.4.3"
+Reseau = "1.6.1"
 URIs = "1.6.1"
 Zlib_jll = "1.2.12"
 julia = "1.10"

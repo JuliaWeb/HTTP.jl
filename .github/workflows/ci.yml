@@ -17,9 +17,9 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    # Fail fast on a hung job instead of running to GitHub's 6h default. Clean
-    # jobs finish in <=11m; 25m leaves headroom for cache-cold precompilation.
-    timeout-minutes: 25
+    # Keep hangs bounded while allowing the full test suite and all 15 native
+    # trim builds: cold runners can reach the final TLS build after 25 minutes.
+    timeout-minutes: 35
     # Prerelease Julia is informational; don't let it block merges.
     continue-on-error: ${{ matrix.version == 'pre' }}
     strategy:
@@ -62,6 +62,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-docdeploy@latest
         env:
