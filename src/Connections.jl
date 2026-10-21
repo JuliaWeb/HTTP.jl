@@ -593,7 +593,49 @@ function sslconnection(::Type{SSLStream}, tcp::TCPSocket, host::AbstractString;
     ssl_stream = SSLStream(sslconfig, tcp)
     OpenSSL.hostname!(ssl_stream, host)
     OpenSSL.connect(ssl_stream; require_ssl_verification)
+    if require_ssl_verification
+        chain = ccall((:SSL_get0_verified_chain, OpenSSL.libssl), Ptr{Cvoid}, (Ptr{Cvoid},), ssl_stream.ssl.ssl)
+        chain == C_NULL && throw(OpenSSL.OpenSSLError("no verified certificate chain"))
+        if has_distrusted_key(chain)
+            throw(OpenSSL.OpenSSLError("certificate chain uses a distrusted CA key"))
+        end
+    end
     return ssl_stream
+end
+
+# SHA-256 of the DER SubjectPublicKeyInfo of the eMudhra intermediate CA keys compromised in
+# October 2026 (https://emudhra.we-have-a-problem.com/). Matching on the key, not the
+# certificate, also catches their cross-signed certificates.
+const DISTRUSTED_SPKI_SHA256 = Set(hex2bytes.([
+    "ebed6475c2c2d80fcb199f3fe8dd6e6b3ce60b77eb15d4e42c3dec0c6f5b5105", # EM DV TLS CA - G3B
+    "49dd353dc2b919a3770645117d0e60c16115e7d1bc259eefe734b00ea434fe5f", # EM DV TLS CA - G3C
+    "e0254c7fcdc265e2f0f8a428dabb75ab4ae039b4872d62f5ee57f0877d5a8a41", # EM EV TLS CA - G3B
+    "5c0660a2b164910d8ff589c18e14552e9e0ec237dcefe2cb736d41a4811f81a0", # EM EV TLS CA - G3C
+    "43bffa19d6ef651451f6841e019931e96f6f2eaeff28ab4b6f1ce4576de2717b", # EM OV TLS CA - G3B
+    "63ecefee431d49523bc1136c4e72d0206a477086caf606cd5cf025686c109cf8", # EM OV TLS CA - G3C
+    "ec4ffa1ad0ac88081314b7aaffef6a91f97cd57291bb5ba686c5415f5eb4f6b6", # EM OV CS CA - G3B
+    "92c063d67e8f14db71d288e11266ffdaf69cbf115f7bab14f3bc2f68d25e0e30", # EM OV CS CA - G3C
+]))
+
+function spki_sha256(x509::Ptr{Cvoid})::Vector{UInt8}
+    pubkey = ccall((:X509_get_X509_PUBKEY, OpenSSL.libcrypto), Ptr{Cvoid}, (Ptr{Cvoid},), x509)
+    len = ccall((:i2d_X509_PUBKEY, OpenSSL.libcrypto), Cint, (Ptr{Cvoid}, Ptr{Ptr{UInt8}}), pubkey, C_NULL)
+    len > 0 || throw(OpenSSL.OpenSSLError("failed to encode a certificate public key"))
+    der = Vector{UInt8}(undef, len)
+    GC.@preserve der begin
+        ccall((:i2d_X509_PUBKEY, OpenSSL.libcrypto), Cint, (Ptr{Cvoid}, Ref{Ptr{UInt8}}), pubkey, pointer(der))
+    end
+    return OpenSSL.digest(OpenSSL.EvpSHA256(), IOBuffer(der))
+end
+
+# `chain` is a `STACK_OF(X509)`, such as the verified chain of a connection.
+function has_distrusted_key(chain::Ptr{Cvoid})::Bool
+    n = ccall((:OPENSSL_sk_num, OpenSSL.libcrypto), Cint, (Ptr{Cvoid},), chain)
+    for i in 0:n-1
+        x509 = ccall((:OPENSSL_sk_value, OpenSSL.libcrypto), Ptr{Cvoid}, (Ptr{Cvoid}, Cint), chain, i)
+        spki_sha256(x509) in DISTRUSTED_SPKI_SHA256 && return true
+    end
+    return false
 end
 
 function sslconnection(::Type{SSLContext}, tcp::TCPSocket, host::AbstractString;

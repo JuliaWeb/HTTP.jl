@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.11.1] - 2026-10-21
+### Security
+- OpenSSL connections (the default TLS backend) now reject certificate chains that use any of
+  the eight eMudhra intermediate CA keys compromised in October 2026, including their
+  cross-signed certificates. See the [incident report](https://emudhra.we-have-a-problem.com/).
+  The MbedTLS backend is not covered.
+
 ## [v1.11.0] - 2025-12-20
 ### Added
 - Added full Server-Sent Events (SSE) support for both client and server:
