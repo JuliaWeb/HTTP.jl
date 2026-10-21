@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v1.11.1] - 2026-10-21
 ### Security
-- OpenSSL connections (the default TLS backend) now reject certificate chains that use any of
-  the eight eMudhra intermediate CA keys compromised in October 2026, including their
-  cross-signed certificates. See the [incident report](https://emudhra.we-have-a-problem.com/).
-  The MbedTLS backend is not covered.
+- Require OpenSSL.jl 1.7.1 and MbedTLS.jl 1.1.11, which reject certificate chains that use any
+  of the eight eMudhra intermediate CA keys compromised in October 2026, including their
+  cross-signed certificates. This covers both TLS backends. See the
+  [incident report](https://emudhra.we-have-a-problem.com/).
 
 ## [v1.11.0] - 2025-12-20
 ### Added

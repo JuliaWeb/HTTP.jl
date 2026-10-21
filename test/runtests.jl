@@ -16,7 +16,6 @@ isok(r) = r.status == 200
         "chunking.jl",
         "utils.jl",
         "client.jl",
-        "distrust.jl",
         "sse.jl",
         # "download.jl",
         "multipart.jl",
