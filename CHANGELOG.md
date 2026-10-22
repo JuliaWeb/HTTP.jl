@@ -93,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `streamhandler` answers HEAD with the `Content-Length` a GET would get, as
+  `serve!` does, over HTTP/1 and HTTP/2. Before, the header was missing unless
+  the handler set it explicitly. ([#1454])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1244,3 +1247,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
+[#1454]: https://github.com/JuliaWeb/HTTP.jl/issues/1454
