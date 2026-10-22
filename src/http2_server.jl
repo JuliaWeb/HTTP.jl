@@ -1603,6 +1603,15 @@ function _request_h2_conn_shutdown!(
     return nothing
 end
 
+# Adds one HEADERS or CONTINUATION frame to the size of the header block being
+# received. Each frame's 9-byte header counts too, so a peer cannot stretch a
+# block across endless empty CONTINUATION frames.
+@inline function _h2_charge_header_block_frame(block_bytes::Int, fragment::Vector{UInt8}, max_header_block_bytes::Int)::Int
+    block_bytes += 9 + length(fragment)
+    block_bytes <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+    return block_bytes
+end
+
 # Refuse a new HTTP/2 stream without allocating per-stream state or spawning a
 # handler. The header block is still decoded into the connection-wide HPACK
 # decoder so the connection does not desync; CONTINUATION frames belonging to
@@ -1619,7 +1628,7 @@ function _h2_server_refuse_stream!(
     error_code::UInt32,
 )::Nothing
     block = copy(hf.header_block_fragment)
-    length(block) <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+    block_bytes = _h2_charge_header_block_frame(0, block, max_header_block_bytes)
     end_headers = hf.end_headers
     while !end_headers
         # The peer must complete the header block with CONTINUATION frames for
@@ -1630,7 +1639,7 @@ function _h2_server_refuse_stream!(
         frame isa ContinuationFrame || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
         cf = frame::ContinuationFrame
         cf.stream_id == hf.stream_id || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
-        length(block) + length(cf.header_block_fragment) <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+        block_bytes = _h2_charge_header_block_frame(block_bytes, cf.header_block_fragment, max_header_block_bytes)
         append!(block, cf.header_block_fragment)
         end_headers = cf.end_headers
     end
@@ -1660,6 +1669,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     conn_control = _H2ServerConnControl()
     states = Dict{UInt32,_H2ServerStreamState}()
     continuation_stream = UInt32(0)
+    # Size of the header block being received; see `_h2_charge_header_block_frame`.
+    header_block_bytes = 0
     max_stream_id = UInt32(0)
     peer_goaway_last_stream_id = typemax(UInt32)
     # Per-connection stream-flood limits.
@@ -1882,8 +1893,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         state.trailers_complete && throw(ProtocolError("unexpected additional HTTP/2 HEADERS on request stream"))
                         hf.end_stream || throw(ProtocolError("HTTP/2 request trailers must end the stream"))
                     end
-                    remaining = max_header_block_bytes - length(state.header_block)
-                    remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+                    header_block_bytes = _h2_charge_header_block_frame(0, hf.header_block_fragment, max_header_block_bytes)
                     append!(state.header_block, hf.header_block_fragment)
                     hf.end_stream && (state.header_block_end_stream = true)
                     if hf.end_headers
@@ -1929,8 +1939,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 lock(state.lock)
                 try
                     initial_headers = !state.headers_complete
-                    remaining = max_header_block_bytes - length(state.header_block)
-                    remaining >= 0 && length(cf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+                    header_block_bytes = _h2_charge_header_block_frame(header_block_bytes, cf.header_block_fragment, max_header_block_bytes)
                     append!(state.header_block, cf.header_block_fragment)
                     if cf.end_headers
                         decoded = decode_header_block(decoder, state.header_block)
