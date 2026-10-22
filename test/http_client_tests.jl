@@ -1224,6 +1224,9 @@ end
         @test err isa ArgumentError
         @test !occursin("secret", sprint(showerror, err))
     end
+    done = Ref{Any}(nothing)
+    @test_throws ArgumentError HT.get("http://user:secret@:8080/"; trace = event -> (event isa HT.DoneEvent && (done[] = event); nothing))
+    @test done[] isa HT.DoneEvent && !occursin("secret", (done[]::HT.DoneEvent).url)
 
     for (url, address, host_header, auth) in [
         ("http://[fe80::1%25eth0]/p", "[fe80::1%25eth0]:80", "[fe80::1%25eth0]", false),

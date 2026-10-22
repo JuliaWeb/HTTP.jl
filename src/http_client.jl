@@ -2262,7 +2262,7 @@ function request(
         final_error = wrapped::Exception
         wrapped === err ? rethrow() : throw(wrapped)
     finally
-        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? String(url) : request_url::String))
+        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? _url_for_message(String(url)) : request_url::String))
     end
 end
 
