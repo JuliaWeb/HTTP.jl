@@ -41,6 +41,12 @@ specifies: `.` and `..` segments are removed, while repeated slashes and
 percent-encoded bytes are kept. The path of the URL you pass is sent as written,
 and fragments are never sent.
 
+A redirect to another origin (a different scheme, host, or port) drops the
+`Authorization`, `Cookie`, and `Proxy-Authorization` headers and the URL's
+credentials. Other headers are sent again, including an API key in a custom
+header such as `X-Api-Key`, as in curl and Go. Pass `forwardheaders = false`, or
+give the client a `check_redirect` function, to avoid that.
+
 ## Request Bodies
 
 Pass the body as the third positional argument or with the `body` keyword.
@@ -134,7 +140,8 @@ text = String(resp.body)
 ## Streaming Responses
 
 `HTTP.open` sends the request and lets you read the response body as it
-arrives. It follows redirects and decompresses the body like `HTTP.request`.
+arrives. It follows redirects and decompresses the body like `HTTP.request`, but
+without the `max_decompressed_size` limit: you decide how much to read.
 
 ```julia
 resp = HTTP.open("GET", "https://example.com") do stream
@@ -342,7 +349,7 @@ HTTP.get("http://127.0.0.1:8080/v"; verbose = 2)
 GET /v HTTP/1.1
 Host: 127.0.0.1:8080
 Accept-Encoding: gzip, deflate
-User-Agent: HTTP.jl/2.0.0
+User-Agent: HTTP.jl/<version>
 [http] response attempt 1 200 for http://127.0.0.1:8080/v
 [http] response
 HTTP/1.1 200 OK

@@ -243,6 +243,14 @@ end
     return tls_err.op == "read" && tls_err.cause isa IOPoll.DeadlineExceededError
 end
 
+# A read timeout as above, or a TLS write deadline reported the same way.
+@inline function _is_io_timeout(err)::Bool
+    _is_read_timeout(err) && return true
+    err isa TLS.TLSError || return false
+    tls_err = err::TLS.TLSError
+    return tls_err.op == "write" && tls_err.cause isa IOPoll.DeadlineExceededError
+end
+
 """
     _is_address_in_use_systemerror(err)
 
@@ -328,7 +336,7 @@ _wrap_client_transport_error(err, operation::AbstractString="request", timeout_n
         return TimeoutError(String("connect"), Int64(timeout_ns), Int64(elapsed_ns))
     end
     # The transport passes TLS failures up as `TLSTransportError`.
-    if _is_read_timeout(err isa TLSTransportError ? (err::TLSTransportError).cause : err)
+    if _is_io_timeout(err isa TLSTransportError ? (err::TLSTransportError).cause : err)
         return TimeoutError(String(operation), Int64(timeout_ns), Int64(elapsed_ns))
     end
     if err isa HostResolvers.OpError
