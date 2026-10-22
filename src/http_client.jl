@@ -1378,12 +1378,50 @@ end
 
 const _MAX_EAGER_RESPONSE_PREALLOC = Int64(1 << 20)
 
+function _grow_response_bytes(out::Vector{UInt8}, filled::Int, len::Int)::Vector{UInt8}
+    grown = Vector{UInt8}(undef, len)
+    copyto!(grown, 1, out, 1, filled)
+    return grown
+end
+
+# Reads a body declared larger than `_MAX_EAGER_RESPONSE_PREALLOC` into a vector
+# that grows toward the declared length only as bytes arrive. A false length
+# cannot make it allocate more than about twice what was received, and a true
+# one leaves an exact-size vector.
+function _read_response_bytes_toward_hint(body::Union{EmptyBody,BytesBody,H1Body,H2Body}, hint::Int64)::Vector{UInt8}
+    out = Vector{UInt8}(undef, Int(_MAX_EAGER_RESPONSE_PREALLOC))
+    total = 0
+    while true
+        if total == length(out)
+            if total >= hint
+                # The declared length arrived; grow past it only for more bytes.
+                byte = Vector{UInt8}(undef, 1)
+                body_read!(body, byte) == 0 && return out
+                out = _grow_response_bytes(out, total, 2 * total)
+                total += 1
+                out[total] = byte[1]
+                continue
+            end
+            out = _grow_response_bytes(out, total, Int(min(2 * Int64(total), hint)))
+        end
+        # Bounded reads, as in `_copy_response_bytes!`: each read restarts the
+        # read idle timeout.
+        stop = min(length(out), total + _RESPONSE_COPY_BUFFER_BYTES)
+        n = body_read!(body, @view(out[(total + 1):stop]))
+        n == 0 && return resize!(out, total)
+        total += n
+    end
+end
+
 function _read_all_response_bytes(body::AbstractBody, content_length_hint::Int64=Int64(-1))::Vector{UInt8}
     if 0 <= content_length_hint <= _MAX_EAGER_RESPONSE_PREALLOC
         out = Vector{UInt8}(undef, Int(content_length_hint))
         n = _copy_response_bytes!(out, body)
         n == content_length_hint || resize!(out, Int(n))
         return out
+    end
+    if content_length_hint > _MAX_EAGER_RESPONSE_PREALLOC && body isa Union{EmptyBody,BytesBody,H1Body,H2Body}
+        return _read_response_bytes_toward_hint(body, content_length_hint)
     end
     out = UInt8[]
     content_length_hint > 0 && sizehint!(out, Int(min(content_length_hint, _MAX_EAGER_RESPONSE_PREALLOC)))
