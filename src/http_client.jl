@@ -408,6 +408,21 @@ function Client(;
     )
 end
 
+# A summary without the default credentials, query values, or cookies.
+function Base.show(io::IO, client::Client)
+    print(io, "HTTP.Client(", isopen(client) ? "open" : "closed",
+        ", max_redirects=", client.max_redirects,
+        ", prefer_http2=", client.prefer_http2,
+        ", cookiejar=", client.cookiejar === nothing ? "nothing" : "CookieJar",
+        ", default_headers=", length(client.default_headers),
+        ", default_query=", client.default_query === nothing ? 0 : length(client.default_query::Vector{Pair{String,String}}),
+        ", default_basicauth=", client.default_basicauth === nothing ? "nothing" : "set",
+        ", transport=")
+    show(io, client.transport)
+    print(io, ")")
+    return nothing
+end
+
 # Normalize default_query input into a Vector{Pair{String,String}} stored on the Client.
 function _normalize_default_query(q)::Union{Nothing,Vector{Pair{String,String}}}
     q === nothing && return nothing

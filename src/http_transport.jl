@@ -332,6 +332,19 @@ end
     return @atomic :acquire transport.closed
 end
 
+# A summary: the TLS config holds session state and the pool holds connections.
+function Base.show(io::IO, transport::Transport)
+    print(io, "HTTP.Transport(", _transport_closed(transport) ? "closed" : "open",
+        ", idle_connections=", @atomic(:acquire, transport.idle_total),
+        ", max_idle_per_host=", transport.max_idle_per_host,
+        ", max_conns_per_host=", transport.max_conns_per_host,
+        ", tls_config=", transport.tls_config === nothing ? "default" : "custom",
+        ", proxy=")
+    show(io, transport.proxy)
+    print(io, ")")
+    return nothing
+end
+
 @inline function _conn_closed(conn::Conn)::Bool
     return @atomic :acquire conn.closed
 end
