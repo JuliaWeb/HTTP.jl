@@ -208,6 +208,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after a request-body read inherited that expired deadline, so a request with
   a body on a reused connection got `408` and the connection could close. Every
   server write now sets its own deadline. ([#1458])
+- The HTTP/2 client treats flow-control violations by the server as errors.
+  DATA past a stream's receive window resets that stream with
+  `FLOW_CONTROL_ERROR`; the read loop blocked until the body was read,
+  stalling every stream on the connection. A `WINDOW_UPDATE` or
+  `SETTINGS_INITIAL_WINDOW_SIZE` change that takes a window above 2^31-1 is a
+  `FLOW_CONTROL_ERROR` instead of being accepted. ([#1464])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1427,6 +1433,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1461]: https://github.com/JuliaWeb/HTTP.jl/issues/1461
 [#1462]: https://github.com/JuliaWeb/HTTP.jl/issues/1462
 [#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
+[#1464]: https://github.com/JuliaWeb/HTTP.jl/issues/1464
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
 [#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467
 [#1468]: https://github.com/JuliaWeb/HTTP.jl/issues/1468
