@@ -1156,7 +1156,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         return nothing
     elseif frame isa GoAwayFrame
         goaway = frame::GoAwayFrame
-        goaway.error_code == UInt32(0) || throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
+        # Whatever the error code, streams above `last_stream_id` were not
+        # processed and can be retried, and the peer may still answer the
+        # others before it closes the connection (RFC 9113 §6.8).
         to_fail = Pair{UInt32,H2StreamState}[]
         lock(conn.state_lock)
         try
@@ -1176,8 +1178,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         finally
             unlock(conn.state_lock)
         end
+        reason = goaway.error_code == UInt32(0) ? "" : " ($(_h2_error_code_name(goaway.error_code)))"
         for failed in to_fail
-            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY", goaway.last_stream_id))
+            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY$reason", goaway.last_stream_id))
         end
         _close_h2_if_drained!(conn)
         return nothing
