@@ -630,9 +630,9 @@ end
     function recording_server()
         server = listen(IPv4(0), 0)
         heads = Channel{String}(Inf)
-        errormonitor(@async while isopen(server)
+        @async while isopen(server)
             sock = try accept(server) catch; break end
-            errormonitor(@async try
+            @async try
                 while !eof(sock)
                     head = String(readuntil(sock, "\r\n\r\n"))
                     put!(heads, head)
@@ -645,8 +645,8 @@ end
                 end
             finally
                 close(sock)
-            end)
-        end)
+            end
+        end
         return server, Int(getsockname(server)[2]), heads
     end
     credentials = ["authorization" => "Bearer lower", "COOKIE" => "c=upper", "Proxy-Authorization" => "Basic cHJveHk="]
@@ -690,7 +690,7 @@ end
     proxy = listen(IPv4(0), 0)
     pport = Int(getsockname(proxy)[2])
     tunnel_heads = Channel{String}(2)
-    errormonitor(@async try
+    @async try
         sock = accept(proxy)
         put!(tunnel_heads, String(readuntil(sock, "\r\n\r\n")))
         write(sock, "HTTP/1.1 200 Connection established\r\n\r\n")
@@ -700,7 +700,7 @@ end
         close(sock)
     finally
         close(proxy)
-    end)
+    end
     try
         HTTP.get("ws://example.com/x", ["proxy-authorization" => "Basic cHJveHk="]; proxy="http://127.0.0.1:$pport", retry=false)
         @test occursin("Proxy-Authorization: Basic cHJveHk=", take!(tunnel_heads))
