@@ -168,6 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `logging_middleware` reports `101` for an upgrade, including when the handler
   fails afterwards, and the server never answers the upgraded connection with
   a second response. ([#1461])
+- `fileserver` serves a root given with a trailing separator, such as
+  `"public/"` or `"/"`; before, every file request got 500. A NUL in a request
+  path (`%00`) gets 400 instead of a 500 and an error log. ([#1462])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1384,6 +1387,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
 [#1461]: https://github.com/JuliaWeb/HTTP.jl/issues/1461
+[#1462]: https://github.com/JuliaWeb/HTTP.jl/issues/1462
 [#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
 [#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467

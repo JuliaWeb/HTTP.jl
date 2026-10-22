@@ -571,6 +571,24 @@ end
     end
 end
 
+@testset "HTTP fileserver accepts a root with a trailing separator" begin
+    mktempdir() do dir
+        write(joinpath(dir, "hello.txt"), "hello")
+        server = HT.serve!(HT.fileserver(dir * "/"), "127.0.0.1", 0; listenany = true)
+        try
+            ok = HT.get("http://$(HT.server_addr(server))/hello.txt"; status_exception = false)
+            @test ok.status == 200
+            @test String(ok.body) == "hello"
+            # A NUL in the path is a bad request, not a server error.
+            nul = _raw_http_request(HT.port(server), "GET /%00hello.txt HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(nul, "HTTP/1.1 400 Bad Request\r\n")
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
+    end
+end
+
 @testset "HTTP servefile and fileserver over HTTP/1.1" begin
     mktempdir() do dir
         hello_path = joinpath(dir, "hello.txt")
