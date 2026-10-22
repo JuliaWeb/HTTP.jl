@@ -13,16 +13,16 @@ jobs:
         with:
           ref: gh-pages
 
-      - name: Delete preview and history
+      # A PR whose docs were never deployed has no preview to delete.
+      - name: Delete preview and history + push changes
         run: |
-            git config user.name "Documenter.jl"
-            git config user.email "documenter@juliadocs.github.io"
-            git rm -rf "previews/PR$PRNUM"
-            git commit -m "delete preview"
-            git branch gh-pages-new $(echo "delete history" | git commit-tree HEAD^{tree})
+            if [ -d "previews/PR$PRNUM" ]; then
+                git config user.name "Documenter.jl"
+                git config user.email "documenter@juliadocs.github.io"
+                git rm -rf "previews/PR$PRNUM"
+                git commit -m "delete preview"
+                git branch gh-pages-new $(echo "delete history" | git commit-tree HEAD^{tree})
+                git push --force origin gh-pages-new:gh-pages
+            fi
         env:
             PRNUM: ${{ github.event.number }}
-
-      - name: Push changes
-        run: |
-            git push --force origin gh-pages-new:gh-pages
