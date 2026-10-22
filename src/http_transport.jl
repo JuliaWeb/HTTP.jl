@@ -352,13 +352,24 @@ end
 end
 
 # Servers may close idle keep-alive connections without a `Keep-Alive` hint
-# (MinIO and many Go servers do so after 30 seconds). Peek one byte without
-# waiting before reusing an idle connection: end-of-stream means the peer closed
-# it, and any byte is data an idle HTTP/1 connection must not have received
-# (for TLS, typically a close_notify alert). Either way it cannot carry a request,
-# and a non-idempotent request sent on it would fail without a safe retry.
+# (MinIO and many Go servers do so after 30 seconds). Before reusing an idle
+# connection, check without waiting whether the peer closed it or sent data an
+# idle HTTP/1 connection must not have received. Either way it cannot carry a
+# request, and a non-idempotent request sent on it would fail without a safe
+# retry. Plain TCP connections peek one byte from the socket.
 function _idle_conn_reusable(conn::Conn)::Bool
     _conn_reader_available(conn.reader) == 0 || return false
+    if conn.secure
+        # TLS may already hold records the socket no longer shows, and some
+        # records carry no data (session tickets). `tryread!` processes both
+        # without waiting: 0 means the peer closed, a count is data an idle
+        # HTTP/1 connection must not have, and `nothing` means it is idle.
+        return try
+            TLS.tryread!(conn.tls::TLS.Conn, Vector{UInt8}(undef, 1)) === nothing
+        catch
+            false
+        end
+    end
     byte = Ref{UInt8}(0)
     n = GC.@preserve byte SocketOps.recv_from!(
         conn.tcp.fd.pfd.sysfd, Base.unsafe_convert(Ptr{UInt8}, byte), Csize_t(1), SocketOps.MSG_PEEK)
@@ -898,7 +909,7 @@ function _write_start_line!(io::IO, request::Request, plan::_ProxyPlan)
         # internal host. Validate the components before assembling the wire form.
         _validate_request_start_line!(request.method, request.target, forward_address)
         target = _request_url(false, forward_address, request.target)
-        print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+        _print_request_line!(io, request.method, target, request.proto_major, request.proto_minor)
         return nothing
     end
     return _write_start_line!(io, request)
@@ -913,7 +924,7 @@ function _write_request_head!(
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, request.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
     _write_start_line!(io, request, plan)
-    _write_headers!(io, headers)
+    _append_headers!(io, headers)
     write(io, "\r\n")
     return use_chunked, trailer_values
 end

@@ -48,15 +48,21 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
     end
     if _server_stream_live_h2(stream)
         deadline_ns = _server_write_deadline_ns(stream.server::Server)
-        _write_data_frames_h2_server!(
-            stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-            stream.h2_write_lock::ReentrantLock,
-            stream.h2_send_state::_H2SendWindowState,
-            stream.h2_stream_id,
-            data;
-            end_stream=false,
-            write_deadline_ns=deadline_ns,
-        )
+        try
+            _write_data_frames_h2_server!(
+                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+                stream.h2_write_lock::ReentrantLock,
+                stream.h2_send_state::_H2SendWindowState,
+                stream.h2_stream_id,
+                data;
+                end_stream=false,
+                write_deadline_ns=deadline_ns,
+            )
+        catch err
+            # The client reset the stream or the connection failed.
+            stream.io_error = err
+            rethrow()
+        end
         return nothing
     end
     try
@@ -94,6 +100,26 @@ function _suppressed_body_content_length!(headers::Headers, response::Response):
     return nothing
 end
 
+# Writes a header block on a live HTTP/2 server stream. A failed write comes from
+# the client or the connection; a field the peer's limit refuses is the handler's.
+function _write_h2_stream_header_fields!(stream::Stream, header_fields::Vector{HeaderField}, end_stream::Bool)::Nothing
+    try
+        _write_h2_header_fields!(
+            stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+            stream.h2_write_lock::ReentrantLock,
+            stream.h2_send_state::_H2SendWindowState,
+            stream.h2_stream_id,
+            header_fields,
+            end_stream,
+            _server_write_deadline_ns(stream.server::Server),
+        )
+    catch err
+        _is_h2_transport_error(err) && (stream.io_error = err)
+        rethrow()
+    end
+    return nothing
+end
+
 function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Vector{UInt8}}=nothing)::Nothing
     response = stream.response::Response
     headers = copy(response.headers)
@@ -114,16 +140,7 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
         removeheader(headers, "Upgrade")
         removeheader(headers, "Trailer")
         end_stream = mode == _ServerStreamWriteMode.NONE && isempty(response.trailers)
-        _write_h2_response_headers!(
-            stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-            stream.h2_write_lock::ReentrantLock,
-            stream.h2_send_state::_H2SendWindowState,
-            stream.h2_stream_id,
-            response.status,
-            headers,
-            end_stream,
-            _server_write_deadline_ns(stream.server::Server),
-        )
+        _write_h2_stream_header_fields!(stream, _h2_response_header_fields(response.status, headers), end_stream)
         @atomic :release stream.head_committed = true
         @atomic :release stream.response_started = true
         return nothing
@@ -428,21 +445,19 @@ function _server_closewrite(stream::Stream)::Nothing
             throw(ProtocolError("response body bytes did not match Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         if !isempty(stream.response.trailers)
-            _write_h2_trailers!(
-                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-                stream.h2_write_lock::ReentrantLock,
-                stream.h2_send_state::_H2SendWindowState,
-                stream.h2_stream_id,
-                stream.response.trailers,
-                _server_write_deadline_ns(stream.server::Server),
-            )
+            _write_h2_stream_header_fields!(stream, _h2_trailer_header_fields(stream.response.trailers), true)
         elseif !stream.ignore_writes && stream.write_mode != _ServerStreamWriteMode.NONE
-            _write_frame_h2_server_threadsafe!(
-                stream.h2_write_lock::ReentrantLock,
-                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-                DataFrame(stream.h2_stream_id, true, UInt8[]),
-                _server_write_deadline_ns(stream.server::Server),
-            )
+            try
+                _write_frame_h2_server_threadsafe!(
+                    stream.h2_write_lock::ReentrantLock,
+                    stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+                    DataFrame(stream.h2_stream_id, true, UInt8[]),
+                    _server_write_deadline_ns(stream.server::Server),
+                )
+            catch err
+                _is_h2_transport_error(err) && (stream.io_error = err)
+                rethrow()
+            end
         end
         @atomic :release stream.write_closed = true
         return nothing
