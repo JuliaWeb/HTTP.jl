@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- `Authorization`, `Proxy-Authorization`, `Cookie`, and the other credential headers are kept
+  on a redirect only when it stays on the same origin (scheme, host, and port), whatever the
+  case of their names; subdomains are no longer trusted. A CONNECT tunnel removes
+  `Proxy-Authorization` in any case before the tunnelled request. ([#1450])
 - A server listening with `sslconfig` runs each connection's TLS handshake in that connection's
   task, with `readtimeout` (when set) as its time limit, instead of in the accept loop, where an
   unfinished handshake kept every later connection waiting. ([#1481])
@@ -707,4 +711,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1119]: https://github.com/JuliaWeb/HTTP.jl/issues/1119
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
+[#1450]: https://github.com/JuliaWeb/HTTP.jl/issues/1450
 [#1481]: https://github.com/JuliaWeb/HTTP.jl/issues/1481

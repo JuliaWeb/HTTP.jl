@@ -1,7 +1,7 @@
 module RedirectRequest
 
 using URIs
-using ..Messages, ..Pairs
+using ..Messages, ..Pairs, ..Strings
 
 export redirectlayer, nredirects
 
@@ -37,13 +37,15 @@ function redirectlayer(handler)
             req = Request(method, resource(url), copy(req.headers), body;
                 url=url, version=req.version, responsebody=response_stream, parent=res, context=req.context)
             if forwardheaders
+                keepcredentials = sameorigin(url, oldurl)
                 req.headers = filter(req.headers) do (header, _)
-                    # false return values are filtered out
-                    if header == "Host"
+                    # false return values are filtered out; header names are case-insensitive
+                    isname(name) = ascii_lc_isequal(header, name)
+                    if isname("Host")
                         return false
-                    elseif (header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, oldurl.host))
+                    elseif !keepcredentials && any(isname, SENSITIVE_HEADERS)
                         return false
-                    elseif method == "GET" && header in ("Content-Type", "Content-Length")
+                    elseif method == "GET" && (isname("Content-Type") || isname("Content-Length"))
                         return false
                     else
                         return true
@@ -66,18 +68,22 @@ function nredirects(req)
     return req.parent === nothing ? 0 : (1 + nredirects(req.parent.request))
 end
 
+# Request headers that are kept on a redirect only when it stays on the same origin.
 const SENSITIVE_HEADERS = Set([
     "Authorization",
+    "Proxy-Authorization",
     "Www-Authenticate",
     "Cookie",
     "Cookie2"
 ])
 
-function isdomainorsubdomain(sub, parent)
-    sub == parent && return true
-    endswith(sub, parent) || return false
-    return sub[length(sub)-length(parent)] == '.'
+# Same origin per RFC 6454: scheme, host (ASCII case-insensitive), and port, with an empty
+# port meaning the scheme's default.
+function sameorigin(a::URI, b::URI)
+    return a.scheme == b.scheme && ascii_lc_isequal(a.host, b.host) && originport(a) == originport(b)
 end
+
+originport(u::URI) = isempty(u.port) ? (u.scheme in ("https", "wss") ? "443" : "80") : u.port
 
 function verify_url(url::URI)
     if !(url.scheme in ("http", "https", "ws", "wss"))
