@@ -1849,9 +1849,10 @@ function _compact_stream_body_buffer!(state::H2StreamState)
     end
     if state.body_read_index > 4096 && state.body_read_index > (length(state.body) >>> 1)
         remaining = (length(state.body) - state.body_read_index) + 1
-        compacted = Vector{UInt8}(undef, remaining)
-        copyto!(compacted, 1, state.body, state.body_read_index, remaining)
-        state.body = compacted
+        # Move the unread bytes to the front in place: the buffer keeps its
+        # capacity, so later DATA frames append without reallocating.
+        copyto!(state.body, 1, state.body, state.body_read_index, remaining)
+        resize!(state.body, remaining)
         state.body_read_index = 1
     end
     return nothing

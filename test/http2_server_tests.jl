@@ -1265,6 +1265,31 @@ end
     end
 end
 
+@testset "HTTP/2 stream body buffers compact without reallocating" begin
+    chunk = rand(UInt8, 16 * 1024)
+    dst = similar(chunk)
+    # One frame stays buffered while the reader takes one frame per frame that arrives.
+    function relay!(state, compact!, rounds)
+        for _ in 1:rounds
+            append!(state.body, chunk)
+            copyto!(dst, 1, state.body, state.body_read_index, length(dst))
+            state.body_read_index += length(dst)
+            compact!(state)
+        end
+        return nothing
+    end
+    for (state, compact!) in (
+        (HT._H2ServerStreamState(UInt32(1)), HT._compact_h2_server_body_buffer!),
+        (HT.H2StreamState(UInt32(1)), HT._compact_stream_body_buffer!),
+    )
+        append!(state.body, chunk)
+        relay!(state, compact!, 4)
+        # Reallocating on every compaction costs two buffer-sized allocations per frame.
+        @test (@allocated relay!(state, compact!, 64)) < 64 * 1024
+        @test state.body == chunk && state.body_read_index == 1
+    end
+end
+
 @testset "HTTP/2 server stream handlers start reading bodies before upload completion" begin
     first_chunk_seen = Channel{String}(1)
     final_chunk_requested = Channel{Nothing}(1)

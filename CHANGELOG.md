@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   received: the buffer starts at the declared `Content-Length`, capped at
   64 KiB, and doubles as it fills. A 1 MiB body allocated 3.6 times its size
   on Julia 1.12 and now allocates about twice its size. ([#1470])
+- HTTP/2 stream body buffers on the client and server compact in place
+  instead of into a new vector, so receiving DATA no longer reallocates the
+  buffer for every frame: a 1 MiB upload allocated 3.2 MiB in the server
+  stream buffer and now allocates about 160 KiB. ([#1486])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -1439,3 +1443,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1479]: https://github.com/JuliaWeb/HTTP.jl/issues/1479
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
+[#1486]: https://github.com/JuliaWeb/HTTP.jl/issues/1486
