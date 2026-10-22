@@ -942,7 +942,9 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     for field in headers
         name = field.name
         value = field.value
-        name == lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
+        # ASCII-only: a name with non-ASCII bytes is invalid, and `lowercase`
+        # throws on bytes that are not UTF-8.
+        name == _ascii_lowercase_string(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
         normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
         if startswith(name, ':')
@@ -990,7 +992,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
             throw(ProtocolError("forbidden HTTP/2 transfer-encoding header"))
         end
         if name == "te"
-            lowercase(_trim_http_ows(normalized)) == "trailers" || throw(ProtocolError("HTTP/2 TE header may only contain trailers"))
+            _ascii_lowercase_string(_trim_http_ows(normalized)) == "trailers" || throw(ProtocolError("HTTP/2 TE header may only contain trailers"))
         end
         push!(out_headers, canonical_header_key(name) => normalized)
     end
