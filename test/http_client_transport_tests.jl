@@ -107,6 +107,20 @@ end
     @test bytes == payload
 end
 
+@testset "_read_all_response_bytes grows toward a large declared length" begin
+    payload = rand(UInt8, 10 * 1024 * 1024)
+    read_all(data, hint) = HT._read_all_response_bytes(HT.BytesBody(data), Int64(hint))
+    @test read_all(payload, length(payload)) == payload
+    # About 2.5 times the body in all, against more than 3 times with doubling,
+    # and an exact-size result (`summarysize` shows capacity from Julia 1.11).
+    @test @allocated(read_all(payload, length(payload))) < 2.7 * length(payload)
+    VERSION >= v"1.11" && @test Base.summarysize(read_all(payload, length(payload))) < length(payload) + 4096
+    # A body longer or shorter than declared is read in full.
+    @test read_all(payload, 2 * 1024 * 1024) == payload
+    short = payload[1:(3 * 1024 * 1024)]
+    @test read_all(short, length(payload)) == short
+end
+
 @testset "HTTP transport constructor validates max_conns_per_host" begin
     @test_throws ArgumentError HT.Transport(max_conns_per_host = -1)
 end
@@ -678,6 +692,39 @@ end
     end
 end
 
+@testset "HTTP client transport bounds interim 1xx responses by max_header_bytes" begin
+    hint = "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n"  # 61 bytes
+    for (count, ok) in ((16, true), (17, false))
+        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+        server_task = errormonitor(Threads.@spawn begin
+            conn = NC.accept(listener)
+            try
+                HT.read_request(HT._ConnReader(conn))
+                HTTP.@try_ignore _write_all_tcp!(conn, collect(codeunits(repeat(hint, count) * "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")))
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+            return nothing
+        end)
+        transport = HT.Transport(max_header_bytes = 1000, max_line_bytes = 1000)
+        try
+            req = HT.Request("GET", "/hints"; host = address, body = HT.EmptyBody(), content_length = 0)
+            if ok
+                res = HT.roundtrip!(transport, address, req)
+                @test res.status == 200
+                @test String(_read_all_transport_body_bytes(res.body)) == "ok"
+            else
+                @test_throws "informational responses exceed configured max_header_bytes" HT.roundtrip!(transport, address, req)
+            end
+            _wait_task!(server_task)
+        finally
+            close(transport)
+            HTTP.@try_ignore NC.close(listener)
+        end
+    end
+end
+
 @testset "HTTP client transport waits for 100-continue before sending body" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -784,6 +831,50 @@ end
         isready(release_second_chunk) || put!(release_second_chunk, nothing)
         close(transport)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP client transport returns a response sent before the server closed mid-upload" begin
+    # The server answers once it has the head and closes with the body unread,
+    # so the client's upload fails with a reset or broken pipe. Rounds cover the
+    # writer failing before and after the response is read.
+    cert_file = joinpath(@__DIR__, "resources", "unittests.crt")
+    key_file = joinpath(@__DIR__, "resources", "unittests.key")
+    answer = collect(codeunits("HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 8\r\n\r\ntoo big!"))
+    payload = zeros(UInt8, 32 * 1024 * 1024)
+    rounds = 10
+    for secure in (false, true)
+        listener = secure ?
+            TL.listen("tcp", "127.0.0.1:0", TL.Config(verify_peer = false, cert_file = cert_file, key_file = key_file); backlog = 8) :
+            ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        port = Int(((secure ? TL.addr(listener) : NC.addr(listener))::NC.SocketAddrV4).port)
+        address = ND.join_host_port("127.0.0.1", port)
+        server_task = errormonitor(Threads.@spawn begin
+            for _ in 1:rounds
+                conn = secure ? TL.accept(listener) : NC.accept(listener)
+                try
+                    secure && TL.handshake!(conn)
+                    HT.read_request(HT._ConnReader(conn))
+                    write(conn, answer)
+                finally
+                    HTTP.@try_ignore close(conn)
+                end
+            end
+        end)
+        transport = secure ? HT.Transport(tls_config = TL.Config(verify_peer = false, verify_hostname = false)) : HT.Transport()
+        try
+            for _ in 1:rounds
+                req = HT.Request("POST", "/upload"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+                res = HT.roundtrip!(transport, address, req; secure = secure)
+                @test res.status == 413
+                @test String(_read_all_transport_body_bytes(res.body)) == "too big!"
+            end
+            _wait_task!(server_task)
+            @test HT.idle_connection_count(transport) == 0
+        finally
+            close(transport)
+            HTTP.@try_ignore close(listener)
+        end
     end
 end
 
@@ -1388,6 +1479,55 @@ end
         close(transport)
         HTTP.@try_ignore NC.close(listener)
     end
+end
+
+@testset "HTTP client TLS handshake past the connect deadline is a timeout" begin
+    # The TCP connect has no deadline and the connect deadline has already
+    # passed, so the handshake's first write fails.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:2
+            conn = NC.accept(listener)
+            HTTP.@try_ignore read(conn)
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    tls_config = TL.Config(verify_peer = false, verify_hostname = false)
+    transport = HT.Transport(tls_config = tls_config)
+    try
+        plan = HT._proxy_plan(transport.proxy, true, address)
+        h1_err = try
+            HT._new_conn!(transport, plan, address, true, "localhost", transport.host_resolver, Int64(1), Int64(5_000_000_000))
+            nothing
+        catch e
+            e
+        end
+        h2_err = try
+            HT.connect_h2!(address; secure = true, tls_config = tls_config, connect_deadline_ns = Int64(1))
+            nothing
+        catch e
+            e
+        end
+        for err in (h1_err, h2_err)
+            @test err isa TL.TLSHandshakeTimeoutError
+            @test HT.isrecoverable(err)
+            wrapped = HT._wrap_client_transport_error(err, "request")
+            @test wrapped isa HT.TimeoutError && wrapped.operation == "tls_handshake"
+        end
+        _wait_task!(server_task)
+    finally
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    # The request deadline is a request timeout when it came first.
+    deadline_err = TL.TLSError("handshake", Int32(0), "i/o timeout", Reseau.IOPoll.DeadlineExceededError())
+    @test HT._tls_setup_error(deadline_err, Int64(5), Int64(100), Int64(200)) isa TL.TLSHandshakeTimeoutError
+    request_err = HT._tls_setup_error(deadline_err, Int64(5), Int64(100), Int64(100))
+    @test request_err isa Reseau.IOPoll.DeadlineExceededError
+    @test HT._wrap_client_transport_error(request_err, "request").operation == "request"
+    @test HT._tls_setup_error(TL.TLSError("handshake", Int32(0), "bad certificate", nothing), Int64(5), Int64(100), Int64(0)) isa HT.TLSHandshakeError
 end
 
 @testset "HTTP client transport classifies TLS-wrapped reused errors by cause (#1353)" begin

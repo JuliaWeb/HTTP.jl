@@ -64,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h2` through ALPN. ([#1385])
 
 ### Changed
+- `streamhandler` limits the request body it reads into memory to
+  `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
+  no limit); a larger body gets 413. Before, the body was read without any
+  limit. ([#1472])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -93,6 +97,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `serve!` answers a handler's response that cannot be sent with 500 and logs
+  it. Such a response has an unsupported `Transfer-Encoding`, a control
+  character in a header value, an invalid header name, reason phrase or
+  trailer, or a status code outside 100-999. Before, the connection closed with
+  no response and nothing logged. A response body that fails after the head is
+  sent is now logged as a handler error, and the body is left unfinished; before,
+  it ended the connection task silently. ([#1451])
+- The HTTP/2 client handles a `GOAWAY` with an error code, such as
+  `ENHANCE_YOUR_CALM`, like one with `NO_ERROR`: streams above
+  `last_stream_id` fail with the retryable `H2GoAwayError` and the others keep
+  their responses. It failed every stream on the connection. ([#1460])
+- `WebSockets.open` raises the error types `HTTP.request` raises, such as
+  `ConnectError` for a refused connection, instead of Reseau exceptions such
+  as `Reseau.HostResolvers.OpError`. ([#1456])
+- A TLS handshake that runs into the connect or request deadline raises
+  `TimeoutError` with operation `tls_handshake`, retried like a connect
+  timeout, or `request` when the request deadline came first. It raised
+  `TLSHandshakeError`, for HTTP/1, HTTP/2, and `wss://` connections. ([#1455])
+- Printing a `ProxyConfig`, `Transport`, or `Client` no longer shows
+  credentials. The default display showed a proxy's Basic credentials (base64
+  of `user:password`) and a SOCKS proxy's password in plain text, a client's
+  `default_basicauth` and `default_query` values and jar cookies, and the
+  transport's TLS session caches; they now print short summaries. ([#1465])
+- A request whose URL path or query holds a control character, such as a tab,
+  fails before a connection is made and is not retried. It opened five
+  connections first, because the `ParseError` raised when the request line was
+  written counts as recoverable; a redirect to such a `Location` did the same.
+  ([#1459])
+- A cookie whose `Domain` is a public suffix equal to the request host, such
+  as `Domain=localhost` from `localhost`, is kept as a host-only cookie, as
+  RFC 6265 §5.3 says. It was dropped. ([#1471])
+- The HTTP/1 client bounds the informational (1xx) responses it reads before
+  the final one: their heads share the transport's `max_header_bytes` budget,
+  and past it the request fails with a `ProtocolError`. A server could send
+  `103 Early Hints` forever, and `read_idle_timeout` never fired because data
+  kept arriving. ([#1476])
+- A buffered response body with a `Content-Length` above 1 MiB is read into a
+  vector that grows toward the declared length as bytes arrive, so `resp.body`
+  is exactly sized. A 10 MiB response allocated 34 MiB in all and kept a 16
+  MiB buffer; it now allocates 25 MiB and keeps 10 MiB. ([#1480])
+- The `server handler error` log record's `target` leaves out the query
+  string, which often carries tokens or signatures. ([#1473])
+- A stream handler that fails before its response head is sent always gets an
+  error response. The server still sends the error with the handler's headers,
+  but when those headers are what failed, such as a NUL in a value, it now
+  falls back to a new error response instead of sending nothing. ([#1457])
+- Stream responses frame the body one way. A fixed-length response no longer
+  sends a `Transfer-Encoding` the handler set next to `Content-Length`, and a
+  response to an HTTP/1.0 request, or one the handler made HTTP/1.0, is never
+  chunked, including through `streamhandler`. ([#1463])
+- A WebSocket connection whose received messages wait unread past four times
+  `maxframesize` bytes is closed with status 1008. Before, a peer could queue
+  messages for a handler that received slowly or never without any limit.
+  ([#1474])
+- The HTTP/2 client turns server push off (`SETTINGS_ENABLE_PUSH = 0`) in its
+  first SETTINGS frame. Push defaults to on and the client fails the connection
+  on `PUSH_PROMISE`, so a server that pushed a resource failed every request on
+  that connection. ([#1467])
+- The HPACK decoder rejects index 0 and integers above 2^32 - 1 as decoding
+  errors. A header block with either raised `BoundsError` or `ArgumentError`,
+  and the HTTP/2 server's connection task died without sending GOAWAY. ([#1475])
+- The HTTP/2 client counts each `HEADERS`/`CONTINUATION` frame's 9-byte
+  header against its header block limit, so a server can no longer hold the
+  connection with endless empty `CONTINUATION` frames. ([#1477])
+- `streamhandler` answers HEAD with the `Content-Length` a GET would get, as
+  `serve!` does, over HTTP/1 and HTTP/2. Before, the header was missing unless
+  the handler set it explicitly. ([#1454])
+- `WebSockets.upgrade` records the handshake response on the server stream, so
+  `logging_middleware` reports `101` for an upgrade, including when the handler
+  fails afterwards, and the server never answers the upgraded connection with
+  a second response. ([#1461])
 - `fileserver` serves a root given with a trailing separator, such as
   `"public/"` or `"/"`; before, every file request got 500. A NUL in a request
   path (`%00`) gets 400 instead of a 500 and an error log. ([#1462])
@@ -134,6 +209,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streams were refused and `close(server)` waited forever; the stream is now
   removed once its handler finishes. DATA beyond the advertised connection
   window is a connection error instead of being buffered. ([#1452])
+- The client matches and stores cookie paths without the request's query, as
+  RFC 6265 §5.1.4 specifies. A `Path=/a` cookie was not sent to `/a?x=1`, and
+  a cookie set by `/d/e?next=/f/g` got the default path `/d/e?next=/f`
+  instead of `/d`. ([#1448])
+- An HTTP/1 upload that the server answers early and then closes, such as a
+  `413` sent after the request head, returns the server's response. The
+  client closed the connection when the upload's write failed, so it usually
+  raised a broken-pipe, connection-reset, or `TLSTransportError` instead. A
+  `write_idle_timeout` during an upload raises `TimeoutError` (it raised
+  `NetClosingError`, or `TLSTransportError` over https) and is not retried,
+  like a read timeout. ([#1449])
+- URLs are checked against RFC 3986 before a connection is made. A userinfo or
+  host with a backslash, a space, or a control character, a host with `%`
+  (hosts are not percent-decoded), a bracketed host that is not an IPv6
+  address, or a `URI` whose path does not start with `/` raises
+  `ArgumentError`; a redirect to such a location raises `ProtocolError`.
+  Special characters in URL credentials must be percent-encoded, such as a
+  Windows `DOMAIN\user` name as `DOMAIN%5Cuser`; a proxy environment variable
+  that does not parse is skipped with a warning. `URI` schemes match
+  case-insensitively, and URL parse errors leave out the userinfo. ([#1447])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1280,5 +1375,27 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1447]: https://github.com/JuliaWeb/HTTP.jl/issues/1447
+[#1448]: https://github.com/JuliaWeb/HTTP.jl/issues/1448
+[#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
+[#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1454]: https://github.com/JuliaWeb/HTTP.jl/issues/1454
+[#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
+[#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
+[#1457]: https://github.com/JuliaWeb/HTTP.jl/issues/1457
+[#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
+[#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
+[#1461]: https://github.com/JuliaWeb/HTTP.jl/issues/1461
 [#1462]: https://github.com/JuliaWeb/HTTP.jl/issues/1462
+[#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
+[#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
+[#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467
+[#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
+[#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
+[#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
+[#1474]: https://github.com/JuliaWeb/HTTP.jl/issues/1474
+[#1475]: https://github.com/JuliaWeb/HTTP.jl/issues/1475
+[#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
+[#1477]: https://github.com/JuliaWeb/HTTP.jl/issues/1477
+[#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
