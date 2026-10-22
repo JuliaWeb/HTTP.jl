@@ -224,9 +224,10 @@ function _compact_h2_server_body_buffer!(state::_H2ServerStreamState)::Nothing
     end
     if state.body_read_index > 4096 && state.body_read_index > (length(state.body) >>> 1)
         remaining = (length(state.body) - state.body_read_index) + 1
-        compacted = Vector{UInt8}(undef, remaining)
-        copyto!(compacted, 1, state.body, state.body_read_index, remaining)
-        state.body = compacted
+        # Move the unread bytes to the front in place: the buffer keeps its
+        # capacity, so later DATA frames append without reallocating.
+        copyto!(state.body, 1, state.body, state.body_read_index, remaining)
+        resize!(state.body, remaining)
         state.body_read_index = 1
     end
     return nothing
@@ -409,8 +410,14 @@ function _send_h2_server_window_updates!(
     @atomic send_state.conn_recv_window += nbytes
     deadline_ns = _h2_write_deadline_ns(send_state)
     try
-        _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), increment), deadline_ns)
-        stream_level && _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(stream_id, increment), deadline_ns)
+        bytes = _window_update_frames(stream_id, increment, stream_level)
+        lock(write_lock)
+        try
+            _set_write_deadline!(conn, deadline_ns)
+            _write_all_h2_server!(conn, bytes)
+        finally
+            unlock(write_lock)
+        end
     catch err
         if err isa EOFError || err isa IOPoll.NetClosingError || err isa SystemError
             return nothing
@@ -629,7 +636,7 @@ end
 end
 
 @inline function _skip_h2_header(name::AbstractString)::Bool
-    lower = lowercase(name)
+    lower = _fast_lowercase(name)
     return lower == "connection" ||
            lower == "proxy-connection" ||
            lower == "keep-alive" ||
@@ -647,7 +654,7 @@ function _append_h2_headers!(out::Vector{HeaderField}, hdrs::Headers; trailers::
             _valid_header_field_name(key) || throw(ProtocolError("invalid HTTP/2 header field name: $(repr(key))"))
             _skip_h2_header(key) && continue
         end
-        lower = lowercase(key)
+        lower = _fast_lowercase(key)
         values = headers(hdrs, key)
         for value in values
             normalized = _normalize_strict_header_field_value(value)
@@ -769,10 +776,9 @@ end
 # deadline, `0` for none: the deadline outlives the write, and another task's
 # expired deadline would fail this one.
 function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))::Nothing
-    io = IOBuffer()
-    write_frame!(io, frame)
+    bytes = _frame_bytes(frame)
     _set_write_deadline!(conn, write_deadline_ns)
-    _write_all_h2_server!(conn, take!(io))
+    _write_all_h2_server!(conn, bytes)
     return nothing
 end
 
@@ -951,7 +957,9 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     for field in headers
         name = field.name
         value = field.value
-        name == lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
+        # ASCII-only: a name with non-ASCII bytes is invalid, and `lowercase`
+        # throws on bytes that are not UTF-8.
+        name == _ascii_lowercase_string(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
         normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
         if startswith(name, ':')
@@ -976,6 +984,8 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
                 # written verbatim into an HTTP/1 request line, splitting the target
                 # and enabling request smuggling past path-based ACLs.
                 _string_contains_whitespace_byte(normalized) && throw(ProtocolError("invalid HTTP/2 :path pseudo-header: $(repr(normalized))"))
+                # It is an absolute path, or `*` (checked against the method below).
+                (startswith(normalized, '/') || normalized == "*") || throw(ProtocolError("invalid HTTP/2 :path pseudo-header: $(repr(normalized))"))
                 path = normalized
             elseif name == ":authority"
                 authority === nothing || throw(ProtocolError("duplicate HTTP/2 :authority pseudo-header"))
@@ -999,7 +1009,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
             throw(ProtocolError("forbidden HTTP/2 transfer-encoding header"))
         end
         if name == "te"
-            lowercase(_trim_http_ows(normalized)) == "trailers" || throw(ProtocolError("HTTP/2 TE header may only contain trailers"))
+            _ascii_lowercase_string(_trim_http_ows(normalized)) == "trailers" || throw(ProtocolError("HTTP/2 TE header may only contain trailers"))
         end
         push!(out_headers, canonical_header_key(name) => normalized)
     end
@@ -1029,6 +1039,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     else
         scheme === nothing && throw(ProtocolError("missing HTTP/2 :scheme pseudo-header"))
         path === nothing && throw(ProtocolError("missing HTTP/2 :path pseudo-header"))
+        path == "*" && method != "OPTIONS" && throw(ProtocolError("HTTP/2 :path * is only valid for OPTIONS"))
     end
     return method::String, scheme, path, authority, out_headers
 end
@@ -1669,6 +1680,15 @@ function _request_h2_conn_shutdown!(
     return nothing
 end
 
+# Adds one HEADERS or CONTINUATION frame to the size of the header block being
+# received. Each frame's 9-byte header counts too, so a peer cannot stretch a
+# block across endless empty CONTINUATION frames.
+@inline function _h2_charge_header_block_frame(block_bytes::Int, fragment::Vector{UInt8}, max_header_block_bytes::Int)::Int
+    block_bytes += 9 + length(fragment)
+    block_bytes <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+    return block_bytes
+end
+
 # Refuse a new HTTP/2 stream without allocating per-stream state or spawning a
 # handler. The header block is still decoded into the connection-wide HPACK
 # decoder so the connection does not desync; CONTINUATION frames belonging to
@@ -1685,7 +1705,7 @@ function _h2_server_refuse_stream!(
     error_code::UInt32,
 )::Nothing
     block = copy(hf.header_block_fragment)
-    length(block) <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+    block_bytes = _h2_charge_header_block_frame(0, block, max_header_block_bytes)
     end_headers = hf.end_headers
     while !end_headers
         # The peer must complete the header block with CONTINUATION frames for
@@ -1696,7 +1716,7 @@ function _h2_server_refuse_stream!(
         frame isa ContinuationFrame || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
         cf = frame::ContinuationFrame
         cf.stream_id == hf.stream_id || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
-        length(block) + length(cf.header_block_fragment) <= max_header_block_bytes || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+        block_bytes = _h2_charge_header_block_frame(block_bytes, cf.header_block_fragment, max_header_block_bytes)
         append!(block, cf.header_block_fragment)
         end_headers = cf.end_headers
     end
@@ -1726,6 +1746,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     conn_control = _H2ServerConnControl()
     states = Dict{UInt32,_H2ServerStreamState}()
     continuation_stream = UInt32(0)
+    # Size of the header block being received; see `_h2_charge_header_block_frame`.
+    header_block_bytes = 0
     max_stream_id = UInt32(0)
     peer_goaway_last_stream_id = typemax(UInt32)
     # Per-connection stream-flood limits.
@@ -1948,8 +1970,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         state.trailers_complete && throw(ProtocolError("unexpected additional HTTP/2 HEADERS on request stream"))
                         hf.end_stream || throw(ProtocolError("HTTP/2 request trailers must end the stream"))
                     end
-                    remaining = max_header_block_bytes - length(state.header_block)
-                    remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+                    header_block_bytes = _h2_charge_header_block_frame(0, hf.header_block_fragment, max_header_block_bytes)
                     append!(state.header_block, hf.header_block_fragment)
                     hf.end_stream && (state.header_block_end_stream = true)
                     if hf.end_headers
@@ -1995,8 +2016,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 lock(state.lock)
                 try
                     initial_headers = !state.headers_complete
-                    remaining = max_header_block_bytes - length(state.header_block)
-                    remaining >= 0 && length(cf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
+                    header_block_bytes = _h2_charge_header_block_frame(header_block_bytes, cf.header_block_fragment, max_header_block_bytes)
                     append!(state.header_block, cf.header_block_fragment)
                     if cf.end_headers
                         decoded = decode_header_block(decoder, state.header_block)

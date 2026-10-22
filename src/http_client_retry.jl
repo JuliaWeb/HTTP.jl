@@ -173,7 +173,7 @@ end
 
 @inline function _retry_partition_for_address(address::AbstractString)::String
     host, _ = HostResolvers.split_host_port(address)
-    return lowercase(host)
+    return _fast_lowercase(host)
 end
 
 function _retry_delay_ns(
