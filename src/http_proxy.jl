@@ -312,7 +312,7 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
     value = String(value)
     parsed = _parse_http_url(_proxy_url_as_http_url(value))
     hostport = _text_range_string(getfield(parsed, :source), getfield(parsed, :authority_range))
-    isempty(hostport) && throw(ArgumentError("proxy URL missing host: $value"))
+    isempty(hostport) && throw(ArgumentError("proxy URL missing host: $(_url_for_message(value))"))
 
     host = hostport
     port_text = ""
@@ -334,7 +334,7 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
             throw(ArgumentError("invalid proxy URL authority: $hostport"))
         end
     end
-    isempty(host) && throw(ArgumentError("proxy URL missing host: $value"))
+    isempty(host) && throw(ArgumentError("proxy URL missing host: $(_url_for_message(value))"))
     port = if isempty(port_text)
         _proxy_default_port(scheme)
     else

@@ -1199,6 +1199,48 @@ end
     end
 end
 
+@testset "HTTP URL authority characters" begin
+    # Each of these would dial a host other than the one a browser or URIs.jl
+    # reads from the same URL, or put control bytes into the Host header.
+    for url in ("http://allowed.com\\@evil.com/", "http://a\\b.com/", "http://[localhost]/",
+                "http://[169.254.169.254]/", "http://[a]:80/", "http://[v1.fe]/", "http://evil.com[x]/",
+                "http://a.c\tom/", "http://a.com\0/", "http:// /", "http://evil.com%2f.good.com/",
+                "http://%65xample.com/", "http://u ser@h/", "http://u%zz@h/", "http://u%4@h/",
+                "http://u\r\n@h/", "http://a|b/", "http://a\"b/")
+        @test_throws ArgumentError HT._parse_http_url(url)
+    end
+    @test_throws "invalid character '\\\\' in URL userinfo" HT.get("http://allowed.com\\@127.0.0.1:1/"; retry = false)
+    @test_throws ArgumentError HT._parse_http_url(HT.URI("http://[::1]evil.com/"))
+    @test_throws HT.ProtocolError HT._resolve_redirect_target("a:80", false, "//allowed.com\\@evil.com/", "/", "a")
+    @test_throws ArgumentError HT.WebSockets._parse_websocket_url("ws://[localhost]/")
+    @test_throws ArgumentError HT.ProxyConfig(http = "http://proxy\\@evil.com:3128")
+    # URL errors leave out the userinfo.
+    for parse in (() -> HT._parse_http_url("http://user:secret@:8080/"), () -> HT.ProxyConfig(all = "socks5://user:secret@:1080"))
+        err = try
+            parse()
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+        @test !occursin("secret", sprint(showerror, err))
+    end
+
+    for (url, address, host_header, auth) in [
+        ("http://[fe80::1%25eth0]/p", "[fe80::1%25eth0]:80", "[fe80::1%25eth0]", false),
+        ("http://[::ffff:1.2.3.4]:81/p", "[::ffff:1.2.3.4]:81", "[::ffff:1.2.3.4]:81", false),
+        ("http://a_b.example/p", "a_b.example:80", "a_b.example", false),
+        ("http://a@b@c/p", "c:80", "c", true),
+        ("http://user%40x:p%3Ass@h/p", "h:80", "h", true),
+        ("http://a!\$&'()*+,;=b/p", "a!\$&'()*+,;=b:80", "a!\$&'()*+,;=b", false),
+    ]
+        parsed = HT._parse_http_url(url)
+        @test parsed.address == address
+        @test parsed.host_header == host_header
+        @test (parsed.authorization !== nothing) == auth
+    end
+    @test HT._parse_http_url(HT.URI("HTTPS://a.com/p")).address == "a.com:443"
+end
+
 @testset "HTTP client sends spaces in URLs as %20" begin
     @test HT._parse_http_url("http://h/a b?x=c d").target == "/a%20b?x=c%20d"
     @test HT._parse_http_url("http://h/p", "x=c d").target == "/p?x=c%20d"
