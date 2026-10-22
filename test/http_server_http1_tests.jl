@@ -2093,7 +2093,8 @@ end
         message = ""
         try
             probe = open("/dev/null")
-            lowest_free = Int(reinterpret(Int32, fd(probe)))
+            raw_fd = fd(probe) # an Int before Julia 1.12, a RawFD after
+            lowest_free = raw_fd isa Integer ? Int(raw_fd) : Int(reinterpret(Int32, raw_fd))
             close(probe)
             limit = Ref(_FDLimit(Culong(lowest_free + 16), saved[].max))
             @test ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, limit) == 0
