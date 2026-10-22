@@ -121,6 +121,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connections first, because the `ParseError` raised when the request line was
   written counts as recoverable; a redirect to such a `Location` did the same.
   ([#1459])
+- A cookie whose `Domain` is a public suffix equal to the request host, such
+  as `Domain=localhost` from `localhost`, is kept as a host-only cookie, as
+  RFC 6265 §5.3 says. It was dropped. ([#1471])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1335,3 +1338,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
+[#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
