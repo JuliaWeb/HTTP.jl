@@ -93,6 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/1 parser accepts only `HTTP/` DIGIT `.` DIGIT as a version, rejects
+  control bytes other than HTAB in chunk extensions, and rejects a bare LF in
+  lines read from a generic `IO` (as the connection reader already did).
+  Before, forms such as `HTTP/1. 1` or `HTTP/+1.1`, a bare CR in a chunk
+  extension, and a header line containing a bare LF were accepted. ([#1468])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1263,3 +1268,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1443]: https://github.com/JuliaWeb/HTTP.jl/issues/1443
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
+[#1468]: https://github.com/JuliaWeb/HTTP.jl/issues/1468
