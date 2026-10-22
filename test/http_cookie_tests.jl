@@ -591,3 +591,25 @@ end
     @test isempty(HT.getcookies!(jar, "https", "b.co.uk", "/"))
     @test isempty(HT.getcookies!(jar, "https", "a.co.uk", "/"))
 end
+
+@testset "HTTP client matches cookie paths without the request query" begin
+    seen = Dict{String,String}()
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        seen[req.target] = HT.header(req, "Cookie", "")
+        req.target == "/a" && return HT.Response(200, ["Set-Cookie" => "scoped=1; Path=/a"], "")
+        startswith(req.target, "/d/e") && return HT.Response(200, ["Set-Cookie" => "default=1"], "")
+        return HT.Response(200)
+    end
+    try
+        url = "http://127.0.0.1:$(HT.port(server))"
+        jar = HT.CookieJar()
+        for target in ("/a", "/a?x=1", "/d/e?next=/f/g", "/d/x")
+            HT.get(url * target; cookiejar = jar, retry = false)
+        end
+        @test seen["/a?x=1"] == "scoped=1"
+        @test seen["/d/x"] == "default=1"
+        @test only(c.path for c in HT.getcookies!(jar, "http", "127.0.0.1", "/d/x")) == "/d"
+    finally
+        HT.forceclose(server)
+    end
+end

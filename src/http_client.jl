@@ -408,6 +408,21 @@ function Client(;
     )
 end
 
+# A summary without the default credentials, query values, or cookies.
+function Base.show(io::IO, client::Client)
+    print(io, "HTTP.Client(", isopen(client) ? "open" : "closed",
+        ", max_redirects=", client.max_redirects,
+        ", prefer_http2=", client.prefer_http2,
+        ", cookiejar=", client.cookiejar === nothing ? "nothing" : "CookieJar",
+        ", default_headers=", length(client.default_headers),
+        ", default_query=", client.default_query === nothing ? 0 : length(client.default_query::Vector{Pair{String,String}}),
+        ", default_basicauth=", client.default_basicauth === nothing ? "nothing" : "set",
+        ", transport=")
+    show(io, client.transport)
+    print(io, ")")
+    return nothing
+end
+
 # Normalize default_query input into a Vector{Pair{String,String}} stored on the Client.
 function _normalize_default_query(q)::Union{Nothing,Vector{Pair{String,String}}}
     q === nothing && return nothing
@@ -587,13 +602,14 @@ function _acquire_h2_conn!(
                 proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
                 tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
                 try
-                    connect_h2!(
+                    _connect_h2_from_tcp!(
                         tcp,
-                        address;
-                        secure=secure,
-                        tls_config=tls_cfg,
-                        connect_deadline_ns=connect_deadline_ns,
-                        http2_settings=client.http2_settings,
+                        address,
+                        secure,
+                        tls_cfg,
+                        connect_deadline_ns,
+                        client.http2_settings,
+                        connect_host_resolver.deadline_ns,
                     )
                 catch
                     @try_ignore begin
@@ -667,14 +683,15 @@ function _cache_h1_origin!(client::Client, key::String)::Nothing
     return nothing
 end
 
+# Cookies match against the request path without its query (RFC 6265 §5.1.4).
 function _host_path_from_request(address::String, request::Request)::Tuple{String,String}
     host, _ = HostResolvers.split_host_port(address)
-    target = request.target
-    if isempty(target)
+    path, _ = _split_request_target(request.target)
+    if isempty(path)
         return host, "/"
     end
-    startswith(target, "/") && return host, target
-    return host, "/$target"
+    startswith(path, "/") && return host, path
+    return host, "/$path"
 end
 
 function _normalize_cookies_input(cookies)
@@ -848,6 +865,9 @@ function _do_incoming!(
     for redirect_count in 0:redirect_policy.max_redirects
         while true
             send_request, request_url, proxy_plan, use_h2, host, path = try
+                # A request line that cannot be sent fails here, before a
+                # connection is made, and is not retried.
+                _validate_request_start_line!(current_request.method, current_request.target)
                 next_request = _copy_request_for_send(current_request, retry_attempt == 1)
                 next_url = _request_url(current_secure, current_address, current_request.target)
                 next_proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
@@ -2262,7 +2282,7 @@ function request(
         final_error = wrapped::Exception
         wrapped === err ? rethrow() : throw(wrapped)
     finally
-        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? String(url) : request_url::String))
+        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? _url_for_message(String(url)) : request_url::String))
     end
 end
 
@@ -2297,7 +2317,8 @@ Request and response:
   URL's query string.
 - `basicauth`: credentials as `user => password` or `(user, password)`. An
   `Authorization` header takes precedence; credentials in the URL are used when
-  neither is given.
+  neither is given. In a URL, percent-encode characters such as `/`, `?`, `#`,
+  space, and `\`, as in `https://user:p%2Fss@host/`.
 - `status_exception = true`: throw `StatusError` for a failing response.
 - `response_stream`: an `IO` or byte vector that receives the body instead of
   `response.body`, which is then `nothing` for an `IO` and the filled vector or
@@ -2330,7 +2351,9 @@ Redirects:
   `HEAD` and `QUERY` are kept. A 303 always uses `GET`, and 307 and 308 keep the
   method.
 - `forwardheaders = true`: send the request's headers again when following a
-  redirect. Credentials are dropped when the redirect goes to another origin.
+  redirect. `Authorization`, `Cookie`, and `Proxy-Authorization` are dropped when
+  the redirect goes to another origin; other headers, such as `X-Api-Key`, are
+  sent there too.
 
 Retries (see the client guide for the default rules):
 - `retry = true`: retry failed attempts. An idempotent request that fails on a
