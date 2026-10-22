@@ -2910,3 +2910,30 @@ end
         wait(server)
     end
 end
+
+@testset "HTTP/2 server rejects request header bytes that are not UTF-8" begin
+    fields(authority, name, value) = HT.HeaderField[
+        HT.HeaderField(":method", "GET", false),
+        HT.HeaderField(":scheme", "http", false),
+        HT.HeaderField(":authority", authority, false),
+        HT.HeaderField(":path", "/", false),
+        HT.HeaderField(name, value, false),
+    ]
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(fields("example.test", "x-a\xffb", "v"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(fields("example.test", "te", "trailers\xff"))
+    server = HT.serve!(_ -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        # The connection ends with GOAWAY(PROTOCOL_ERROR), not a silent close.
+        conn, reader = _open_raw_h2_server_conn(address)
+        block = HT.encode_header_block(HT.Encoder(), fields(address, "x-a\xffb", "v"))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, block))
+        frame = HT.read_frame!(reader)
+        @test frame isa HT.GoAwayFrame && (frame::HT.GoAwayFrame).error_code == UInt32(0x1)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end

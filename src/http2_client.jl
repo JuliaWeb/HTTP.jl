@@ -1726,7 +1726,7 @@ function _request_headers_for_h2(address::String, request::Request, secure::Bool
         for value in values
             normalized = _strict_h2_outgoing_header_value(key, value)
             if lowered == "te"
-                lowercase(_trim_http_ows(normalized)) == "trailers" || continue
+                _ascii_lowercase_string(_trim_http_ows(normalized)) == "trailers" || continue
                 push!(fields, HeaderField("te", "trailers", false))
                 continue
             end
@@ -1790,7 +1790,7 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
     for header in headers
         name = header.name
         value = header.value
-        name == _fast_lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
+        name == _ascii_lowercase_string(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
         normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
         if startswith(name, ':')
@@ -1809,6 +1809,7 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
             continue
         end
         saw_regular = true
+        _valid_header_field_name(name) || throw(ProtocolError("invalid HTTP/2 header field name: $(repr(name))"))
         if _is_h2_connection_specific_header(name) || name == "transfer-encoding" || name == "te"
             throw(ProtocolError("forbidden HTTP/2 response header $(repr(name))"))
         end
@@ -1823,7 +1824,7 @@ function _decode_h2_trailer_headers(headers::Vector{HeaderField})::Headers
     for header in headers
         name = header.name
         value = header.value
-        name == _fast_lowercase(name) || throw(ProtocolError("HTTP/2 trailer field names must be lowercase"))
+        name == _ascii_lowercase_string(name) || throw(ProtocolError("HTTP/2 trailer field names must be lowercase"))
         startswith(name, ':') && throw(ProtocolError("HTTP/2 trailers must not include pseudo-headers"))
         _valid_trailer_header_name(name) || throw(ProtocolError("invalid HTTP/2 trailer header $(repr(name))"))
         normalized = _normalize_strict_header_field_value(value)

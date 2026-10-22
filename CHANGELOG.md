@@ -138,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `serve!` sends a response body of unknown length to an HTTP/1.0 client
   without chunking and closes the connection after it; before, the body was
   chunked, which HTTP/1.0 clients cannot read. ([#1485])
+- An HTTP/2 request header name or `TE` value with bytes that are not UTF-8 gets
+  GOAWAY with PROTOCOL_ERROR instead of closing the connection without one, and
+  the HTTP/2 client rejects response header names that are not tokens. ([#1495])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -1487,3 +1490,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1491]: https://github.com/JuliaWeb/HTTP.jl/issues/1491
 [#1492]: https://github.com/JuliaWeb/HTTP.jl/issues/1492
 [#1493]: https://github.com/JuliaWeb/HTTP.jl/issues/1493
+[#1495]: https://github.com/JuliaWeb/HTTP.jl/issues/1495
