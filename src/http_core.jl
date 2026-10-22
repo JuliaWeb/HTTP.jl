@@ -243,6 +243,14 @@ end
     return tls_err.op == "read" && tls_err.cause isa IOPoll.DeadlineExceededError
 end
 
+# A read timeout as above, or a TLS write deadline reported the same way.
+@inline function _is_io_timeout(err)::Bool
+    _is_read_timeout(err) && return true
+    err isa TLS.TLSError || return false
+    tls_err = err::TLS.TLSError
+    return tls_err.op == "write" && tls_err.cause isa IOPoll.DeadlineExceededError
+end
+
 """
     _is_address_in_use_systemerror(err)
 
@@ -270,6 +278,15 @@ end
     addr = err.addr
     addr === nothing && return ""
     return string(addr)
+end
+
+# A TLS failure while a client connection is set up. A handshake cut off by
+# the setup deadline is a connect timeout, as for a TCP dial, unless the
+# request's own deadline was the earlier one.
+function _tls_setup_error(err::TLS.TLSError, handshake_timeout_ns::Int64, connect_deadline_ns::Int64, request_deadline_ns::Int64)::Exception
+    (err.op == "handshake" && err.cause isa IOPoll.DeadlineExceededError) || return TLSHandshakeError(err)
+    request_deadline_ns != 0 && request_deadline_ns <= connect_deadline_ns && return err.cause::IOPoll.DeadlineExceededError
+    return TLS.TLSHandshakeTimeoutError(handshake_timeout_ns)
 end
 
 function _wrap_op_error(err::HostResolvers.OpError, operation::AbstractString, timeout_ns::Int64, elapsed_ns::Int64=Int64(0))
@@ -319,7 +336,7 @@ _wrap_client_transport_error(err, operation::AbstractString="request", timeout_n
         return TimeoutError(String("connect"), Int64(timeout_ns), Int64(elapsed_ns))
     end
     # The transport passes TLS failures up as `TLSTransportError`.
-    if _is_read_timeout(err isa TLSTransportError ? (err::TLSTransportError).cause : err)
+    if _is_io_timeout(err isa TLSTransportError ? (err::TLSTransportError).cause : err)
         return TimeoutError(String(operation), Int64(timeout_ns), Int64(elapsed_ns))
     end
     if err isa HostResolvers.OpError
