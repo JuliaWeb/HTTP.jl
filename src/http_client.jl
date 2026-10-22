@@ -587,13 +587,14 @@ function _acquire_h2_conn!(
                 proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
                 tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
                 try
-                    connect_h2!(
+                    _connect_h2_from_tcp!(
                         tcp,
-                        address;
-                        secure=secure,
-                        tls_config=tls_cfg,
-                        connect_deadline_ns=connect_deadline_ns,
-                        http2_settings=client.http2_settings,
+                        address,
+                        secure,
+                        tls_cfg,
+                        connect_deadline_ns,
+                        client.http2_settings,
+                        connect_host_resolver.deadline_ns,
                     )
                 catch
                     @try_ignore begin
@@ -2331,7 +2332,9 @@ Redirects:
   `HEAD` and `QUERY` are kept. A 303 always uses `GET`, and 307 and 308 keep the
   method.
 - `forwardheaders = true`: send the request's headers again when following a
-  redirect. Credentials are dropped when the redirect goes to another origin.
+  redirect. `Authorization`, `Cookie`, and `Proxy-Authorization` are dropped when
+  the redirect goes to another origin; other headers, such as `X-Api-Key`, are
+  sent there too.
 
 Retries (see the client guide for the default rules):
 - `retry = true`: retry failed attempts. An idempotent request that fails on a
