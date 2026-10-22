@@ -155,6 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first SETTINGS frame. Push defaults to on and the client fails the connection
   on `PUSH_PROMISE`, so a server that pushed a resource failed every request on
   that connection. ([#1467])
+- The HPACK decoder rejects index 0 and integers above 2^32 - 1 as decoding
+  errors. A header block with either raised `BoundsError` or `ArgumentError`,
+  and the HTTP/2 server's connection task died without sending GOAWAY. ([#1475])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1376,5 +1379,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
 [#1474]: https://github.com/JuliaWeb/HTTP.jl/issues/1474
+[#1475]: https://github.com/JuliaWeb/HTTP.jl/issues/1475
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
