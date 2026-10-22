@@ -188,6 +188,10 @@ mutable struct H2Connection
     # the fragments here until END_HEADERS, decode once, then discard.
     # Touched only from the single-threaded read loop.
     orphan_header_block::Vector{UInt8}
+    # Bytes the open header block has cost, counting each HEADERS/CONTINUATION
+    # frame's 9-byte header with its fragment, so empty CONTINUATION frames also
+    # reach `max_header_block_bytes`. Touched only from the read loop.
+    header_block_bytes::Int
     # Concurrent acquirers that have committed to opening a stream on this
     # connection but haven't reached `_register_stream!` yet. Used by
     # `_h2_conn_available` so a second caller doesn't decide a peer-capped
@@ -1122,6 +1126,15 @@ function _consume_orphan_header_fragment!(
     return nothing
 end
 
+# The peer cannot be allowed to keep a header block open without bound, even
+# with empty fragments: each frame costs its 9-byte header plus its fragment.
+function _charge_h2_header_block_frame!(conn::H2Connection, fragment::Vector{UInt8})::Nothing
+    conn.header_block_bytes += 9 + length(fragment)
+    conn.header_block_bytes > conn.max_header_block_bytes &&
+        throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
+    return nothing
+end
+
 function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     # Frame-local validation already happened in `read_frame!`; this function is
     # responsible for connection- and stream-level state transitions.
@@ -1150,7 +1163,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         return nothing
     elseif frame isa GoAwayFrame
         goaway = frame::GoAwayFrame
-        goaway.error_code == UInt32(0) || throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
+        # Whatever the error code, streams above `last_stream_id` were not
+        # processed and can be retried, and the peer may still answer the
+        # others before it closes the connection (RFC 9113 §6.8).
         to_fail = Pair{UInt32,H2StreamState}[]
         lock(conn.state_lock)
         try
@@ -1170,8 +1185,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         finally
             unlock(conn.state_lock)
         end
+        reason = goaway.error_code == UInt32(0) ? "" : " ($(_h2_error_code_name(goaway.error_code)))"
         for failed in to_fail
-            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY", goaway.last_stream_id))
+            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY$reason", goaway.last_stream_id))
         end
         _close_h2_if_drained!(conn)
         return nothing
@@ -1213,6 +1229,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         return nothing
     elseif frame isa HeadersFrame
         headers = frame::HeadersFrame
+        # A HEADERS frame opens a header block.
+        conn.header_block_bytes = 0
+        _charge_h2_header_block_frame!(conn, headers.header_block_fragment)
         state = _stream_state(conn, headers.stream_id)
         if state === nothing
             # Unknown or already-closed stream (e.g. trailers racing
@@ -1243,6 +1262,7 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         throw(ProtocolError("HTTP/2 server push is unsupported"))
     elseif frame isa ContinuationFrame
         cont = frame::ContinuationFrame
+        _charge_h2_header_block_frame!(conn, cont.header_block_fragment)
         open_state = conn.open_header_stream
         if open_state !== nothing
             # Continuation of a header block that began on a live stream. Route
@@ -1410,7 +1430,8 @@ function _make_tls_config_for_h2(
 end
 
 """
-    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0) -> H2Connection
+    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0,
+                          http2_settings=HTTP2Settings(), request_deadline_ns=0) -> H2Connection
 
 Open and initialize an HTTP/2 client connection on an existing TCP socket,
 including client preface, SETTINGS exchange, optional TLS handshake, and ALPN
@@ -1418,7 +1439,9 @@ verification.
 
 Returns a ready-to-use `H2Connection`. Throws `H2NegotiationError` for ALPN
 failures, `ProtocolError` for invalid peer behavior during setup, and any TCP,
-TLS, or I/O exceptions from the underlying transport.
+TLS, or I/O exceptions from the underlying transport. A TLS handshake cut off
+by `connect_deadline_ns` throws `TLSHandshakeTimeoutError`, or
+`DeadlineExceededError` when `request_deadline_ns` was the earlier deadline.
 """
 function _connect_h2_from_tcp!(
     tcp::TCP.Conn,
@@ -1427,6 +1450,7 @@ function _connect_h2_from_tcp!(
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    request_deadline_ns::Int64=Int64(0),
 )::H2Connection
     tls_conn = nothing
     try
@@ -1441,7 +1465,8 @@ function _connect_h2_from_tcp!(
             catch err
                 # TLS.client can fail while it initializes client state, before
                 # handshake! starts. Both operations are connection setup.
-                err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+                handshake_timeout_ns = tls_config === nothing ? Int64(0) : (tls_config::TLS.Config).handshake_timeout_ns
+                err isa TLS.TLSError && throw(_tls_setup_error(err::TLS.TLSError, handshake_timeout_ns, connect_deadline_ns, request_deadline_ns))
                 rethrow()
             end
             stream_reader = _ConnReader(tls_conn::TLS.Conn)
@@ -1484,13 +1509,16 @@ function _connect_h2_from_tcp!(
             nothing,
             UInt8[],
             0,
+            0,
             Int64(time_ns()),
             UInt32(0),
             false,
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)
-        initial_settings = Pair{UInt16,UInt32}[]
+        # Push defaults to enabled (RFC 9113 §6.5.2), and this client fails the
+        # connection on PUSH_PROMISE, so it turns push off.
+        initial_settings = Pair{UInt16,UInt32}[_H2_SETTINGS_ENABLE_PUSH => UInt32(0)]
         if http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
             push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(http2_settings.initial_window_size))
         end
@@ -1549,7 +1577,7 @@ function connect_h2!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings, host_resolver.deadline_ns)
 end
 
 """
