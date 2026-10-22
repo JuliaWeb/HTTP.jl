@@ -2616,3 +2616,29 @@ end
         wait(server)
     end
 end
+
+@testset "HTTP server reads what the client still sends before closing after an error response" begin
+    listener = NC.listen(NC.loopback_addr(0); backlog = 16)
+    try
+        port = Int((NC.addr(listener)::NC.SocketAddrV4).port)
+        accepted = Task(() -> NC.accept(listener))
+        schedule(accepted)
+        client = NC.connect(NC.loopback_addr(port))
+        server_conn = fetch(accepted)::NC.Conn
+        try
+            # Request bytes the server never read, then the client's half-close.
+            write(client, Vector{UInt8}(codeunits("unread request body")))
+            NC.closewrite(client)
+            HT._try_write_server_error!(server_conn, nothing, 413)
+            # The server read and dropped them, up to the client's close, so closing
+            # it now sends no reset that could drop the 413 before the client reads it.
+            @test readbytes!(server_conn, Vector{UInt8}(undef, 64); all = false) == 0
+            @test startswith(String(read(client)), "HTTP/1.1 413 ")
+        finally
+            HT.@try_ignore NC.close(client)
+            HT.@try_ignore NC.close(server_conn)
+        end
+    finally
+        HT.@try_ignore NC.close(listener)
+    end
+end

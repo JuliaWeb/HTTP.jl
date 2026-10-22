@@ -1185,6 +1185,26 @@ function _try_write_server_error!(conn::Union{TCP.Conn,TLS.Conn}, request::Union
     @try_ignore begin
         _close_server_write!(conn)
     end
+    _drain_before_close!(conn)
+    return nothing
+end
+
+# Closing a socket that still holds unread input makes the kernel reset the
+# connection, and the reset can make the peer drop a response it has received
+# but not yet read (Windows does). So before a close that the peer may not
+# expect, after the half-close, read and discard what the peer still sends until
+# it closes (RFC 9112 §9.6), for at most 500 ms and 1 MiB.
+function _drain_before_close!(conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    @try_ignore begin
+        _set_read_deadline!(conn, _deadline_after(Int64(500_000_000)))
+        buf = Vector{UInt8}(undef, 16 * 1024)
+        drained = 0
+        while drained < 1024 * 1024
+            n = conn isa TLS.Conn ? readbytes!(conn::TLS.Conn, buf; all=false) : readbytes!(conn::TCP.Conn, buf; all=false)
+            n == 0 && break
+            drained += n
+        end
+    end
     return nothing
 end
 
@@ -1269,8 +1289,16 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     if !(@atomic :acquire stream.write_closed)
                         closewrite(stream)
                     end
+                    # `closeread` gives up on a body the handler left unread and
+                    # marks the response to close the connection.
+                    body_unread = !_stream_request_body_fully_consumed(stream)
                     closeread(stream)
                     _clear_deadlines!(server, tracked.conn)
+                    if body_unread
+                        @try_ignore _close_server_write!(tracked.conn)
+                        _drain_before_close!(tracked.conn)
+                        return nothing
+                    end
                     _server_shutting_down(server) && return nothing
                     if _request_wants_close(request) || _response_wants_close(stream.response)
                         return nothing
