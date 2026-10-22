@@ -1189,7 +1189,8 @@ end
         )
     end
     try
-        for (server, target) in ((request_server, "/protocol"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
+        # The query stays out of the record: it can carry credentials.
+        for (server, target) in ((request_server, "/protocol?token=SECRET"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
             raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
             @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
         end
