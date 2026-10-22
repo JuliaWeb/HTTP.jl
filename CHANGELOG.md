@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- An HTTP/2 server compiled with `juliac --trim=safe` compiles again when its
+  handler returns three response body types, as Servo's does. The 500 response
+  for an unsendable response was stored with the handler's response, which
+  widened it to abstract `Response` and made the response write a dynamic
+  call. ([#1500])
+
 ## [v2.12.0] - 2026-10-22
 
 ### Added
@@ -1532,3 +1539,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1495]: https://github.com/JuliaWeb/HTTP.jl/issues/1495
 [#1496]: https://github.com/JuliaWeb/HTTP.jl/issues/1496
 [#1498]: https://github.com/JuliaWeb/HTTP.jl/issues/1498
+[#1500]: https://github.com/JuliaWeb/HTTP.jl/issues/1500
