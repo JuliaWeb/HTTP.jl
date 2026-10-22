@@ -109,6 +109,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saw. `parse_multipart_form` and `parse_multipart` read the boundary
   parameter case-insensitively, in any position, and quoted, as .NET's
   `HttpClient` sends it; they matched only `multipart/...; boundary=X`. ([#1444])
+- The HTTP and WebSocket servers keep accepting connections after an OS error
+  from `accept`, such as running out of file descriptors (`EMFILE`). The error
+  is logged and accept is retried after a wait that grows from 5 ms to 1 s.
+  Previously the accept loop ended, with nothing logged, and the server
+  stopped accepting connections for good. ([#1443])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1251,4 +1256,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
+[#1443]: https://github.com/JuliaWeb/HTTP.jl/issues/1443
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
