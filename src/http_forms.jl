@@ -523,9 +523,10 @@ function parse_multipart(
     parsed = _multipart_subtype_and_boundary(content_type_header)
     parsed === nothing && return nothing
     subtype, boundary_delimiter = parsed
-    type = Symbol(replace(subtype, '-' => ""))
-    required_type !== nothing && required_type != type && return nothing
-    return parse_multipart_body(body, boundary_delimiter; require_contentdisposition=(type == :formdata), max_parts=max_parts)
+    # Compare as strings: a Symbol made from the sender's subtype is never freed.
+    type = replace(subtype, '-' => "")
+    required_type !== nothing && String(required_type) != type && return nothing
+    return parse_multipart_body(body, boundary_delimiter; require_contentdisposition=(type == "formdata"), max_parts=max_parts)
 end
 
 function parse_multipart(
