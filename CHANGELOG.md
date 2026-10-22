@@ -55,6 +55,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   WINDOW_UPDATE frames already buffered are parsed in place. A 1 MiB upload
   made about 2,800 allocations in client and server together and now makes
   about 1,160. The bytes sent are unchanged. ([#1487])
+- The multipart parsers (`parse_multipart_form`, `parse_multipart`,
+  `parse_multipart_mixed`) take `max_parts`, 1000 by default as in Go's
+  `mime/multipart`, and throw for a body with more parts; `max_parts = 0`
+  removes the limit. Without a limit a 50 MB body of tiny parts allocated
+  820 MB while parsing. ([#1453])
+- `HTTP.Headers` keeps each header name as the caller spelled it and matches
+  names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
+  rewrote every name into `Content-Type` form on insertion, so a request header
+  such as `providerId` went out as `Providerid`. That breaks servers that treat
+  header names as case-sensitive data, such as Azure Service Bus custom
+  message properties. HTTP/1 now sends names as spelled, HTTP/2 still sends
+  them in lowercase, and headers received from the network still use
+  `Content-Type` form. `canonicalize_headers=true` works again: it sends
+  request header names in `Content-Type` form, and no longer logs a
+  "has no effect" warning. ([#1377])
+- Raised the default HTTP/1 per-line limit (request/status lines and single
+  header lines) from 8 KiB to 64 KiB, matching Python's `http.client`. Real
+  origins send single header lines longer than 8 KiB — a 9,695-byte
+  `Content-Security-Policy` was reported — and HTTP.jl failed such responses
+  with `ProtocolError: HTTP/1 line exceeds configured max_line_bytes` while
+  curl and Python accepted them. The 1 MiB header-block limit is unchanged and
+  still bounds memory; the server-side request parser shares the new per-line
+  default. ([#1362])
+- After `HTTP.startwrite(stream)`, a fixed-length HTTP/1 stream response is
+  sent as it is written once its body passes 4 KiB, so a handler can stream a
+  large `Content-Length` body instead of holding all of it until `closewrite`.
+  A smaller body still goes out in one write with the head. A response started
+  by `write` alone is still held whole, so a handler failure can still get an
+  error response. ([#1384])
+- `HTTP.streamhandler` streams a response body that is not already in memory,
+  such as a `fileserver` file, as `serve!` does, instead of holding all of it
+  until the handler finishes. ([#1384])
 
 ### Fixed
 - The default `User-Agent` carries the version in Project.toml. The version
@@ -1504,6 +1536,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1453]: https://github.com/JuliaWeb/HTTP.jl/issues/1453
 [#1454]: https://github.com/JuliaWeb/HTTP.jl/issues/1454
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456

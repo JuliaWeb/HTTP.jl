@@ -442,3 +442,25 @@ end
     parts = HT.parse_multipart_form("multipart/form-data; boundary=b", strided)
     @test length(parts) == 1 && parts[1].name == "n" && String(read(parts[1])) == "v"
 end
+
+@testset "multipart parsers cap the number of parts" begin
+    function many_parts(n)
+        io = IOBuffer()
+        for _ in 1:n
+            write(io, "--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n")
+        end
+        write(io, "--b--\r\n")
+        return take!(io)
+    end
+    ct = "multipart/form-data; boundary=b"
+    @test length(HT.parse_multipart_form(ct, many_parts(1000))) == 1000
+    @test_throws ErrorException HT.parse_multipart_form(ct, many_parts(1001))
+    @test length(HT.parse_multipart_form(ct, many_parts(1001); max_parts = 0)) == 1001
+    @test length(HT.parse_multipart_form(ct, many_parts(2); max_parts = 2)) == 2
+    @test_throws ErrorException HT.parse_multipart_form(ct, many_parts(3); max_parts = 2)
+    @test_throws ErrorException HT.parse_multipart(ct, many_parts(3), :formdata; max_parts = 2)
+    @test_throws ErrorException HT.parse_multipart_mixed("multipart/mixed; boundary=b", many_parts(3); max_parts = 2)
+    request = HT.Request("POST", "/"; headers = ["Content-Type" => ct], body = many_parts(3))
+    @test_throws ErrorException HT.parse_multipart_form(request; max_parts = 2)
+    @test length(HT.parse_multipart_form(request; max_parts = 3)) == 3
+end
