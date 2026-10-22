@@ -3,9 +3,11 @@ on:
   pull_request:
     branches:
       - master
+      - release-1
   push:
     branches:
       - master
+      - release-1
     tags: '*'
 defaults:
   run:
