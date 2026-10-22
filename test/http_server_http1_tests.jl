@@ -1215,6 +1215,36 @@ end
     @test records[1].kwargs[:peer] isa Reseau.TCP.SocketAddr
 end
 
+@testset "HTTP server answers a response it cannot send with 500 and logs it" begin
+    # The head is built before anything is written, so an invalid response gets
+    # 500; a body that fails after the head is out is left unfinished. Both are
+    # logged as handler errors.
+    logger = Test.TestLogger()
+    invalid = [
+        "/te" => () -> HT.Response(200; headers = ["Transfer-Encoding" => "gzip"], body = "x"),
+        "/value" => () -> HT.Response(200; headers = ["X-A" => "a\0b"], body = "x"),
+        "/status" => () -> HT.Response(1000; body = "x"),
+    ]
+    server = Logging.with_logger(logger) do
+        HT.serve!("127.0.0.1", 0; listenany = true) do request
+            request.target == "/body" && return HT.Response(200, HT.CallbackBody(dst -> error("body failed"), () -> nothing))
+            return Dict(invalid)[request.target]()
+        end
+    end
+    try
+        for (target, _) in invalid
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        end
+        raw = _raw_http_request(HT.port(server), "GET /body HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test raw == "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+    finally
+        close(server)
+    end
+    records = filter(record -> record.message == "server handler error", logger.logs)
+    @test map(record -> record.kwargs[:target], records) == ["/te", "/value", "/status", "/body"]
+end
+
 @testset "HTTP server idle timeout closes keep-alive connections" begin
     server = HT.Server(
         address = "127.0.0.1:0",

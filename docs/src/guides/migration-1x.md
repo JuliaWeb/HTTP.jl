@@ -148,6 +148,11 @@ client = HTTP.Client(transport = HTTP.Transport(tls_config = Reseau.TLS.Config(c
 `require_ssl_verification = false` still turns off certificate checks for one
 call.
 
+HTTP.jl 2 does not read the `JULIA_SSL_NO_VERIFY_HOSTS` and
+`JULIA_NO_VERIFY_HOSTS` environment variables: hosts listed there are verified
+like any other. Pass `require_ssl_verification = false`, or give their client a
+`Transport` with `Reseau.TLS.Config(verify_peer = false)`.
+
 ## Retries
 
 The `retry_delays` and `retry_check` keywords are ignored. A `retry_if`
