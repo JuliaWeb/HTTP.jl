@@ -984,7 +984,9 @@ end
 
 Read one HTTP/1 request head from `io` and return it as a `Request` whose body
 reads the rest of the request from `io`. `max_line_bytes` limits each line and
-`max_header_bytes` the whole head. Throws [`ParseError`](@ref) or
+`max_header_bytes` the whole head. For an absolute-form target, such as
+`http://example.com/path`, `request.host` is the target's authority rather than
+the `Host` header (RFC 9112 §3.2.2). Throws [`ParseError`](@ref) or
 [`ProtocolError`](@ref) for an invalid request.
 """
 function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES, max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES)
@@ -1002,6 +1004,11 @@ function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BY
     chunked && removeheader(headers, "Content-Length")
     content_length = chunked ? Int64(-1) : content_length
     host = _validate_request_host!(headers, method, proto_major, proto_minor)
+    # A server uses the authority of an absolute-form target, not the Host
+    # header (RFC 9112 §3.2.2).
+    if method != "CONNECT" && target != "*" && !startswith(target, "/")
+        host = _parse_http_url(target).host_header
+    end
     close = _should_close_connection(headers, proto_major, proto_minor)
     if chunked
         body = ChunkedBody(io; max_line_bytes=Int(max_line_bytes), max_header_bytes=Int(max_header_bytes))

@@ -88,6 +88,17 @@ end
     @test take!(partial_io) == collect(codeunits("cdef"))
 end
 
+@testset "HTTP/1 request host comes from an absolute-form target" begin
+    # RFC 9112 §3.2.2: the target's authority wins over the Host header.
+    absolute = HT.read_request(IOBuffer("GET http://good.example:8080/p?q HTTP/1.1\r\nHost: other.example\r\n\r\n"))
+    @test absolute.host == "good.example:8080"
+    @test absolute.target == "http://good.example:8080/p?q"
+    @test HT.header(absolute.headers, "Host") == "other.example"
+    @test HT.read_request(IOBuffer("GET http://good.example/ HTTP/1.0\r\n\r\n")).host == "good.example"
+    @test HT.read_request(IOBuffer("GET /p HTTP/1.1\r\nHost: other.example\r\n\r\n")).host == "other.example"
+    @test HT.read_request(IOBuffer("OPTIONS * HTTP/1.1\r\nHost: other.example\r\n\r\n")).host == "other.example"
+end
+
 @testset "HTTP/1 request parse combines cookie lines with semicolons" begin
     raw = "GET / HTTP/1.1\r\nHost: example.com\r\nCookie: a=1\r\nX-Test: one\r\nCookie: b=2\r\nCookie: c=3\r\n\r\n"
     req = HT.read_request(IOBuffer(codeunits(raw)))
