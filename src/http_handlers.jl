@@ -543,8 +543,8 @@ function (middleware::_HandlerTimeoutMiddleware)(req::Request)
     now_ns = Int64(time_ns())
     deadline_ns = middleware.timeout_ns > typemax(Int64) - now_ns ? typemax(Int64) : now_ns + middleware.timeout_ns
     # Wait on a poller timer that fires at the deadline; the handler task
-    # re-arms it for now when it finishes. The superseded deadline entry stays
-    # in the poller's timer heap until the deadline passes.
+    # re-arms it for now when it finishes. The superseded deadline entry can
+    # stay in the poller's timer heap until that deadline.
     timer = IOPoll.TimerState(deadline_ns, Int64(0))
     armed = IOPoll.schedule_timer!(timer, deadline_ns)
     @_spawn_interactive begin
