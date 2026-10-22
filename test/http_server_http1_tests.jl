@@ -1779,6 +1779,41 @@ end
     end
 end
 
+@testset "HTTP stream responses frame the body one way" begin
+    # A fixed-length response drops a Transfer-Encoding the handler set, and an
+    # HTTP/1.0 exchange is never chunked.
+    function stream_handler(stream)
+        request = HT.startread(stream)
+        if request.target == "/fixed"
+            HT.setheader(stream, "Transfer-Encoding" => "gzip")
+            HT.setheader(stream, "Content-Length" => "1")
+        elseif request.target == "/chunked"
+            HT.setheader(stream, "Transfer-Encoding" => "chunked")
+        end
+        write(stream, "x")
+        return nothing
+    end
+    stream_server = HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true)
+    request_handler(request) = request.target == "/fixed" ?
+        HT.Response(200; headers = ["Transfer-Encoding" => "gzip"], body = "x") :
+        HT.Response(200, HT.CallbackBody(let sent = Ref(false)
+            dst -> sent[] ? 0 : (sent[] = true; dst[1] = UInt8('x'); 1)
+        end, () -> nothing))
+    adapter_server = HT.listen!(HT.streamhandler(request_handler), "127.0.0.1", 0; listenany = true)
+    try
+        for server in (stream_server, adapter_server)
+            fixed = _raw_http_request(HT.port(server), "GET /fixed HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            @test fixed == "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx"
+            old_client = _raw_http_request(HT.port(server), "GET /chunked HTTP/1.0\r\n\r\n")
+            @test !occursin("Transfer-Encoding", old_client)
+            @test endswith(old_client, "\r\n\r\nx")
+        end
+    finally
+        HT.forceclose(stream_server)
+        HT.forceclose(adapter_server)
+    end
+end
+
 @testset "HTTP stream byte I/O supports generic AbstractStrings and Chars" begin
     # Strings are written via unsafe_write; generic AbstractStrings and Chars
     # fall back to Base's per-byte path, which requires write(io, ::UInt8).
