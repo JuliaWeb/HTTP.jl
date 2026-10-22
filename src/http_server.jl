@@ -952,6 +952,23 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
            _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))
 end
 
+# `serve!` reads an HTTP/1.1 request body before its handler runs, so it answers
+# `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose Content-Length
+# is over `max_body_bytes` gets 413 from `_buffer_server_request` instead.
+function _write_continue_before_buffering!(conn::Union{TCP.Conn,TLS.Conn}, request::Request, max_body_bytes::Int64)::Nothing
+    _request_expects_continue(request) || return nothing
+    max_body_bytes > 0 && request.content_length > max_body_bytes && return nothing
+    response = Response(
+        100;
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        content_length=0,
+        request=request,
+    )
+    _write_all_response!(conn, response)
+    return nothing
+end
+
 @inline function _request_body_fully_consumed(request::Request)::Bool
     body = request.body
     body isa EmptyBody && return true
@@ -1025,13 +1042,18 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
+function _close_response_body!(response::Response)::Nothing
+    if response.body isa AbstractBody
+        @try_ignore body_close!(response.body::AbstractBody)
+    end
+    return nothing
+end
+
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, head::Bool=_is_head_request(response.request))::Nothing
     try
         _write_response!(conn, response, head)
     finally
-        if response.body isa AbstractBody
-            @try_ignore body_close!(response.body::AbstractBody)
-        end
+        _close_response_body!(response)
     end
     return nothing
 end
@@ -1060,6 +1082,13 @@ end
     return errno == Int(Base.Libc.ECONNRESET) ||
            errno == Int(Base.Libc.EPIPE) ||
            errno == Int(Base.Libc.ECONNABORTED)
+end
+
+# An error from writing to the client's connection: the client closed it or a
+# write deadline passed.
+@inline function _is_conn_write_error(err::Exception)::Bool
+    return _is_peer_close_error(err) || _is_transport_timeout(err) ||
+           err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa EOFError
 end
 
 @enum _ServerConnErrAction::UInt8 begin
@@ -1271,6 +1300,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
             else
                 handler_request = try
+                    _write_continue_before_buffering!(tracked.conn, request, server.max_body_bytes)
                     _buffer_server_request(request, server.max_body_bytes)
                 catch err
                     status = _server_error_status(err)
@@ -1291,18 +1321,30 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
                 # A handler may return one response for many requests at once: never store request state on it.
                 response_obj = response::Response
-                # A response whose streaming body was already sent cannot be
-                # serialized again. Answer 500 before any bytes go out instead
-                # of failing mid-response and dropping the connection (#1333).
-                try
-                    _check_response_body_unsent(response_obj, handler_request)
+                # Build the head before writing anything, so that a response
+                # that cannot be sent, such as one whose streaming body was
+                # already sent (#1333) or one with an invalid header, gets 500.
+                head, use_chunked, trailer_values, allows_body = try
+                    _response_head(response_obj, _is_head_request(handler_request))
                 catch err
-                    @error "server handler returned a response that cannot be sent" exception = err
+                    _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    _close_response_body!(response_obj)
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj, _is_head_request(handler_request))
+                try
+                    write(tracked.conn, head)
+                    allows_body && _write_response_body!(tracked.conn, response_obj, use_chunked, trailer_values)
+                catch err
+                    # The head may be out, so close the connection and leave the
+                    # body unfinished. An error that is not the connection's came
+                    # from the response body, such as a failing body callback.
+                    _is_conn_write_error(err::Exception) || _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    return nothing
+                finally
+                    _close_response_body!(response_obj)
+                end
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)

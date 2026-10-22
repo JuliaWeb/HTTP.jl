@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `serve!` answers a handler's response that cannot be sent with 500 and logs
+  it. Such a response has an unsupported `Transfer-Encoding`, a control
+  character in a header value, an invalid header name, reason phrase or
+  trailer, or a status code outside 100-999. Before, the connection closed with
+  no response and nothing logged. A response body that fails after the head is
+  sent is now logged as a handler error, and the body is left unfinished; before,
+  it ended the connection task silently. ([#1451])
 - The HTTP/2 client handles a `GOAWAY` with an error code, such as
   `ENHANCE_YOUR_CALM`, like one with `NO_ERROR`: streams above
   `last_stream_id` fail with the retryable `H2GoAwayError` and the others keep
@@ -122,6 +129,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   soon as it reads the frame header (RFC 6455 §5.1). Previously the frame was
   delivered to the handler first and the connection was closed after it.
   ([#1445])
+- `serve!` sends `100 Continue` before it reads a request body when the
+  request has `Expect: 100-continue`. Previously it never did, so such a client
+  waited for its own timeout (1 s for HTTP.jl and curl) before sending the
+  body. A body whose `Content-Length` is over `max_body_bytes` still gets 413
+  without the interim response. ([#1446])
+- The HTTP/2 server returns flow-control credit for every request byte it
+  drops: DATA padding, request bytes a handler leaves unread, and DATA for a
+  reset stream. That credit was lost, so a connection's receive window shrank
+  until uploads on it stalled. A handler that answered before the request body
+  ended left its stream counted against `max_concurrent_streams`, so later
+  streams were refused and `close(server)` waited forever; the stream is now
+  removed once its handler finishes. DATA beyond the advertised connection
+  window is a connection error instead of being buffered. ([#1452])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1267,4 +1287,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1443]: https://github.com/JuliaWeb/HTTP.jl/issues/1443
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
+[#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
+[#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
