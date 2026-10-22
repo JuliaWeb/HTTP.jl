@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using Logging
 
 const HT = HTTP
 const W = HTTP.WebSockets
@@ -153,6 +154,37 @@ end
     finally
         close(server)
     end
+end
+
+@testset "HTTP.WebSockets server logs handler errors and answers bad handshakes with 400" begin
+    logger = Test.TestLogger()
+    server = Logging.with_logger(logger) do
+        W.listen!("127.0.0.1", 0) do ws
+            error("handler bug")
+        end
+    end
+    address = W.server_addr(server)
+    try
+        err = try
+            W.open(ws -> W.receive(ws), "ws://$(address)/")
+            nothing
+        catch e
+            e
+        end
+        @test err isa W.WebSocketError && err.message.code == 1011
+        sock = NC.connect(ND.HostResolver(), "tcp", address)
+        try
+            write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost x\r\n\r\n")))
+            @test startswith(String(read(sock)), "HTTP/1.1 400 Bad Request\r\n")
+        finally
+            NC.close(sock)
+        end
+    finally
+        close(server)
+    end
+    records = filter(record -> record.message == "websocket server error", logger.logs)
+    @test length(records) == 1
+    @test records[1].kwargs[:exception][1] isa ErrorException
 end
 
 @testset "HTTP.WebSockets server listen! over wss" begin

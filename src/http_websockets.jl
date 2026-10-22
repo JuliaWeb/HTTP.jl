@@ -20,6 +20,7 @@ import ..IOPoll
 import ..Conn as TransportConn
 import ..BytesBody
 import ..EmptyBody
+import ..ParseError
 import ..ProtocolError
 import ..TooManyRedirectsError
 import ..Client
@@ -84,6 +85,7 @@ import ..body_close!
 import ..read_request
 import ..write_response!
 import ..write_request!
+import .._is_peer_close_error
 import .._is_transport_timeout
 import .._wrap_transport_timeout
 import ..Stream
@@ -1705,11 +1707,27 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
         _write_ws_response!(conn, response)
         response.status == 101 || return nothing
         _serve_ws_session!(server, conn, request, response)
+    catch err
+        if err isa ParseError || err isa ProtocolError
+            # A malformed handshake request gets 400 before the connection closes.
+            @try_ignore _write_ws_response!(conn, Response(400, EmptyBody(); content_length=0, close=true))
+        elseif !_ws_peer_error(err)
+            # Nothing waits on this task, so an error the handler (or a
+            # `check_origin` callback) raised is reported here.
+            @error "websocket server error" exception = (err, catch_backtrace())
+        end
     finally
         _close_ws_server_conn!(conn)
         _untrack_conn!(server, conn, task)
     end
     return nothing
+end
+
+# An error that comes from the connection rather than from server code: the peer
+# closed it, broke the protocol, or stopped responding.
+@inline function _ws_peer_error(err)::Bool
+    return err isa WebSocketError || err isa EOFError || err isa IOPoll.NetClosingError ||
+           err isa TLS.TLSError || _is_transport_timeout(err) || (err isa Exception && _is_peer_close_error(err::Exception))
 end
 
 function _mark_ws_server_listening!(server::Server, listener)::Nothing
