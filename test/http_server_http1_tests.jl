@@ -1497,8 +1497,9 @@ end
     end
 end
 
-@testset "HTTP server ordinary handlers suppress bodies for HEAD" begin
-    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+@testset "HTTP server ordinary handlers suppress bodies for HEAD" for start in (HT.serve!, (h, args...; kw...) -> HT.listen!(HT.streamhandler(h), args...; kw...))
+    # `serve!` and `streamhandler` send the same head.
+    server = start("127.0.0.1", 0; listenany = true) do request
             return HT.Response(
                 200,
                 HT.BytesBody(collect(codeunits("oops")));
