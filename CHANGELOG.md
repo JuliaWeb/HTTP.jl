@@ -97,6 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/2 server counts each HEADERS and CONTINUATION frame's 9-byte header
+  against the request header block limit (`2 * max_header_bytes`). Empty
+  CONTINUATION frames added nothing to the block, so a client could keep one
+  header block open across any number of them. ([#1479])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -1427,5 +1431,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1477]: https://github.com/JuliaWeb/HTTP.jl/issues/1477
 [#1478]: https://github.com/JuliaWeb/HTTP.jl/issues/1478
+[#1479]: https://github.com/JuliaWeb/HTTP.jl/issues/1479
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483

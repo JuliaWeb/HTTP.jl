@@ -1948,6 +1948,42 @@ end
     end
 end
 
+@testset "HTTP/2 server counts frame headers against the header block limit" begin
+    # max_header_bytes = 256 allows 512 bytes of header block. Empty CONTINUATION
+    # frames add nothing to the block itself, but each one's 9-byte frame header
+    # counts, so a block cannot run on without end.
+    server = HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true, max_header_bytes = 256)
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        fields = HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/", false),
+        ]
+        block = HT.encode_header_block(HT.Encoder(), fields)
+        # The most empty CONTINUATION frames that still fit, then one more that
+        # ends the block: on its own the request is valid.
+        fits = (512 - 9 - length(block)) ÷ 9
+        io = IOBuffer()
+        HT.write_frame!(io, HT.HeadersFrame(UInt32(1), true, false, block))
+        for _ in 1:fits
+            HT.write_frame!(io, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+        end
+        HT.write_frame!(io, HT.ContinuationFrame(UInt32(1), true, UInt8[]))
+        _write_all_h2_server_raw!(conn::NC.Conn, take!(io))
+        frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.GoAwayFrame || f isa HT.HeadersFrame)
+        @test frame isa HT.GoAwayFrame
+        frame isa HT.GoAwayFrame && @test (frame::HT.GoAwayFrame).error_code == HT._H2_ERROR_PROTOCOL
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server rejects oversized decoded request header lists" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true, max_header_bytes = 96) do request
             _ = request
