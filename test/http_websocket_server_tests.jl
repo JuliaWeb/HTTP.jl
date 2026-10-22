@@ -155,6 +155,26 @@ end
     end
 end
 
+@testset "HTTP.WebSockets server closes a connection whose unread messages pass the cap" begin
+    # The handler never receives, so the client's messages queue up until they
+    # pass four times maxframesize (4 KiB here); the server then closes with 1008.
+    release = Base.Event()
+    server = W.listen!("127.0.0.1", 0; maxframesize = 1024) do ws
+        wait(release)
+    end
+    try
+        ws = W.open("ws://$(W.server_addr(server))/")
+        for _ in 1:5
+            W.send(ws, zeros(UInt8, 1024))
+        end
+        close(ws)
+        @test ws.closebody.code == 1008
+    finally
+        notify(release)
+        close(server)
+    end
+end
+
 @testset "HTTP.WebSockets server listen! over wss" begin
     server = W.listen!(
         "127.0.0.1",

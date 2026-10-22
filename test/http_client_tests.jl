@@ -1199,6 +1199,51 @@ end
     end
 end
 
+@testset "HTTP URL authority characters" begin
+    # Each of these would dial a host other than the one a browser or URIs.jl
+    # reads from the same URL, or put control bytes into the Host header.
+    for url in ("http://allowed.com\\@evil.com/", "http://a\\b.com/", "http://[localhost]/",
+                "http://[169.254.169.254]/", "http://[a]:80/", "http://[v1.fe]/", "http://evil.com[x]/",
+                "http://a.c\tom/", "http://a.com\0/", "http:// /", "http://evil.com%2f.good.com/",
+                "http://%65xample.com/", "http://u ser@h/", "http://u%zz@h/", "http://u%4@h/",
+                "http://u\r\n@h/", "http://a|b/", "http://a\"b/")
+        @test_throws ArgumentError HT._parse_http_url(url)
+    end
+    @test_throws "invalid character '\\\\' in URL userinfo" HT.get("http://allowed.com\\@127.0.0.1:1/"; retry = false)
+    @test_throws ArgumentError HT._parse_http_url(HT.URI("http://[::1]evil.com/"))
+    @test_throws HT.ProtocolError HT._resolve_redirect_target("a:80", false, "//allowed.com\\@evil.com/", "/", "a")
+    @test_throws ArgumentError HT.WebSockets._parse_websocket_url("ws://[localhost]/")
+    @test_throws ArgumentError HT.ProxyConfig(http = "http://proxy\\@evil.com:3128")
+    # URL errors leave out the userinfo.
+    for parse in (() -> HT._parse_http_url("http://user:secret@:8080/"), () -> HT.ProxyConfig(all = "socks5://user:secret@:1080"))
+        err = try
+            parse()
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+        @test !occursin("secret", sprint(showerror, err))
+    end
+    done = Ref{Any}(nothing)
+    @test_throws ArgumentError HT.get("http://user:secret@:8080/"; trace = event -> (event isa HT.DoneEvent && (done[] = event); nothing))
+    @test done[] isa HT.DoneEvent && !occursin("secret", (done[]::HT.DoneEvent).url)
+
+    for (url, address, host_header, auth) in [
+        ("http://[fe80::1%25eth0]/p", "[fe80::1%25eth0]:80", "[fe80::1%25eth0]", false),
+        ("http://[::ffff:1.2.3.4]:81/p", "[::ffff:1.2.3.4]:81", "[::ffff:1.2.3.4]:81", false),
+        ("http://a_b.example/p", "a_b.example:80", "a_b.example", false),
+        ("http://a@b@c/p", "c:80", "c", true),
+        ("http://user%40x:p%3Ass@h/p", "h:80", "h", true),
+        ("http://a!\$&'()*+,;=b/p", "a!\$&'()*+,;=b:80", "a!\$&'()*+,;=b", false),
+    ]
+        parsed = HT._parse_http_url(url)
+        @test parsed.address == address
+        @test parsed.host_header == host_header
+        @test (parsed.authorization !== nothing) == auth
+    end
+    @test HT._parse_http_url(HT.URI("HTTPS://a.com/p")).address == "a.com:443"
+end
+
 @testset "HTTP client sends spaces in URLs as %20" begin
     @test HT._parse_http_url("http://h/a b?x=c d").target == "/a%20b?x=c%20d"
     @test HT._parse_http_url("http://h/p", "x=c d").target == "/p?x=c%20d"
@@ -2979,6 +3024,65 @@ end
     end
 end
 
+@testset "HTTP upload write timeout raises TimeoutError" begin
+    # The body goes out only after the client has read `100 Continue`, so the
+    # client is waiting for the final response when the write deadline expires.
+    for secure in (false, true)
+        listener = secure ?
+            TL.listen(
+                "tcp",
+                "127.0.0.1:0",
+                TL.Config(
+                    verify_peer = false,
+                    cert_file = joinpath(@__DIR__, "resources", "unittests.crt"),
+                    key_file = joinpath(@__DIR__, "resources", "unittests.key"),
+                );
+                backlog = 8,
+            ) :
+            ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        port = Int(((secure ? TL.addr(listener) : NC.addr(listener))::NC.SocketAddrV4).port)
+        server_task = errormonitor(Threads.@spawn begin
+            conn = secure ? TL.accept(listener) : NC.accept(listener)
+            try
+                secure && TL.handshake!(conn)
+                HT.read_request(HT._ConnReader(conn))
+                write(conn, "HTTP/1.1 100 Continue\r\n\r\n")
+                HTTP.@try_ignore read(conn)
+            finally
+                HTTP.@try_ignore close(conn)
+            end
+        end)
+        ctx = HT.RequestContext()
+        body = HT.CallbackBody(dst -> begin
+            HT.set_deadline!(ctx, 1)
+            dst[1] = UInt8('x')
+            return 1
+        end, () -> nothing)
+        try
+            err = try
+                HT.post(
+                    "$(secure ? "https" : "http")://127.0.0.1:$(port)/upload",
+                    ["Expect" => "100-continue"],
+                    body;
+                    context = ctx,
+                    write_idle_timeout = 60,
+                    expect_continue_timeout = 60,
+                    retry = false,
+                    require_ssl_verification = false,
+                    protocol = :h1,
+                )
+                nothing
+            catch ex
+                ex
+            end
+            @test err isa HT.TimeoutError
+            _wait_task_client!(server_task)
+        finally
+            HTTP.@try_ignore close(listener)
+        end
+    end
+end
+
 @testset "HTTP connect_timeout works with explicit client" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -3494,5 +3598,31 @@ end
     finally
         close(client.transport)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "Printed clients, transports, and proxy configs leave out credentials" begin
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "https", "example.com", "/", HT.Headers(["Set-Cookie" => "sid=cookie-secret"]))
+    for proxy in ("http://puser:proxy-secret@proxy.local:3128", "socks5://suser:proxy-secret@proxy.local:1080")
+        transport = HT.Transport(proxy = proxy)
+        client = HT.Client(
+            transport = transport,
+            cookiejar = jar,
+            default_basicauth = "alice" => "auth-secret",
+            default_query = Dict("api_key" => "query-secret"),
+        )
+        try
+            for x in (client, transport, transport.proxy)
+                for text in (sprint(show, x), sprint(show, MIME"text/plain"(), x))
+                    @test !occursin("secret", text)
+                    @test !occursin(HT._base64encode("puser:proxy-secret"), text)
+                    @test occursin("proxy.local", text)
+                end
+            end
+            @test occursin("with credentials", sprint(show, transport.proxy))
+        finally
+            close(client)
+        end
     end
 end

@@ -1174,3 +1174,22 @@ end
     @test err isa HT.ConnectError
     @test HT.isrecoverable(err)
 end
+
+@testset "HTTP request with an unsendable target fails before connecting" begin
+    attempts = Ref(0)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        req.target == "/start" && return HT.Response(302, ["Location" => "/a\tb"], "")
+        return HT.Response(200)
+    end
+    try
+        url = "http://127.0.0.1:$(HT.port(server))"
+        count_attempts = event -> (event isa HT.RequestEvent && (attempts[] += 1); nothing)
+        @test_throws HT.ParseError HT.get("$url/a\tb"; trace = count_attempts)
+        @test attempts[] == 0
+        # The redirect's target is checked the same way.
+        @test_throws HT.ParseError HT.get("$url/start"; trace = count_attempts)
+        @test attempts[] == 1
+    finally
+        HT.forceclose(server)
+    end
+end
