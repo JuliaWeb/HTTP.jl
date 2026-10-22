@@ -1189,7 +1189,8 @@ end
         )
     end
     try
-        for (server, target) in ((request_server, "/protocol"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
+        # The query stays out of the record: it can carry credentials.
+        for (server, target) in ((request_server, "/protocol?token=SECRET"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
             raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
             @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
         end
@@ -1212,6 +1213,36 @@ end
     @test records[1].kwargs[:exception][1] isa HT.ProtocolError
     @test records[1].kwargs[:method] == "GET"
     @test records[1].kwargs[:peer] isa Reseau.TCP.SocketAddr
+end
+
+@testset "HTTP server answers a response it cannot send with 500 and logs it" begin
+    # The head is built before anything is written, so an invalid response gets
+    # 500; a body that fails after the head is out is left unfinished. Both are
+    # logged as handler errors.
+    logger = Test.TestLogger()
+    invalid = [
+        "/te" => () -> HT.Response(200; headers = ["Transfer-Encoding" => "gzip"], body = "x"),
+        "/value" => () -> HT.Response(200; headers = ["X-A" => "a\0b"], body = "x"),
+        "/status" => () -> HT.Response(1000; body = "x"),
+    ]
+    server = Logging.with_logger(logger) do
+        HT.serve!("127.0.0.1", 0; listenany = true) do request
+            request.target == "/body" && return HT.Response(200, HT.CallbackBody(dst -> error("body failed"), () -> nothing))
+            return Dict(invalid)[request.target]()
+        end
+    end
+    try
+        for (target, _) in invalid
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        end
+        raw = _raw_http_request(HT.port(server), "GET /body HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test raw == "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+    finally
+        close(server)
+    end
+    records = filter(record -> record.message == "server handler error", logger.logs)
+    @test map(record -> record.kwargs[:target], records) == ["/te", "/value", "/status", "/body"]
 end
 
 @testset "HTTP server idle timeout closes keep-alive connections" begin
@@ -1798,6 +1829,35 @@ end
             _run_test_operation(() -> wait(server2))
         end
     end
+end
+
+@testset "HTTP stream handler errors get 500 even when the handler's headers are invalid" begin
+    # The error response keeps the handler's headers, unless they are what
+    # failed: then it is sent without them.
+    logger = Test.TestLogger()
+    server = Logging.with_logger(logger) do
+        HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            if request.target == "/invalid"
+                HT.setheader(stream, "X-Bad" => "a\0b")
+                write(stream, "x")
+            else
+                HT.setheader(stream, "X-Kept" => "1")
+                error("handler failed")
+            end
+        end
+    end
+    try
+        raw = _raw_http_request(HT.port(server), "GET /invalid HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test !occursin("X-Bad", raw)
+        raw = _raw_http_request(HT.port(server), "GET /kept HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test occursin("X-Kept: 1\r\n", raw)
+    finally
+        close(server)
+    end
+    @test count(record -> record.message == "server handler error", logger.logs) == 2
 end
 
 @testset "HTTP stream responses frame the body one way" begin
