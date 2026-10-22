@@ -848,6 +848,9 @@ function _do_incoming!(
     for redirect_count in 0:redirect_policy.max_redirects
         while true
             send_request, request_url, proxy_plan, use_h2, host, path = try
+                # A request line that cannot be sent fails here, before a
+                # connection is made, and is not retried.
+                _validate_request_start_line!(current_request.method, current_request.target)
                 next_request = _copy_request_for_send(current_request, retry_attempt == 1)
                 next_url = _request_url(current_secure, current_address, current_request.target)
                 next_proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
