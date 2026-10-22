@@ -17,8 +17,8 @@ const FLAG_PADDED = UInt8(0x8)
 const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
 const _H2_MAX_FRAME_SIZE = 16_384
 
-# SETTINGS parameter identifier for the per-stream initial receive window
-# (RFC 7540 §6.5.2). Used when advertising a non-default flow-control window.
+# SETTINGS parameter identifiers (RFC 9113 §6.5.2).
+const _H2_SETTINGS_ENABLE_PUSH = UInt16(0x2)
 const _H2_SETTINGS_INITIAL_WINDOW_SIZE = UInt16(0x4)
 
 # Protocol-default flow-control window (RFC 7540 §6.9.2) and the default

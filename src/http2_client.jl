@@ -167,7 +167,8 @@ mutable struct H2Connection
     accepting_new_streams::Bool
     max_header_block_bytes::Int
     # Per-stream receive buffer cap applied to every `H2StreamState` opened on
-    # this connection. Configured at connect time; defaults to 256 KiB.
+    # this connection, at least the advertised stream window; DATA beyond it is
+    # a stream FLOW_CONTROL_ERROR. Configured at connect time; defaults to 256 KiB.
     max_buffered_bytes::Int
     # CONTINUATION sequencing state, mirroring the server read loop. When a
     # HEADERS/CONTINUATION frame arrives without END_HEADERS, this records the
@@ -188,6 +189,10 @@ mutable struct H2Connection
     # the fragments here until END_HEADERS, decode once, then discard.
     # Touched only from the single-threaded read loop.
     orphan_header_block::Vector{UInt8}
+    # Bytes the open header block has cost, counting each HEADERS/CONTINUATION
+    # frame's 9-byte header with its fragment, so empty CONTINUATION frames also
+    # reach `max_header_block_bytes`. Touched only from the read loop.
+    header_block_bytes::Int
     # Concurrent acquirers that have committed to opening a stream on this
     # connection but haven't reached `_register_stream!` yet. Used by
     # `_h2_conn_available` so a second caller doesn't decide a peer-capped
@@ -381,10 +386,13 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     lock(conn.state_lock)
     try
         while true
-            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
+            # A stream the peer is done with, such as one a GOAWAY rejected just
+            # before the connection closed, stops its upload first; its own error
+            # then reaches the caller. A failed connection keeps stream entries.
             stream_id in conn.send_closed_streams && return 0
             haskey(conn.stream_send_window, stream_id) || return 0
+            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
             stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
@@ -444,7 +452,10 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
                 delta = new_window - conn.initial_stream_send_window
                 conn.initial_stream_send_window = new_window
                 for stream_id in keys(conn.stream_send_window)
-                    conn.stream_send_window[stream_id] = conn.stream_send_window[stream_id] + delta
+                    window = conn.stream_send_window[stream_id] + delta
+                    # RFC 9113 §6.9.2: a connection error of type FLOW_CONTROL_ERROR.
+                    window > _H2_FLOW_CONTROL_MAX_WINDOW && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE change overflowed a stream flow-control window"))
+                    conn.stream_send_window[stream_id] = window
                 end
             elseif id == UInt16(0x5)
                 value < UInt32(16_384) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too small"))
@@ -953,11 +964,9 @@ end
 
 function _handle_stream_data!(conn::H2Connection, state::H2StreamState, frame::DataFrame)
     refund = 0
+    overrun = false
     lock(state.lock)
     try
-        while ((length(state.body) - state.body_read_index) + 1) >= state.max_buffered_bytes && !_stream_failed(state) && !state.stream_done
-            wait(state.condition)
-        end
         if _stream_failed(state) || state.stream_done
             # Nobody will read this body any more (closed unread, reset, or
             # already ended), but the bytes still consumed the connection-level
@@ -968,17 +977,24 @@ function _handle_stream_data!(conn::H2Connection, state::H2StreamState, frame::D
             # frame arriving before it, including between an informational (1xx)
             # header block and the final head, is malformed rather than body bytes.
             state.headers_complete || throw(ProtocolError("HTTP/2 DATA frame received before the response headers"))
-            append!(state.body, frame.data)
-            if frame.end_stream
+            if _stream_available_bytes(state) + length(frame.data) > state.max_buffered_bytes
+                # Credit goes back only as the body is read, and the stream's
+                # receive window is at most `max_buffered_bytes`, so a peer that
+                # respects flow control never gets here (RFC 9113 §6.9.1).
+                overrun = true
+                refund = _take_unread_h2_body_bytes!(state) + length(frame.data)
+                state.stream_error === nothing && (state.stream_error = ProtocolError("HTTP/2 DATA exceeded the stream flow-control window"))
                 state.stream_done = true
-                notify(state.condition)
             else
-                notify(state.condition)
+                append!(state.body, frame.data)
+                frame.end_stream && (state.stream_done = true)
             end
+            notify(state.condition)
         end
     finally
         unlock(state.lock)
     end
+    overrun && @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(frame.stream_id, UInt32(0x3)))  # FLOW_CONTROL_ERROR
     _send_window_updates!(conn, frame.stream_id, refund; stream_level=false)
     return nothing
 end
@@ -1128,6 +1144,15 @@ function _consume_orphan_header_fragment!(
     return nothing
 end
 
+# The peer cannot be allowed to keep a header block open without bound, even
+# with empty fragments: each frame costs its 9-byte header plus its fragment.
+function _charge_h2_header_block_frame!(conn::H2Connection, fragment::Vector{UInt8})::Nothing
+    conn.header_block_bytes += 9 + length(fragment)
+    conn.header_block_bytes > conn.max_header_block_bytes &&
+        throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
+    return nothing
+end
+
 function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     # Frame-local validation already happened in `read_frame!`; this function is
     # responsible for connection- and stream-level state transitions.
@@ -1208,20 +1233,39 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     elseif frame isa WindowUpdateFrame
         update = frame::WindowUpdateFrame
         increment = Int64(update.window_size_increment)
+        stream_overflow = false
         lock(conn.state_lock)
         try
+            # RFC 9113 §6.9.1: a window above 2^31-1 is a FLOW_CONTROL_ERROR, for
+            # the connection or for the one stream.
             if update.stream_id == UInt32(0)
+                conn.conn_send_window + increment > _H2_FLOW_CONTROL_MAX_WINDOW &&
+                    throw(ProtocolError("HTTP/2 WINDOW_UPDATE overflowed the connection flow-control window"))
                 conn.conn_send_window += increment
             elseif haskey(conn.stream_send_window, update.stream_id)
-                conn.stream_send_window[update.stream_id] += increment
+                window = conn.stream_send_window[update.stream_id] + increment
+                if window > _H2_FLOW_CONTROL_MAX_WINDOW
+                    stream_overflow = true
+                else
+                    conn.stream_send_window[update.stream_id] = window
+                end
             end
             notify(conn.window_condition; all=true)
         finally
             unlock(conn.state_lock)
         end
+        if stream_overflow
+            state = _stream_state(conn, update.stream_id)
+            state === nothing || _set_stream_error!(state::H2StreamState, ProtocolError("HTTP/2 WINDOW_UPDATE overflowed the stream flow-control window"))
+            @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(update.stream_id, UInt32(0x3)))  # FLOW_CONTROL_ERROR
+            _mark_h2_send_closed!(conn, update.stream_id)
+        end
         return nothing
     elseif frame isa HeadersFrame
         headers = frame::HeadersFrame
+        # A HEADERS frame opens a header block.
+        conn.header_block_bytes = 0
+        _charge_h2_header_block_frame!(conn, headers.header_block_fragment)
         state = _stream_state(conn, headers.stream_id)
         if state === nothing
             # Unknown or already-closed stream (e.g. trailers racing
@@ -1252,6 +1296,7 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         throw(ProtocolError("HTTP/2 server push is unsupported"))
     elseif frame isa ContinuationFrame
         cont = frame::ContinuationFrame
+        _charge_h2_header_block_frame!(conn, cont.header_block_fragment)
         open_state = conn.open_header_stream
         if open_state !== nothing
             # Continuation of a header block that began on a live stream. Route
@@ -1419,7 +1464,8 @@ function _make_tls_config_for_h2(
 end
 
 """
-    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0) -> H2Connection
+    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0,
+                          http2_settings=HTTP2Settings(), request_deadline_ns=0) -> H2Connection
 
 Open and initialize an HTTP/2 client connection on an existing TCP socket,
 including client preface, SETTINGS exchange, optional TLS handshake, and ALPN
@@ -1427,7 +1473,9 @@ verification.
 
 Returns a ready-to-use `H2Connection`. Throws `H2NegotiationError` for ALPN
 failures, `ProtocolError` for invalid peer behavior during setup, and any TCP,
-TLS, or I/O exceptions from the underlying transport.
+TLS, or I/O exceptions from the underlying transport. A TLS handshake cut off
+by `connect_deadline_ns` throws `TLSHandshakeTimeoutError`, or
+`DeadlineExceededError` when `request_deadline_ns` was the earlier deadline.
 """
 function _connect_h2_from_tcp!(
     tcp::TCP.Conn,
@@ -1436,6 +1484,7 @@ function _connect_h2_from_tcp!(
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    request_deadline_ns::Int64=Int64(0),
 )::H2Connection
     tls_conn = nothing
     try
@@ -1450,7 +1499,8 @@ function _connect_h2_from_tcp!(
             catch err
                 # TLS.client can fail while it initializes client state, before
                 # handshake! starts. Both operations are connection setup.
-                err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+                handshake_timeout_ns = tls_config === nothing ? Int64(0) : (tls_config::TLS.Config).handshake_timeout_ns
+                err isa TLS.TLSError && throw(_tls_setup_error(err::TLS.TLSError, handshake_timeout_ns, connect_deadline_ns, request_deadline_ns))
                 rethrow()
             end
             stream_reader = _ConnReader(tls_conn::TLS.Conn)
@@ -1493,13 +1543,16 @@ function _connect_h2_from_tcp!(
             nothing,
             UInt8[],
             0,
+            0,
             Int64(time_ns()),
             UInt32(0),
             false,
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)
-        initial_settings = Pair{UInt16,UInt32}[]
+        # Push defaults to enabled (RFC 9113 §6.5.2), and this client fails the
+        # connection on PUSH_PROMISE, so it turns push off.
+        initial_settings = Pair{UInt16,UInt32}[_H2_SETTINGS_ENABLE_PUSH => UInt32(0)]
         if http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
             push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(http2_settings.initial_window_size))
         end
@@ -1558,7 +1611,7 @@ function connect_h2!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings, host_resolver.deadline_ns)
 end
 
 """
@@ -1830,9 +1883,10 @@ function _compact_stream_body_buffer!(state::H2StreamState)
     end
     if state.body_read_index > 4096 && state.body_read_index > (length(state.body) >>> 1)
         remaining = (length(state.body) - state.body_read_index) + 1
-        compacted = Vector{UInt8}(undef, remaining)
-        copyto!(compacted, 1, state.body, state.body_read_index, remaining)
-        state.body = compacted
+        # Move the unread bytes to the front in place: the buffer keeps its
+        # capacity, so later DATA frames append without reallocating.
+        copyto!(state.body, 1, state.body, state.body_read_index, remaining)
+        resize!(state.body, remaining)
         state.body_read_index = 1
     end
     return nothing
@@ -2079,7 +2133,17 @@ function _h2_roundtrip_incoming!(
             throw(_canceled_error(request_ctx))
         end
         end_stream = request.body isa EmptyBody
-        if !end_stream && !_write_request_body_h2!(conn, stream_state.stream_id, request)
+        sent = end_stream || try
+            _write_request_body_h2!(conn, stream_state.stream_id, request)
+        catch
+            # A GOAWAY or REFUSED_STREAM can close the connection under the
+            # upload. The stream's error then says why, and the request is safe
+            # to retry (RFC 9113 §8.7).
+            stream_err = lock(() -> stream_state.stream_error, stream_state.lock)
+            (stream_err !== nothing && _h2_guaranteed_unprocessed(stream_err)) || rethrow()
+            throw(stream_err)
+        end
+        if !sent
             # The upload was abandoned because the peer finished with the
             # stream first. When that was a benign early complete response
             # (no stream error), actively cancel our half of the stream

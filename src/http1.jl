@@ -147,11 +147,13 @@ function _readline_crlf(io::IO, max_line_bytes::Integer)::String
         b = _read_u8(io)
         push!(bytes, b)
         length(bytes) > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
+        b == 0x0a || continue
         n = length(bytes)
-        if n >= 2 && bytes[n-1] == 0x0d && bytes[n] == 0x0a
-            resize!(bytes, n - 2)
-            return String(bytes)
-        end
+        # Require CRLF, as `_readline_crlf(::_ConnReader, ...)` does: a bare LF
+        # that another parser takes for a line end must not stay in the line.
+        (n >= 2 && bytes[n-1] == 0x0d) || throw(ParseError("HTTP/1 line not terminated by CRLF (bare LF)"))
+        resize!(bytes, n - 2)
+        return String(bytes)
     end
 end
 
@@ -190,23 +192,14 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
     end
 end
 
+# HTTP-version = "HTTP/" DIGIT "." DIGIT (RFC 9112 §2.3). `parse(Int, ...)`
+# would also accept a sign, more digits, or whitespace around them.
 function _parse_http_version(version::AbstractString)::Tuple{UInt8,UInt8}
-    startswith(version, "HTTP/") || throw(ParseError("invalid HTTP version token: $(repr(version))"))
-    parts = split(String(SubString(version, 6)), '.'; limit=2)
-    length(parts) == 2 || throw(ParseError("invalid HTTP version token: $(repr(version))"))
-    major = try
-        parse(Int, parts[1])
-    catch
-        throw(ParseError("invalid HTTP major version: $(repr(version))"))
-    end
-    minor = try
-        parse(Int, parts[2])
-    catch
-        throw(ParseError("invalid HTTP minor version: $(repr(version))"))
-    end
-    (major < 0 || major > typemax(UInt8)) && throw(ParseError("invalid HTTP major version: $(repr(version))"))
-    (minor < 0 || minor > typemax(UInt8)) && throw(ParseError("invalid HTTP minor version: $(repr(version))"))
-    return UInt8(major), UInt8(minor)
+    bytes = codeunits(version)
+    (length(bytes) == 8 && startswith(version, "HTTP/") && bytes[7] == UInt8('.') &&
+     UInt8('0') <= bytes[6] <= UInt8('9') && UInt8('0') <= bytes[8] <= UInt8('9')) ||
+        throw(ParseError("invalid HTTP version token: $(repr(version))"))
+    return bytes[6] - UInt8('0'), bytes[8] - UInt8('0')
 end
 
 function _parse_int64_decimal_header_value(value::AbstractString, kind::AbstractString)::Int64
@@ -370,6 +363,13 @@ function _parse_chunk_size(line::AbstractString)::Int64
     # front-end proxy lacks enables request smuggling.
     semi = findfirst(';', line)
     token = semi === nothing ? line : SubString(line, firstindex(line), prevind(line, semi))
+    if semi !== nothing
+        # Extensions are ignored, but a control byte in one, such as a bare CR,
+        # could end the line for another parser.
+        for b in codeunits(SubString(line, semi))
+            ((b < 0x20 && b != 0x09) || b == 0x7f) && throw(ParseError("invalid chunk extension: $(repr(line))"))
+        end
+    end
     units = codeunits(token)
     isempty(units) && throw(ParseError("empty chunk size"))
     limit = UInt64(typemax(Int64))
