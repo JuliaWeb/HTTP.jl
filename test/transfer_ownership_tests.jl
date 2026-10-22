@@ -125,7 +125,7 @@ end
                 client, protocol, copyheaders=!owned, trace,
                 retries=1, retry_if=(attempt, _, _, resp) -> attempt == 1,
                 retry_bucket=HTTP.RetryBucket(backoff_scale_factor_ms=0, max_backoff_secs=0),
-                response_stream=view(output, 2:length(output)-1), request_timeout=20)
+                response_stream=view(output, 2:length(output)-1))
             @test response.status == 200
             @test output[2:end-1] == payload
             @test output[1] == output[end] == 0xff
