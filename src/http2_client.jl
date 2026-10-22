@@ -1147,7 +1147,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         return nothing
     elseif frame isa GoAwayFrame
         goaway = frame::GoAwayFrame
-        goaway.error_code == UInt32(0) || throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
+        # Whatever the error code, streams above `last_stream_id` were not
+        # processed and can be retried, and the peer may still answer the
+        # others before it closes the connection (RFC 9113 §6.8).
         to_fail = Pair{UInt32,H2StreamState}[]
         lock(conn.state_lock)
         try
@@ -1167,8 +1169,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         finally
             unlock(conn.state_lock)
         end
+        reason = goaway.error_code == UInt32(0) ? "" : " ($(_h2_error_code_name(goaway.error_code)))"
         for failed in to_fail
-            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY", goaway.last_stream_id))
+            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY$reason", goaway.last_stream_id))
         end
         _close_h2_if_drained!(conn)
         return nothing
@@ -1407,7 +1410,8 @@ function _make_tls_config_for_h2(
 end
 
 """
-    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0) -> H2Connection
+    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0,
+                          http2_settings=HTTP2Settings(), request_deadline_ns=0) -> H2Connection
 
 Open and initialize an HTTP/2 client connection on an existing TCP socket,
 including client preface, SETTINGS exchange, optional TLS handshake, and ALPN
@@ -1415,7 +1419,9 @@ verification.
 
 Returns a ready-to-use `H2Connection`. Throws `H2NegotiationError` for ALPN
 failures, `ProtocolError` for invalid peer behavior during setup, and any TCP,
-TLS, or I/O exceptions from the underlying transport.
+TLS, or I/O exceptions from the underlying transport. A TLS handshake cut off
+by `connect_deadline_ns` throws `TLSHandshakeTimeoutError`, or
+`DeadlineExceededError` when `request_deadline_ns` was the earlier deadline.
 """
 function _connect_h2_from_tcp!(
     tcp::TCP.Conn,
@@ -1424,6 +1430,7 @@ function _connect_h2_from_tcp!(
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    request_deadline_ns::Int64=Int64(0),
 )::H2Connection
     tls_conn = nothing
     try
@@ -1438,7 +1445,8 @@ function _connect_h2_from_tcp!(
             catch err
                 # TLS.client can fail while it initializes client state, before
                 # handshake! starts. Both operations are connection setup.
-                err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+                handshake_timeout_ns = tls_config === nothing ? Int64(0) : (tls_config::TLS.Config).handshake_timeout_ns
+                err isa TLS.TLSError && throw(_tls_setup_error(err::TLS.TLSError, handshake_timeout_ns, connect_deadline_ns, request_deadline_ns))
                 rethrow()
             end
             stream_reader = _ConnReader(tls_conn::TLS.Conn)
@@ -1546,7 +1554,7 @@ function connect_h2!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings, host_resolver.deadline_ns)
 end
 
 """
