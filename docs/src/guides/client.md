@@ -342,7 +342,7 @@ HTTP.get("http://127.0.0.1:8080/v"; verbose = 2)
 GET /v HTTP/1.1
 Host: 127.0.0.1:8080
 Accept-Encoding: gzip, deflate
-User-Agent: HTTP.jl/2.0.0
+User-Agent: HTTP.jl/<version>
 [http] response attempt 1 200 for http://127.0.0.1:8080/v
 [http] response
 HTTP/1.1 200 OK
