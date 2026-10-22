@@ -179,6 +179,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An HTTP/2 upload whose stream a `GOAWAY` rejected is retried: when the
   `GOAWAY` also closed the connection before the body was written, the request
   failed with `ProtocolError("HTTP/2 connection is closed")`. ([#1483])
+- An `SSEStream` whose client stops reading is closed once its unsent events
+  pass four times `max_len`, and at least 16 MiB: the `write` throws `IOError`,
+  as for a client that disconnected. Before, the server kept every event
+  written to such a client. ([#1478])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1407,5 +1411,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1475]: https://github.com/JuliaWeb/HTTP.jl/issues/1475
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1477]: https://github.com/JuliaWeb/HTTP.jl/issues/1477
+[#1478]: https://github.com/JuliaWeb/HTTP.jl/issues/1478
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
