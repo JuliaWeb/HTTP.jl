@@ -183,6 +183,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass four times `max_len`, and at least 16 MiB: the `write` throws `IOError`,
   as for a client that disconnected. Before, the server kept every event
   written to such a client. ([#1478])
+- The HTTP/2 server answers any exception a handler throws with
+  `500 Internal Server Error` and logs it as `server handler error`, as the
+  HTTP/1 server does. A `ProtocolError` or `ParseError` from a handler got
+  `400`, a timeout `408`, and none was logged. A response that cannot be sent,
+  such as one with an invalid header, gets `500` before anything is written
+  instead of a stream reset. Errors reading the request body keep their `4xx`
+  status, a client that resets its stream is not logged, and the server no
+  longer stores the request on the handler's `Response`. ([#1469])
 - An HTTP/2 server with `write_timeout` set no longer fails control-frame
   writes after an earlier response's write deadline has passed. A WINDOW_UPDATE
   after a request-body read inherited that expired deadline, so a request with
@@ -1410,6 +1418,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
 [#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467
 [#1468]: https://github.com/JuliaWeb/HTTP.jl/issues/1468
+[#1469]: https://github.com/JuliaWeb/HTTP.jl/issues/1469
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
 [#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
