@@ -176,6 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines read from a generic `IO` (as the connection reader already did).
   Before, forms such as `HTTP/1. 1` or `HTTP/+1.1`, a bare CR in a chunk
   extension, and a header line containing a bare LF were accepted. ([#1468])
+- An HTTP/2 upload whose stream a `GOAWAY` rejected is retried: when the
+  `GOAWAY` also closed the connection before the body was written, the request
+  failed with `ProtocolError("HTTP/2 connection is closed")`. ([#1483])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1405,3 +1408,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1477]: https://github.com/JuliaWeb/HTTP.jl/issues/1477
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
+[#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
