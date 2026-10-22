@@ -221,6 +221,10 @@ mutable struct WsDecoder
     # Reused result vector for ws_decoder_process! — contents are valid only
     # until the next process! call on this decoder.
     frames_scratch::Vector{WsFrame{Vector{UInt8}}}
+    # The mask bit every incoming frame must carry (RFC 6455 §5.1): `true` on a
+    # server, `false` on a client, `nothing` to accept either. It is checked in
+    # the frame header, before any payload is read or delivered.
+    expect_masked::Union{Nothing,Bool}
 end
 
 function ws_decoder_new()::WsDecoder
@@ -243,6 +247,7 @@ function ws_decoder_new()::WsDecoder
         false,
         false,
         WsFrame{Vector{UInt8}}[],
+        nothing,
     )
 end
 
@@ -311,6 +316,10 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             b = data[pos]
             pos += 1
             dec.masked = (b & 0x80) != 0
+            expect_masked = dec.expect_masked
+            if expect_masked !== nothing && dec.masked != expect_masked
+                _ws_throw_protocol_error(expect_masked ? "client websocket frames must be masked" : "server websocket frames must not be masked")
+            end
             len7 = b & 0x7f
             ws_is_control_frame(dec.opcode) && len7 >= 126 && _ws_throw_protocol_error("control frame payload length must be <= 125")
             if len7 < 126
@@ -509,6 +518,7 @@ function WSConn(;
 )::WSConn
     decoder = ws_decoder_new()
     decoder.pmce_enabled = pmce !== nothing
+    decoder.expect_masked = !is_client
     return WSConn(
         is_client,
         true,
@@ -663,11 +673,6 @@ function ws_on_incoming_data!(f::Union{Nothing,Function}, ws::WSConn, data::Abst
         ws_decoder_process!(f, ws.decoder, data, datalen)
     end
     for (i, frame) in pairs(frames)
-        if ws.is_client
-            frame.masked && _ws_throw_protocol_error("server websocket frames must not be masked")
-        else
-            !frame.masked && _ws_throw_protocol_error("client websocket frames must be masked")
-        end
         if ws.max_incoming_payload_length > 0
             if ws_is_data_frame(frame.opcode)
                 running_total = frame.opcode == UInt8(WsOpcode.CONTINUATION) ? ws.incoming_message_payload_total : UInt64(0)
