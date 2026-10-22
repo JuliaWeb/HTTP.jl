@@ -453,7 +453,7 @@ function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_H2Shut
     return nothing
 end
 
-function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
+function _notify_conn_shutdown!(conn::_ServerConn, write_deadline_ns::Int64)::Nothing
     hook = nothing
     lock(conn.lock)
     try
@@ -462,7 +462,7 @@ function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
         unlock(conn.lock)
     end
     hook === nothing && return nothing
-    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control)
+    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control, write_deadline_ns)
     return nothing
 end
 
@@ -699,7 +699,7 @@ end
 
 function _request_conn_shutdowns!(server::Server)::Nothing
     for tracked in _server_conns(server)
-        _notify_conn_shutdown!(tracked)
+        _notify_conn_shutdown!(tracked, _server_write_deadline_ns(server))
     end
     return nothing
 end
