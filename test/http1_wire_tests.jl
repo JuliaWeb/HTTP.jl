@@ -446,6 +446,25 @@ end
     # Overflow past Int64 range is rejected, not silently truncated.
     @test_throws HT.ParseError HT._parse_chunk_size("ffffffffffffffff0")
 
+    # Chunk extensions are ignored but may not hold control bytes, which another
+    # parser could take for a line end; HTAB is whitespace there.
+    @test HT._parse_chunk_size("a;name=\"v\"\tx") == 10
+    @test_throws HT.ParseError HT._parse_chunk_size("a;ext\rX")
+    @test_throws HT.ParseError HT._parse_chunk_size("a;ext\0")
+
+    # --- HTTP-version is exactly "HTTP/" DIGIT "." DIGIT (RFC 9112 §2.3). ---
+    @test HT._parse_http_version("HTTP/1.1") == (0x01, 0x01)
+    @test HT._parse_http_version("HTTP/1.0") == (0x01, 0x00)
+    for version in ("HTTP/1. 1", "HTTP/+1.1", "HTTP/01.1", "HTTP/1.10", "HTTP/1.1 ", "HTTP/1.1\r", "HTTP/1", "http/1.1")
+        @test_throws HT.ParseError HT._parse_http_version(version)
+    end
+    @test_throws HT.ParseError HT.read_request(IOBuffer("GET / HTTP/1.1\r\r\nHost: example.com\r\n\r\n"))
+
+    # --- The generic IO line reader rejects a bare LF like _ConnReader does. ---
+    @test_throws HT.ParseError HT.read_request(IOBuffer("GET / HTTP/1.1\r\nHost: example.com\nX-Smuggle: 1\r\n\r\n"))
+    @test_throws HT.ParseError HT._readline_crlf(IOBuffer("a\nb\r\n"), 64)
+    @test HT._readline_crlf(IOBuffer("ab\r\n"), 64) == "ab"
+
     # --- HTTP/1.0 + Transfer-Encoding is faulty framing (ANT-2026-YD5QTQDZ). ---
     h10_te = "POST / HTTP/1.0\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n0\r\n\r\n"
     @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(h10_te)))
