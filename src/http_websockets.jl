@@ -1702,20 +1702,22 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
     task = current_task()
     _track_conn!(server, conn, task)
     try
-        request = read_request(_ConnReader(conn))
+        request = try
+            read_request(_ConnReader(conn))
+        catch err
+            (err isa ParseError || err isa ProtocolError) || rethrow()
+            # A malformed handshake request gets 400 before the connection closes.
+            @try_ignore _write_ws_response!(conn, Response(400, EmptyBody(); content_length=0, close=true))
+            return nothing
+        end
         response = _upgrade_response(request, server)
         _write_ws_response!(conn, response)
         response.status == 101 || return nothing
         _serve_ws_session!(server, conn, request, response)
     catch err
-        if err isa ParseError || err isa ProtocolError
-            # A malformed handshake request gets 400 before the connection closes.
-            @try_ignore _write_ws_response!(conn, Response(400, EmptyBody(); content_length=0, close=true))
-        elseif !_ws_peer_error(err)
-            # Nothing waits on this task, so an error the handler (or a
-            # `check_origin` callback) raised is reported here.
-            @error "websocket server error" exception = (err, catch_backtrace())
-        end
+        # Nothing waits on this task, so an error the handler (or a
+        # `check_origin` callback) raised is reported here.
+        _ws_peer_error(err) || @error "websocket server error" exception = (err, catch_backtrace())
     finally
         _close_ws_server_conn!(conn)
         _untrack_conn!(server, conn, task)

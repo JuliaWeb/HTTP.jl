@@ -160,18 +160,47 @@ end
     logger = Test.TestLogger()
     server = Logging.with_logger(logger) do
         W.listen!("127.0.0.1", 0) do ws
+            # A ProtocolError after the handshake is the handler's, not a bad request.
+            W.receive(ws) == "protocol" && throw(HT.ProtocolError("handler protocol bug"))
             error("handler bug")
         end
     end
     address = W.server_addr(server)
     try
         err = try
-            W.open(ws -> W.receive(ws), "ws://$(address)/")
+            W.open("ws://$(address)/") do ws
+                W.send(ws, "go")
+                W.receive(ws)
+            end
             nothing
         catch e
             e
         end
         @test err isa W.WebSocketError && err.message.code == 1011
+        # The handler's ProtocolError ends the session with 1011; no HTTP
+        # response follows the close frame on the upgraded connection.
+        upgraded = NC.connect(ND.HostResolver(), "tcp", address)
+        try
+            read_exact(n) = (bytes = Vector{UInt8}(undef, n); readbytes!(upgraded, bytes, n; all = true) == n || error("unexpected EOF"); bytes)
+            masked(op, payload) = Vector{UInt8}(W.ws_encode_frame(W.WsFrame(opcode = UInt8(op), payload = payload, masked = true, masking_key = (0x01, 0x02, 0x03, 0x04))))
+            key = HT.WebSockets.ws_random_handshake_key()
+            write(upgraded, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" *
+                "Sec-WebSocket-Key: $(key)\r\nSec-WebSocket-Version: 13\r\n\r\n")))
+            head = UInt8[]
+            while !endswith(String(copy(head)), "\r\n\r\n")
+                append!(head, read_exact(1))
+            end
+            @test startswith(String(head), "HTTP/1.1 101 ")
+            write(upgraded, masked(W.WsOpcode.TEXT, collect(codeunits("protocol"))))
+            close_header = read_exact(2)
+            @test close_header[1] == 0x88
+            close_payload = read_exact(Int(close_header[2] & 0x7f))
+            @test UInt16(close_payload[1]) << 8 | close_payload[2] == 1011
+            write(upgraded, masked(W.WsOpcode.CLOSE, close_payload[1:2]))
+            @test isempty(read(upgraded))
+        finally
+            NC.close(upgraded)
+        end
         sock = NC.connect(ND.HostResolver(), "tcp", address)
         try
             write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost x\r\n\r\n")))
@@ -183,8 +212,9 @@ end
         close(server)
     end
     records = filter(record -> record.message == "websocket server error", logger.logs)
-    @test length(records) == 1
-    @test records[1].kwargs[:exception][1] isa ErrorException
+    @test length(records) == 2
+    @test any(record -> record.kwargs[:exception][1] isa ErrorException, records)
+    @test any(record -> record.kwargs[:exception][1] isa HT.ProtocolError, records)
 end
 
 @testset "HTTP.WebSockets server listen! over wss" begin
