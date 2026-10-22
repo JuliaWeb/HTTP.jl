@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using Logging
 
 const HT = HTTP
 const W = HTTP.WebSockets
@@ -212,6 +213,26 @@ end
     bad = HT.Request("GET", "/"; headers = ["Host" => "127.0.0.1"])
     stream = HT.Stream(bad)
     @test_throws W.WebSocketError W.upgrade(ws -> nothing, stream)
+end
+
+@testset "HTTP.WebSockets.upgrade records the handshake response on the stream" begin
+    # The 101 is the stream's response: logging middleware reports it, also
+    # when the handler fails after the upgrade.
+    logger = Test.TestLogger()
+    handler = HT.Handlers.logging_middleware(logger = logger) do stream
+        W.upgrade(ws -> nothing, stream)
+        stream.message.target == "/fail" && error("after upgrade")
+        return nothing
+    end
+    server = Logging.with_logger(() -> HT.listen!(handler, "127.0.0.1", 0; listenany = true), logger)
+    try
+        for target in ("/ok", "/fail")
+            W.open(ws -> nothing, "ws://127.0.0.1:$(HT.port(server))$(target)")
+        end
+    finally
+        close(server)
+    end
+    @test [record.kwargs[:status] for record in logger.logs if record.group == :access] == [101, 101]
 end
 
 @testset "HTTP.WebSockets.isready reports buffered messages" begin
