@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- A WebSocket connection whose received messages wait unread past four times
+  `maxframesize` bytes is closed with status 1008. Before, a peer could queue
+  messages for a handler that received slowly or never without any limit.
+  ([#1474])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1269,3 +1273,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1474]: https://github.com/JuliaWeb/HTTP.jl/issues/1474
