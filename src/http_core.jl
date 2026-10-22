@@ -607,6 +607,9 @@ const _COMMON_CANONICAL_HEADER_KEYS = Dict(
     "User-Agent" => "User-Agent",
 )
 
+# The same names as they arrive over HTTP/2, so those need no new string.
+const _LOWERCASE_CANONICAL_HEADER_KEYS = Dict(lowercase(k) => v for (k, v) in _COMMON_CANONICAL_HEADER_KEYS)
+
 """
     canonical_header_key(key) -> String
 
@@ -636,19 +639,17 @@ function canonical_header_key(key::AbstractString)::String
     if canonical
         return get(() -> key_s, _COMMON_CANONICAL_HEADER_KEYS, key_s)
     end
-    chars = Vector{Char}(undef, ncodeunits(key_s))
+    common = get(_LOWERCASE_CANONICAL_HEADER_KEYS, key_s, nothing)
+    common === nothing || return common
+    units = codeunits(key_s)
+    out = Vector{UInt8}(undef, length(units))
     upper_next = true
-    i = 1
-    for c in key_s
-        if upper_next
-            chars[i] = _to_ascii_upper(c)
-        else
-            chars[i] = _to_ascii_lower(c)
-        end
-        upper_next = chars[i] == '-'
-        i += 1
+    @inbounds for i in eachindex(units)
+        b = units[i]
+        out[i] = upper_next ? (0x61 <= b <= 0x7a ? b - 0x20 : b) : (0x41 <= b <= 0x5a ? b + 0x20 : b)
+        upper_next = b == 0x2d
     end
-    canon = String(chars[1:(i-1)])
+    canon = String(out)
     return get(() -> canon, _COMMON_CANONICAL_HEADER_KEYS, canon)
 end
 
@@ -1093,14 +1094,34 @@ The same function as [`removeheader`](@ref).
 """
 const removeheader! = removeheader
 
-@inline function _ascii_lowercase_string(s::AbstractString)::String
-    chars = Vector{Char}(undef, ncodeunits(s))
-    i = 1
-    for c in s
-        chars[i] = _to_ascii_lower(c)
-        i += 1
+# Lowercase only the ASCII letters of `s`, leaving other bytes as they are.
+@inline _ascii_lowercase_string(s::AbstractString)::String = _ascii_case(s, false, false)
+
+# `lowercase(s)` and `uppercase(s)` for header names, hosts, and methods. Base
+# builds each result through an IOBuffer; here ASCII text is converted byte by
+# byte, and a String already in that case is returned as is.
+@inline _fast_lowercase(s::AbstractString)::String = _ascii_case(s, false, true)
+@inline _fast_uppercase(s::AbstractString)::String = _ascii_case(s, true, true)
+
+function _ascii_case(s::AbstractString, upper::Bool, unicode::Bool)::String
+    str = s isa String ? s : String(s)
+    units = codeunits(str)
+    # The ASCII letters that change: lowercase ones for `upper`, else uppercase ones.
+    lo, hi = upper ? (0x61, 0x7a) : (0x41, 0x5a)
+    changes = false
+    @inbounds for b in units
+        if b >= 0x80 && unicode
+            return upper ? uppercase(str) : lowercase(str)
+        end
+        changes |= lo <= b <= hi
     end
-    return String(chars[1:(i-1)])
+    changes || return str
+    out = Vector{UInt8}(undef, length(units))
+    @inbounds for i in eachindex(units)
+        b = units[i]
+        out[i] = lo <= b <= hi ? b ⊻ 0x20 : b
+    end
+    return String(out)
 end
 
 @inline function _ascii_equal_fold(a::AbstractString, b::AbstractString)::Bool
@@ -1131,6 +1152,8 @@ end
         break
     end
     hi < lo && return ""
+    # Most values have nothing to trim; return a String as is.
+    s isa String && lo == firstindex(s) && hi == lastindex(s) && return s
     return String(SubString(s, lo, hi))
 end
 

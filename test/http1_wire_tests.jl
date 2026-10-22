@@ -165,6 +165,27 @@ end
     @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), invalid_trailer_response)
 end
 
+@testset "HTTP/1 start and status lines are written without allocating" begin
+    io = IOBuffer(; sizehint = 4096)
+    # The same bytes `print` writes, for one-, two-, and three-digit versions.
+    for (status, major, minor) in ((100, 1, 1), (200, 1, 0), (999, 10, 2), (404, 255, 0))
+        HT._print_status_line!(io, HT.Response(status; reason = "R", proto_major = major, proto_minor = minor))
+        @test String(take!(io)) == string(major == 1 && minor == 0 ? "HTTP/1.0" : "HTTP/1.1", ' ', status, " R\r\n")
+        HT._print_request_line!(io, "GET", "/x", UInt8(major), UInt8(minor))
+        @test String(take!(io)) == string("GET /x HTTP/", major, '.', minor, "\r\n")
+    end
+    req = HT.Request("GET", "/path"; headers = ["Host" => "example.com"])
+    resp = HT.Response(200, ["Content-Type" => "text/plain"], "hello")
+    start_line() = (seekstart(io); HT._append_start_line!(io, req))
+    status_line() = (seekstart(io); HT._append_status_line!(io, resp))
+    value = "text/plain"
+    start_line(); status_line(); HT._trim_http_ows(value)
+    @test minimum(@allocated(start_line()) for _ in 1:3) < 32
+    @test minimum(@allocated(status_line()) for _ in 1:3) < 32
+    # A header value with nothing to trim is returned as is.
+    @test minimum(@allocated(HT._trim_http_ows(value)) for _ in 1:3) < 32
+end
+
 @testset "HTTP/1 response parse/write chunked" begin
     raw = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Trailer: done\r\n\r\n"
     resp = HT._read_response(IOBuffer(codeunits(raw)))
