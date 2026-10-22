@@ -690,6 +690,8 @@ function _add_dynamic_entry!(table::DynamicTable, name::String, value::String)
 end
 
 function _table_get(table::DynamicTable, index::Int)::HeaderField
+    # RFC 7541 §6.1: index 0 is not used.
+    index >= 1 || throw(ProtocolError("HPACK index out of range"))
     if index <= length(_STATIC_TABLE)
         return _STATIC_TABLE[index]
     end
@@ -740,6 +742,10 @@ function _encode_integer!(out::Vector{UInt8}, value::Int, prefix_bits::Int, pref
     return nothing
 end
 
+# The largest integer the decoder accepts. Indices, string lengths, and table
+# sizes in a valid header block are far smaller.
+const _HPACK_MAX_INTEGER = Int(typemax(UInt32))
+
 function _decode_integer(data::Vector{UInt8}, index::Int, prefix_bits::Int)::Tuple{Int,Int}
     index <= length(data) || throw(ParseError("HPACK integer decode out of bounds"))
     max_prefix = (1 << prefix_bits) - 1
@@ -754,9 +760,12 @@ function _decode_integer(data::Vector{UInt8}, index::Int, prefix_bits::Int)::Tup
         b = data[index]
         index += 1
         value += Int(b & 0x7f) << shift
+        # RFC 7541 §5.1: an integer past the decoder's limit, in value or in
+        # length, is a decoding error. Five continuation bytes cover the limit.
+        value <= _HPACK_MAX_INTEGER || throw(ParseError("HPACK integer too large"))
         (b & 0x80) == 0 && return value, index
         shift += 7
-        shift <= 56 || throw(ParseError("HPACK integer too large"))
+        shift <= 28 || throw(ParseError("HPACK integer too large"))
     end
 end
 

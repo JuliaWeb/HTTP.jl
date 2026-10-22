@@ -212,6 +212,36 @@ end
     end
 end
 
+@testset "HTTP server SSE stream closes when the client stops reading" begin
+    # The client never reads, so events wait in the stream until they pass the
+    # cap (16 MiB here); the next write closes the stream and throws IOError.
+    outcome = Channel{Any}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return HT.sse_stream(200; max_len = 1024) do stream
+            event = HT.SSEEvent("x" ^ 1000)
+            result = :all_written
+            try
+                for _ in 1:50_000 # ~50 MB: more than the cap plus socket buffers
+                    write(stream, event)
+                end
+            catch err
+                result = err
+            end
+            put!(outcome, result)
+        end
+    end
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: x\r\n\r\n")))
+        @test take!(outcome) isa Base.IOError
+    finally
+        NC.close(sock)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
     # Serialize an event offline by writing it into an SSEStream and reading the
     # framed bytes back out, so we can assert on the exact wire output.
@@ -568,6 +598,24 @@ end
     finally
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP fileserver accepts a root with a trailing separator" begin
+    mktempdir() do dir
+        write(joinpath(dir, "hello.txt"), "hello")
+        server = HT.serve!(HT.fileserver(dir * "/"), "127.0.0.1", 0; listenany = true)
+        try
+            ok = HT.get("http://$(HT.server_addr(server))/hello.txt"; status_exception = false)
+            @test ok.status == 200
+            @test String(ok.body) == "hello"
+            # A NUL in the path is a bad request, not a server error.
+            nul = _raw_http_request(HT.port(server), "GET /%00hello.txt HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(nul, "HTTP/1.1 400 Bad Request\r\n")
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
     end
 end
 
@@ -1077,6 +1125,29 @@ end
     end
 end
 
+@testset "HTTP streamhandler refuses a request body over max_body_bytes" begin
+    called = Channel{Int}(4)
+    handler = HT.streamhandler(; max_body_bytes = 4) do request
+        put!(called, length(request.body))
+        return HT.Response(200, "ok")
+    end
+    server = HT.listen!(handler, "127.0.0.1", 0; listenany = true)
+    try
+        fixed = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello")
+        @test startswith(fixed, "HTTP/1.1 413 Content Too Large\r\n")
+        chunked = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhey\r\n2\r\n!!\r\n0\r\n\r\n")
+        @test startswith(chunked, "HTTP/1.1 413 Content Too Large\r\n")
+        within = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nhell")
+        @test startswith(within, "HTTP/1.1 200 OK\r\n")
+        @test take!(called) == 4
+        @test !isready(called)
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+    @test_throws ArgumentError HT.streamhandler(identity; max_body_bytes = -1)
+end
+
 @testset "HTTP streamhandler closes an unsent streaming body for HEAD, 204, and 304" begin
     # An SSE body without a producer never reaches EOF, so reading it to discard
     # it would hold the handler (and graceful close) forever. The body must be
@@ -1189,7 +1260,8 @@ end
         )
     end
     try
-        for (server, target) in ((request_server, "/protocol"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
+        # The query stays out of the record: it can carry credentials.
+        for (server, target) in ((request_server, "/protocol?token=SECRET"), (request_server, "/timeout"), (stream_server, "/parse"), (stream_server, "/framing"))
             raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: x\r\n\r\n")
             @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
         end
@@ -1527,8 +1599,9 @@ end
     end
 end
 
-@testset "HTTP server ordinary handlers suppress bodies for HEAD" begin
-    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+@testset "HTTP server ordinary handlers suppress bodies for HEAD" for start in (HT.serve!, (h, args...; kw...) -> HT.listen!(HT.streamhandler(h), args...; kw...))
+    # `serve!` and `streamhandler` send the same head.
+    server = start("127.0.0.1", 0; listenany = true) do request
             return HT.Response(
                 200,
                 HT.BytesBody(collect(codeunits("oops")));
@@ -1827,6 +1900,70 @@ end
             _run_test_operation(() -> HT.forceclose(server2))
             _run_test_operation(() -> wait(server2))
         end
+    end
+end
+
+@testset "HTTP stream handler errors get 500 even when the handler's headers are invalid" begin
+    # The error response keeps the handler's headers, unless they are what
+    # failed: then it is sent without them.
+    logger = Test.TestLogger()
+    server = Logging.with_logger(logger) do
+        HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            if request.target == "/invalid"
+                HT.setheader(stream, "X-Bad" => "a\0b")
+                write(stream, "x")
+            else
+                HT.setheader(stream, "X-Kept" => "1")
+                error("handler failed")
+            end
+        end
+    end
+    try
+        raw = _raw_http_request(HT.port(server), "GET /invalid HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test !occursin("X-Bad", raw)
+        raw = _raw_http_request(HT.port(server), "GET /kept HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test occursin("X-Kept: 1\r\n", raw)
+    finally
+        close(server)
+    end
+    @test count(record -> record.message == "server handler error", logger.logs) == 2
+end
+
+@testset "HTTP stream responses frame the body one way" begin
+    # A fixed-length response drops a Transfer-Encoding the handler set, and an
+    # HTTP/1.0 exchange is never chunked.
+    function stream_handler(stream)
+        request = HT.startread(stream)
+        if request.target == "/fixed"
+            HT.setheader(stream, "Transfer-Encoding" => "gzip")
+            HT.setheader(stream, "Content-Length" => "1")
+        elseif request.target == "/chunked"
+            HT.setheader(stream, "Transfer-Encoding" => "chunked")
+        end
+        write(stream, "x")
+        return nothing
+    end
+    stream_server = HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true)
+    request_handler(request) = request.target == "/fixed" ?
+        HT.Response(200; headers = ["Transfer-Encoding" => "gzip"], body = "x") :
+        HT.Response(200, HT.CallbackBody(let sent = Ref(false)
+            dst -> sent[] ? 0 : (sent[] = true; dst[1] = UInt8('x'); 1)
+        end, () -> nothing))
+    adapter_server = HT.listen!(HT.streamhandler(request_handler), "127.0.0.1", 0; listenany = true)
+    try
+        for server in (stream_server, adapter_server)
+            fixed = _raw_http_request(HT.port(server), "GET /fixed HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            @test fixed == "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx"
+            old_client = _raw_http_request(HT.port(server), "GET /chunked HTTP/1.0\r\n\r\n")
+            @test !occursin("Transfer-Encoding", old_client)
+            @test endswith(old_client, "\r\n\r\nx")
+        end
+    finally
+        HT.forceclose(stream_server)
+        HT.forceclose(adapter_server)
     end
 end
 

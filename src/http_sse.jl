@@ -75,7 +75,10 @@ end
 
 The body of a server-sent event response from [`sse_stream`](@ref).
 `write(stream, event::SSEEvent)` sends an event and `close(stream)` ends the
-response. `max_len` limits the size of one event, in bytes.
+response. `max_len` limits the size of one event, in bytes. Events the client
+has not read yet may hold up to four times `max_len` bytes, and at least
+16 MiB: a `write` past that closes the stream and throws `IOError`, as it does
+once the client has gone.
 """
 mutable struct SSEStream <: AbstractBody
     buffer::Base.BufferStream
@@ -139,7 +142,7 @@ function write(stream::SSEStream, event::SSEEvent)::Int
     if event.id !== nothing
         _reject_sse_line_breaks("id", event.id)
     end
-    bytes = lock(stream.lock) do
+    return lock(stream.lock) do
         buf = stream.format_buffer
         truncate(buf, 0)
         # One value per `write`: Base's varargs `write(io, x1, xs...)` is not
@@ -169,10 +172,17 @@ function write(stream::SSEStream, event::SSEEvent)::Int
             write(buf, '\n')
         end
         write(buf, "\n")
-        return take!(buf)
+        bytes = take!(buf)
+        length(bytes) <= stream.max_len || throw(ArgumentError("serialized SSE event exceeds max_len"))
+        # A client that stops reading must not make the server keep every event.
+        # The floor keeps a burst of small events from tripping a small max_len.
+        waiting = bytesavailable(stream.buffer)
+        if waiting + length(bytes) > max(4 * stream.max_len, _DEFAULT_SSE_STREAM_MAX_LEN)
+            close(stream)
+            throw(Base.IOError("SSE client is not reading: $(waiting) bytes of events are waiting", 0))
+        end
+        return write(stream.buffer, bytes)
     end
-    length(bytes) <= stream.max_len || throw(ArgumentError("serialized SSE event exceeds max_len"))
-    return write(stream.buffer, bytes)
 end
 
 """

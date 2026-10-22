@@ -453,7 +453,7 @@ function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_H2Shut
     return nothing
 end
 
-function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
+function _notify_conn_shutdown!(conn::_ServerConn, write_deadline_ns::Int64)::Nothing
     hook = nothing
     lock(conn.lock)
     try
@@ -462,7 +462,7 @@ function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
         unlock(conn.lock)
     end
     hook === nothing && return nothing
-    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control)
+    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control, write_deadline_ns)
     return nothing
 end
 
@@ -699,7 +699,7 @@ end
 
 function _request_conn_shutdowns!(server::Server)::Nothing
     for tracked in _server_conns(server)
-        _notify_conn_shutdown!(tracked)
+        _notify_conn_shutdown!(tracked, _server_write_deadline_ns(server))
     end
     return nothing
 end
@@ -1156,8 +1156,11 @@ function _stream_error_status(stream::Stream, err)::Int
     return status === nothing ? 500 : status::Int
 end
 
+# The record's `target` leaves out the query, which often carries credentials
+# such as tokens and signatures.
 function _log_handler_error(err, backtrace, request::Request, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    @error "server handler error" exception = (err, backtrace) method = request.method target = request.target peer = _conn_remote_addr(conn)
+    target, _ = _split_request_target(request.target)
+    @error "server handler error" exception = (err, backtrace) method = request.method target = target peer = _conn_remote_addr(conn)
     return nothing
 end
 
@@ -1285,13 +1288,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                             startwrite(stream)
                             closewrite(stream)
                         end
-                    elseif !(@atomic :acquire stream.head_committed)
-                        # Writing started but the response head was deferred
-                        # (h1 FIXED mode) and never reached the wire: answer
-                        # with a raw error response instead of silently
-                        # dropping the connection (#1303).
+                    end
+                    if !(@atomic :acquire stream.head_committed)
+                        # No head reached the wire: the handler's own headers
+                        # failed the attempt above, or writing had started with
+                        # a deferred fixed-length head (#1303). Answer with a
+                        # new error response.
                         _try_write_server_error!(tracked.conn, request, status)
-                        return nothing
                     end
                     # Return without `closewrite`: the connection closes, and a body
                     # that already started stays unterminated, so the client can tell
