@@ -1590,15 +1590,22 @@ function _handle_h2_stream!(
             response_obj = response::Response
             # Build the head before writing, so a response that cannot be sent,
             # such as one with an invalid header or a spent body, gets 500.
-            header_fields, trailer_fields = try
+            head = try
                 _h2_response_head(handler_request, response_obj)
             catch err
                 _log_handler_error(err, catch_backtrace(), request, conn)
                 response_obj.body isa AbstractBody && @try_ignore body_close!(response_obj.body::AbstractBody)
-                response_obj = _h2_status_response(500, handler_request)
-                _h2_response_head(handler_request, response_obj)
+                nothing
             end
-            _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, header_fields, trailer_fields, _server_write_deadline_ns(server))
+            if head === nothing
+                # Never assign the 500 to `response_obj`: one more response type
+                # widens it to abstract `Response`, and the write below would
+                # dispatch dynamically, which `juliac --trim` cannot compile.
+                _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, _h2_status_response(500, handler_request), _server_write_deadline_ns(server))
+            else
+                header_fields, trailer_fields = head
+                _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, header_fields, trailer_fields, _server_write_deadline_ns(server))
+            end
         end
         _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
