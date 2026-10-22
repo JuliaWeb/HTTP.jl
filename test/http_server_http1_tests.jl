@@ -1551,6 +1551,26 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers end an HTTP/1.0 streaming body by closing" begin
+    # HTTP/1.0 has no chunked framing: a body of unknown length is sent as is and
+    # the connection closes after it, even when the client asked for keep-alive.
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        sent = Ref(false)
+        return HT.Response(200, HT.CallbackBody(dst -> sent[] ? 0 : (sent[] = true; copyto!(dst, 1, codeunits("hello"), 1, 5); 5), () -> nothing))
+    end
+    try
+        keep_alive = "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+        raw = _raw_http_request(HT.port(server), keep_alive * keep_alive)
+        @test !occursin("Transfer-Encoding", raw)
+        @test endswith(raw, "\r\n\r\nhello")
+        @test count("HTTP/1.1 200 OK", raw) == 1
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server ordinary handlers suppress bodies for 204 and 304" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             status = request.target == "/nocontent" ? 204 : 304

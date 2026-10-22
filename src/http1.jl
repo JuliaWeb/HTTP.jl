@@ -721,6 +721,18 @@ function _write_chunked_body!(::IO, body, ::Headers)
     throw(ProtocolError("unsupported HTTP/1 response body type $(typeof(body))"))
 end
 
+function _write_eof_body!(io::IO, body::AbstractBody)::Nothing
+    buf = Vector{UInt8}(undef, 16 * 1024)
+    while true
+        n = body_read!(body, buf)
+        n == 0 && return nothing
+        write(io, n == length(buf) ? buf : @view(buf[1:n]))
+    end
+end
+
+_write_eof_body!(io::IO, body::Union{AbstractString,AbstractVector{UInt8}})::Nothing = (write(io, body); nothing)
+_write_eof_body!(::IO, body)::Nothing = throw(ProtocolError("unsupported HTTP/1 response body type $(typeof(body))"))
+
 function _request_has_body(request::Request)::Bool
     request.body isa EmptyBody && return false
     request.content_length == 0 && return false
@@ -873,8 +885,10 @@ end
 
 # The response head as bytes, whether the body is chunked, the trailers to send
 # after it, and whether a body follows the head. Throws, before anything is
-# written, for a response that cannot be sent.
-function _response_head(response::Response, response_to_head::Bool)::Tuple{Vector{UInt8},Bool,Headers,Bool}
+# written, for a response that cannot be sent. For an HTTP/1.0 peer
+# (`peer_http10`), a body that would be chunked is instead ended by closing the
+# connection (RFC 9112 §6.1).
+function _response_head(response::Response, response_to_head::Bool, peer_http10::Bool=false)::Tuple{Vector{UInt8},Bool,Headers,Bool}
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
@@ -906,6 +920,11 @@ function _response_head(response::Response, response_to_head::Bool)::Tuple{Vecto
     else
         removeheader(headers, "Content-Length")
     end
+    if use_chunked && peer_http10
+        use_chunked = false
+        removeheader(headers, "Transfer-Encoding")
+        setheader(headers, "Connection", "close")
+    end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
     # `allows_body` already rules out HEAD.
@@ -926,7 +945,11 @@ function _write_response_body!(io::IO, response::Response, use_chunked::Bool, tr
         _write_chunked_body!(io, response.body, trailer_values)
         return nothing
     end
-    response.content_length < 0 && return nothing
+    if response.content_length < 0
+        # Neither a length nor chunked: the body ends when the connection closes.
+        _response_has_body(response) && _write_eof_body!(io, response.body)
+        return nothing
+    end
     body = response.body
     if body isa BytesBody
         _write_exact_bytes_body!(io, body::BytesBody, response.content_length)
