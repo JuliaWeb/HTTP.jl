@@ -624,6 +624,92 @@ end
     end
 end
 
+@testset "Credential headers stay within one origin, whatever their case" begin
+    # Records each request head; `/to/<escaped location>` answers 302 with that Location.
+    # Connections stay open until the client closes them.
+    function recording_server()
+        server = listen(IPv4(0), 0)
+        heads = Channel{String}(Inf)
+        @async while isopen(server)
+            sock = try accept(server) catch; break end
+            @async try
+                while !eof(sock)
+                    head = String(readuntil(sock, "\r\n\r\n"))
+                    put!(heads, head)
+                    if startswith(head, "POST") && (m = match(r"(?i)\r\ncontent-length: *(\d+)", head)) !== nothing
+                        read(sock, parse(Int, m[1]))
+                    end
+                    to = match(r"^\w+ /to/(\S+) ", head)
+                    write(sock, to === nothing ? "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" :
+                        "HTTP/1.1 302 Found\r\nLocation: $(unescapeuri(to[1]))\r\nContent-Length: 0\r\n\r\n")
+                end
+            finally
+                close(sock)
+            end
+        end
+        return server, Int(getsockname(server)[2]), heads
+    end
+    credentials = ["authorization" => "Bearer lower", "COOKIE" => "c=upper", "Proxy-Authorization" => "Basic cHJveHk="]
+    secrets = ("Bearer lower", "c=upper", "Basic cHJveHk=")
+    server1, port1, heads1 = recording_server()
+    server2, port2, heads2 = recording_server()
+    try
+        start(location) = "http://127.0.0.1:$port1/to/$(escapeuri(location))"
+        # Another host, then another port: credentials are dropped.
+        HTTP.get(start("http://localhost:$port1/landing"), [credentials; "host" => "127.0.0.1:$port1"; "X-Other" => "kept"]; retry=false)
+        take!(heads1)
+        second = take!(heads1)
+        @test !any(s -> occursin(s, second), secrets)
+        @test occursin("Host: localhost:$port1", second)
+        @test occursin("X-Other: kept", second)
+        HTTP.get(start("http://127.0.0.1:$port2/landing"), credentials; retry=false)
+        take!(heads1)
+        second = take!(heads2)
+        @test !any(s -> occursin(s, second), secrets)
+        # The same origin keeps them.
+        HTTP.get(start("/landing"), credentials; retry=false)
+        take!(heads1)
+        second = take!(heads1)
+        @test all(s -> occursin(s, second), secrets)
+        # A 302 turns POST into a body-less GET without the old body headers.
+        HTTP.post(start("/landing"), ["content-type" => "text/plain", "content-length" => "5"], "hello"; retry=false)
+        take!(heads1)
+        second = take!(heads1)
+        @test !occursin("text/plain", second)
+        @test !occursin(r"(?i)content-length: *5", second)
+        # Scheme and default ports decide the origin as well.
+        @test !HTTP.RedirectRequest.sameorigin(URI("https://a.example/"), URI("http://a.example/"))
+        @test HTTP.RedirectRequest.sameorigin(URI("https://A.example/x"), URI("https://a.example:443/y"))
+    finally
+        close(server1)
+        close(server2)
+        HTTP.Connections.closeall()
+    end
+
+    # A CONNECT tunnel sends Proxy-Authorization to the proxy, never through the tunnel.
+    proxy = listen(IPv4(0), 0)
+    pport = Int(getsockname(proxy)[2])
+    tunnel_heads = Channel{String}(2)
+    @async try
+        sock = accept(proxy)
+        put!(tunnel_heads, String(readuntil(sock, "\r\n\r\n")))
+        write(sock, "HTTP/1.1 200 Connection established\r\n\r\n")
+        put!(tunnel_heads, String(readuntil(sock, "\r\n\r\n")))
+        write(sock, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        read(sock)  # until the client closes the tunnel
+        close(sock)
+    finally
+        close(proxy)
+    end
+    try
+        HTTP.get("ws://example.com/x", ["proxy-authorization" => "Basic cHJveHk="]; proxy="http://127.0.0.1:$pport", retry=false)
+        @test occursin("Proxy-Authorization: Basic cHJveHk=", take!(tunnel_heads))
+        @test !occursin("cHJveHk=", take!(tunnel_heads))
+    finally
+        HTTP.Connections.closeall()
+    end
+end
+
 @testset "Retry with request/response body streams" begin
     shouldfail = Ref(true)
     status = Ref(200)
