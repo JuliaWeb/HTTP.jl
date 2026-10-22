@@ -93,6 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `servecontent`, `servefile` and `fileserver` scan `If-Match` and
+  `If-None-Match` lists in linear time. A long list, such as several header
+  lines joined into one value, cost time and memory quadratic in its length.
+  Weak comparison drops only a leading `W/`, and an entity-tag with a byte
+  above 0x7F no longer produces a 500. ([#1442])
 - `handlertimeout` wakes the waiting request as soon as the handler finishes.
   It polled for the result every millisecond, which added up to 1 ms to each
   request whose handler yields and woke the interactive thread 1000 times a
@@ -1238,3 +1243,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1435]: https://github.com/JuliaWeb/HTTP.jl/issues/1435
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
+[#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
