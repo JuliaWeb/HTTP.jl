@@ -529,6 +529,8 @@ end
     # A colon introduces a Windows drive specifier ("C:...") or an alternate
     # data stream ("file:...:$DATA"); neither is a valid component name here.
     (':' in segment) && return true
+    # No file system allows NUL in a name; `stat` would throw on it.
+    ('\0' in segment) && return true
     # Absolute paths (POSIX or, when running on Windows, drive/UNC forms) cause
     # joinpath to discard the root. Guard against the host's own notion of an
     # absolute path as well as the cross-platform forms covered above.
@@ -564,8 +566,11 @@ function _join_request_path(root::String, segments::Vector{String})::String
     root_prefix = normpath(root)
     # Suffix the root with a separator so that a sibling directory sharing a
     # name prefix (e.g. "<root>_evil") cannot be mistaken for being inside the
-    # root. The root itself is allowed (resolved == root_prefix).
-    if resolved != root_prefix && !startswith(resolved, root_prefix * Base.Filesystem.path_separator)
+    # root. A root such as "dir/" or "/" already ends with one. The root itself
+    # is allowed (resolved == root_prefix).
+    sep = Base.Filesystem.path_separator
+    inside = endswith(root_prefix, sep) ? root_prefix : root_prefix * sep
+    if resolved != root_prefix && !startswith(resolved, inside)
         throw(ArgumentError("invalid request path"))
     end
     return resolved
@@ -785,6 +790,8 @@ missing path whose last segment does not look like a file name, such as
 `/users/42`, gets the file `spa_fallback` from `root`, as a single-page app
 needs; a missing path such as `/app.js` still gets `404`. Throws
 `ArgumentError` when `root` is not an existing directory.
+
+Symbolic links under `root` are followed, also when they point outside it.
 """
 function fileserver(
     root::AbstractString;
