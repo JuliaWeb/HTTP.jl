@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/1 connection pool no longer hands out an idle connection the
+  server has already closed. Servers such as MinIO and many Go services close
+  idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
+  the socket without waiting before reuse and discards a connection that is at
+  end-of-stream or holds unsolicited bytes. Previously a non-idempotent request
+  such as a POST failed with `unexpected EOF while reading HTTP/1 data`,
+  because it cannot be retried on a dead reused connection.
 - `HTTP.streamhandler` closes a streaming response body that a HEAD, 204, or
   304 response does not send, instead of reading it to the end. A HEAD request
   to a server-sent events route kept the event producer running and blocked

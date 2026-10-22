@@ -1885,6 +1885,56 @@ end
     end
 end
 
+@testset "HTTP client transport skips an idle conn the server already closed" begin
+    # Servers such as MinIO close idle keep-alive connections without a
+    # Keep-Alive hint. A POST is not retried on a dead reused connection, so
+    # the pool must not hand that connection out. Live idle conns stay reused.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    response_bytes = collect(codeunits("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"))
+    first_closed = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        nconns = 0
+        for requests_on_conn in (1, 2)
+            conn = NC.accept(listener)
+            nconns += 1
+            reader = HT._ConnReader(conn)
+            try
+                for _ in 1:requests_on_conn
+                    request = HT.read_request(reader)
+                    _read_all_transport_body_bytes(request.body)
+                    _write_all_tcp!(conn, response_bytes)
+                end
+            finally
+                HTTP.@try_ignore NC.close(conn)
+                nconns == 1 && put!(first_closed, nothing)
+            end
+        end
+        return nconns
+    end)
+    transport = HT.Transport(max_idle_per_host = 2, max_idle_total = 2)
+    try
+        for (i, method) in enumerate(("GET", "POST", "POST"))
+            body = method == "GET" ? HT.EmptyBody() : HT.BytesBody(UInt8[0x78])
+            request = HT.Request(method, "/$(i)"; host = address, body = body, content_length = method == "GET" ? 0 : 1)
+            response = HT.roundtrip!(transport, address, request)
+            @test String(_read_all_transport_body_bytes(response.body)) == "ok"
+            HT.body_close!(response.body)
+            if i == 1
+                # Loopback delivers the server's FIN before its close returns.
+                take!(first_closed)
+                @test HT.idle_connection_count(transport) == 1
+            end
+        end
+        # One conn for the GET; the POSTs share a second one.
+        @test fetch(server_task) == 2
+    finally
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
 # --- Response header limits (issue #1362) -------------------------------------
 
 @testset "HTTP transport constructor validates header limits" begin
