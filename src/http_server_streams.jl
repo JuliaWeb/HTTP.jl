@@ -5,6 +5,8 @@ function _server_stream_allows_body(stream::Stream)::Bool
     return true
 end
 
+@inline _is_http10(message::Union{Request,Response})::Bool = message.proto_major == UInt8(1) && message.proto_minor == UInt8(0)
+
 function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
     # Framing is chosen late so explicit response headers win, while unread
     # request bodies still force connection close independently of write mode.
@@ -15,11 +17,14 @@ function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
                _ServerStreamWriteMode.FIXED :
                _ServerStreamWriteMode.IDENTITY
     end
-    headercontains(stream.response.headers, "Transfer-Encoding", "chunked") && return _ServerStreamWriteMode.CHUNKED
+    # HTTP/1.0 has no chunked framing (RFC 9112 §6.1): an HTTP/1.0 request, or a
+    # response the handler made HTTP/1.0, is sent close-delimited instead.
+    http10 = _is_http10(stream.message) || _is_http10(stream.response::Response)
+    !http10 && headercontains(stream.response.headers, "Transfer-Encoding", "chunked") && return _ServerStreamWriteMode.CHUNKED
     if hasheader(stream.response.headers, "Content-Length") || stream.response.content_length >= 0
         return _ServerStreamWriteMode.FIXED
     end
-    if stream.response.proto_major == UInt8(1) && stream.response.proto_minor == UInt8(0)
+    if http10
         stream.response.close = true
         return _ServerStreamWriteMode.IDENTITY
     end
@@ -119,6 +124,8 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
         _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
     elseif mode == _ServerStreamWriteMode.FIXED
+        # Content-Length frames the body; a Transfer-Encoding would contradict it.
+        removeheader(headers, "Transfer-Encoding")
         if response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
         end
