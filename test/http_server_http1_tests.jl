@@ -1653,6 +1653,27 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers answer Expect: 100-continue before reading the body" begin
+    server = HT.serve!(request -> HT.Response(200, String(request.body)), "127.0.0.1", 0; listenany = true, max_body_bytes = 8)
+    port_num = HT.port(server)
+    expect_head(version, length) =
+        "POST / $(version)\r\nHost: localhost\r\nContent-Length: $(length)\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
+    try
+        raw, _ = _raw_http_request_until_close(port_num, expect_head("HTTP/1.1", 5) * "hello")
+        @test startswith(raw, "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n")
+        @test endswith(raw, "\r\n\r\nhello")
+        # A body over max_body_bytes is refused without asking for it.
+        raw, _ = _raw_http_request_until_close(port_num, expect_head("HTTP/1.1", 50))
+        @test startswith(raw, "HTTP/1.1 413 Content Too Large\r\n")
+        # HTTP/1.0 clients do not know 1xx responses (RFC 9110 §10.1.1).
+        raw, _ = _raw_http_request_until_close(port_num, expect_head("HTTP/1.0", 5) * "hello")
+        @test startswith(raw, "HTTP/1.1 200 OK\r\n")
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server stream handler request and response flow" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             _ = HT.startread(stream)
@@ -2095,6 +2116,79 @@ end
     finally
         HT.forceclose(first_server)
         wait(first_server)
+    end
+end
+
+struct _AcceptErrorLogger <: Logging.AbstractLogger
+    messages::Channel{String}
+end
+Logging.min_enabled_level(::_AcceptErrorLogger) = Logging.Error
+Logging.shouldlog(::_AcceptErrorLogger, args...) = true
+Logging.catch_exceptions(::_AcceptErrorLogger) = false
+function Logging.handle_message(logger::_AcceptErrorLogger, level, message, args...; kwargs...)
+    put!(logger.messages, string(message))
+    return nothing
+end
+
+struct _FDLimit
+    cur::Culong
+    max::Culong
+end
+
+@testset "HTTP server keeps accepting after running out of file descriptors" begin
+    if Sys.iswindows()
+        @test_skip true
+    else
+        resource = Cint(Sys.islinux() ? 7 : 8) # RLIMIT_NOFILE
+        saved = Ref(_FDLimit(0, 0))
+        @test ccall(:getrlimit, Cint, (Cint, Ref{_FDLimit}), resource, saved) == 0
+        logger = _AcceptErrorLogger(Channel{String}(Inf))
+        server = Logging.with_logger(() -> HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0), logger)
+        # A server task that stops instead of retrying also wakes the test.
+        errormonitor(Threads.@spawn begin
+            try
+                wait(server)
+            catch
+            end
+            put!(logger.messages, "server stopped")
+        end)
+        port_num = HT.port(server)
+        dummies = IOStream[]
+        client = nothing
+        message = ""
+        try
+            probe = open("/dev/null")
+            raw_fd = fd(probe) # an Int before Julia 1.12, a RawFD after
+            lowest_free = raw_fd isa Integer ? Int(raw_fd) : Int(reinterpret(Int32, raw_fd))
+            close(probe)
+            limit = Ref(_FDLimit(Culong(lowest_free + 16), saved[].max))
+            @test ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, limit) == 0
+            # Take every descriptor below the limit, then free one for the client:
+            # the server's accept of that connection then fails with EMFILE.
+            while true
+                stream = try
+                    open("/dev/null")
+                catch
+                    break
+                end
+                push!(dummies, stream)
+            end
+            close(pop!(dummies))
+            client = NC.connect(NC.loopback_addr(port_num))
+            message = take!(logger.messages)
+        finally
+            foreach(close, dummies)
+            ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, saved)
+        end
+        try
+            @test message == "server accept error; retrying"
+            if message == "server accept error; retrying"
+                @test HT.request("GET", "http://127.0.0.1:$(port_num)/"; retry = false).status == 200
+            end
+        finally
+            client === nothing || close(client)
+            HT.forceclose(server)
+        end
     end
 end
 
