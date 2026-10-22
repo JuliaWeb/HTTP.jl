@@ -206,16 +206,22 @@ function _server_readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Int
     return n
 end
 
-function _server_read(stream::Stream)::Vector{UInt8}
+# Read the rest of the request body. With a `max_body_bytes` limit (`0` for
+# none), a body over it fails with the 413 error that `serve!` uses: a declared
+# length before anything is read or `100 Continue` is sent, a chunked body as
+# soon as it grows past the limit.
+function _server_read(stream::Stream, max_body_bytes::Int64=Int64(0))::Vector{UInt8}
     _require_server_stream(stream)
     out = UInt8[]
     buf = Vector{UInt8}(undef, 16 * 1024)
     try
+        _check_server_body_size!(stream.request_body_content_length, max_body_bytes)
         _maybe_write_continue!(stream)
         while true
             n = _stream_request_body_read!(stream, buf)
             n == 0 && break
             append!(out, @view(buf[1:n]))
+            _check_server_body_size!(Int64(length(out)), max_body_bytes)
         end
     catch err
         stream.io_error = err
@@ -559,11 +565,12 @@ end
 
 struct _StreamHandlerAdapter{F}
     handler::F
+    max_body_bytes::Int64
 end
 
-function _buffered_stream_request(stream::Stream)::Request
+function _buffered_stream_request(stream::Stream, max_body_bytes::Int64)::Request
     request = startread(stream)
-    body_bytes = read(stream)
+    body_bytes = _server_read(stream, max_body_bytes)
     body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
     return Request(
         request.method,
@@ -581,7 +588,7 @@ function _buffered_stream_request(stream::Stream)::Request
 end
 
 function (adapter::_StreamHandlerAdapter)(stream::Stream)
-    req = _buffered_stream_request(stream)
+    req = _buffered_stream_request(stream, adapter.max_body_bytes)
     resp = adapter.handler(req)
     resp isa Response || throw(ProtocolError("streamhandler request handler must return HTTP.Response"))
     response = resp::Response
@@ -608,12 +615,15 @@ function (adapter::_StreamHandlerAdapter)(stream::Stream)
 end
 
 """
-    streamhandler(request_handler) -> stream handler
+    streamhandler(request_handler; max_body_bytes=64 MiB) -> stream handler
 
 Return a stream handler, for `listen!`, that reads each request into memory,
-calls `request_handler(req)`, and writes the response it returns. A response
-body that is not in memory, such as a file from `fileserver`, is streamed.
+calls `request_handler(req)`, and writes the response it returns. A request
+body larger than `max_body_bytes` gets `413 Content Too Large`, as with
+[`serve!`](@ref); `0` means no limit. A response body that is not in memory,
+such as a file from `fileserver`, is streamed.
 """
-function streamhandler(handler)
-    return _StreamHandlerAdapter(handler)
+function streamhandler(handler; max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES)
+    max_body_bytes >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
+    return _StreamHandlerAdapter(handler, Int64(max_body_bytes))
 end

@@ -64,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h2` through ALPN. ([#1385])
 
 ### Changed
+- `streamhandler` limits the request body it reads into memory to
+  `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
+  no limit); a larger body gets 413. Before, the body was read without any
+  limit. ([#1472])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -1360,6 +1364,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
+[#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
