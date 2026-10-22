@@ -1984,6 +1984,57 @@ end
     end
 end
 
+@testset "HTTP client transport skips an idle TLS conn the server already closed" begin
+    # Over TLS the server's close_notify may sit in the TLS buffer rather than
+    # the socket, and records without application data (session tickets) must
+    # not make a live idle connection look used. The idle check asks TLS.
+    cert_file = joinpath(@__DIR__, "resources", "unittests.crt")
+    key_file = joinpath(@__DIR__, "resources", "unittests.key")
+    listener = TL.listen("tcp", "127.0.0.1:0", TL.Config(verify_peer = false, cert_file = cert_file, key_file = key_file); backlog = 8)
+    address = ND.join_host_port("localhost", Int((TL.addr(listener)::NC.SocketAddrV4).port))
+    response_bytes = collect(codeunits("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"))
+    first_closed = Channel{Nothing}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        nconns = 0
+        for requests_on_conn in (1, 2)
+            tls_conn = TL.accept(listener)
+            nconns += 1
+            try
+                TL.handshake!(tls_conn)
+                reader = HT._ConnReader(tls_conn)
+                for _ in 1:requests_on_conn
+                    request = HT.read_request(reader)
+                    _read_all_transport_body_bytes(request.body)
+                    write(tls_conn, response_bytes)
+                    flush(tls_conn)
+                end
+            finally
+                # close sends close_notify before closing the socket.
+                HTTP.@try_ignore TL.close(tls_conn)
+                nconns == 1 && put!(first_closed, nothing)
+            end
+        end
+        return nconns
+    end)
+    transport = HT.Transport(tls_config = TL.Config(verify_peer = false, verify_hostname = false), max_idle_per_host = 2, max_idle_total = 2)
+    try
+        for (i, method) in enumerate(("GET", "POST", "POST"))
+            body = method == "GET" ? HT.EmptyBody() : HT.BytesBody(UInt8[0x78])
+            request = HT.Request(method, "/$(i)"; host = address, body = body, content_length = method == "GET" ? 0 : 1)
+            response = HT.roundtrip!(transport, address, request; secure = true, server_name = "localhost")
+            @test String(_read_all_transport_body_bytes(response.body)) == "ok"
+            HT.body_close!(response.body)
+            i == 1 && take!(first_closed)
+        end
+        # One conn for the GET; the POSTs share a second one.
+        @test fetch(server_task) == 2
+    finally
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(server_task)
+    end
+end
+
 # --- Response header limits (issue #1362) -------------------------------------
 
 @testset "HTTP transport constructor validates header limits" begin
