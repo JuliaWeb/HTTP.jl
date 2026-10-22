@@ -151,6 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `maxframesize` bytes is closed with status 1008. Before, a peer could queue
   messages for a handler that received slowly or never without any limit.
   ([#1474])
+- The HTTP/2 client turns server push off (`SETTINGS_ENABLE_PUSH = 0`) in its
+  first SETTINGS frame. Push defaults to on and the client fails the connection
+  on `PUSH_PROMISE`, so a server that pushed a resource failed every request on
+  that connection. ([#1467])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1367,6 +1371,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
 [#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
+[#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
 [#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473

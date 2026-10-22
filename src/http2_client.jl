@@ -1495,7 +1495,9 @@ function _connect_h2_from_tcp!(
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)
-        initial_settings = Pair{UInt16,UInt32}[]
+        # Push defaults to enabled (RFC 9113 §6.5.2), and this client fails the
+        # connection on PUSH_PROMISE, so it turns push off.
+        initial_settings = Pair{UInt16,UInt32}[_H2_SETTINGS_ENABLE_PUSH => UInt32(0)]
         if http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
             push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(http2_settings.initial_window_size))
         end

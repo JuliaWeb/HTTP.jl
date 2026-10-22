@@ -2986,7 +2986,7 @@ end
         @test settings isa HT.SettingsFrame
         @test !(settings::HT.SettingsFrame).ack
         @test (settings::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1_048_576)]
+            Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0), UInt16(0x4) => UInt32(1_048_576)]
         wu = frames[2]
         @test wu isa HT.WindowUpdateFrame
         @test (wu::HT.WindowUpdateFrame).stream_id == UInt32(0)
@@ -3030,10 +3030,11 @@ end
         @test length(frames) == 2
         settings = frames[1]
         @test settings isa HT.SettingsFrame
-        # With default windows the client advertises an empty SETTINGS payload and
-        # sends no connection-level WINDOW_UPDATE: the frame after SETTINGS is the
+        # With default windows the client's SETTINGS only turns push off
+        # (SETTINGS_ENABLE_PUSH = 0, which defaults to on), and it sends no
+        # connection-level WINDOW_UPDATE: the frame after SETTINGS is the
         # client's SETTINGS ACK, never a WindowUpdateFrame.
-        @test isempty((settings::HT.SettingsFrame).settings)
+        @test (settings::HT.SettingsFrame).settings == Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0)]
         @test !(frames[2] isa HT.WindowUpdateFrame)
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
@@ -3074,7 +3075,7 @@ end
         # entry is emitted whenever it differs from the protocol default, not only when
         # it exceeds it.
         @test (settings::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(16_384)]
+            Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0), UInt16(0x4) => UInt32(16_384)]
         # A window below the default cap keeps the default per-stream buffer cap.
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
