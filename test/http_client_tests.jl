@@ -1210,7 +1210,9 @@ end
         @test_throws ArgumentError HT._parse_http_url(url)
     end
     @test_throws "invalid character '\\\\' in URL userinfo" HT.get("http://allowed.com\\@127.0.0.1:1/"; retry = false)
-    @test_throws ArgumentError HT._parse_http_url(HT.URI("http://[::1]evil.com/"))
+    # URIs 1.7.2 and later reject this URL themselves; earlier versions parse it to
+    # host "::1" and path "evil.com/", which HTTP has to reject.
+    @test_throws Union{ArgumentError, HT.URIs.ParseError} HT._parse_http_url(HT.URI("http://[::1]evil.com/"))
     @test_throws HT.ProtocolError HT._resolve_redirect_target("a:80", false, "//allowed.com\\@evil.com/", "/", "a")
     @test_throws ArgumentError HT.WebSockets._parse_websocket_url("ws://[localhost]/")
     @test_throws ArgumentError HT.ProxyConfig(http = "http://proxy\\@evil.com:3128")
