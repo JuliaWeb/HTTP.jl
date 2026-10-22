@@ -512,6 +512,21 @@ end
     @test if_match_resp.status == 412
     @test isempty(_read_all_server_bytes(if_match_resp.body))
 
+    # A request head can fold many lines into one long list of entity-tags; it
+    # is scanned in linear time and memory.
+    long_lists = (
+        (HT.Request("GET", "/"; headers = ["If-None-Match" => "," ^ 20_000 * "\"v1\""]), 304),
+        (HT.Request("GET", "/"; headers = ["If-Match" => "\"x\"," ^ 20_000 * "\"v1\""]), 200),
+    )
+    for (req, status) in long_lists
+        @test HT.servecontent(req, payload; etag = "\"v1\"").status == status
+        @test (@allocated HT.servecontent(req, payload; etag = "\"v1\"")) < 1_000_000
+    end
+    # Weak comparison ignores only a leading `W/`, and obs-text is a valid tag byte.
+    for (tag, etag, status) in (("\"aW/b\"", "\"ab\"", 200), ("W/\"ab\"", "\"ab\"", 304), ("\"\xff\"", "\"\xff\"", 304))
+        @test HT.servecontent(HT.Request("GET", "/"; headers = ["If-None-Match" => tag]), payload; etag = etag).status == status
+    end
+
     invalid_range_headers = HT.Headers()
     HT.setheader(invalid_range_headers, "Range", "bytes=20-25")
     invalid_range_req = HT.Request("GET", "/"; headers = invalid_range_headers)
