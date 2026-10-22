@@ -139,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error response. The server still sends the error with the handler's headers,
   but when those headers are what failed, such as a NUL in a value, it now
   falls back to a new error response instead of sending nothing. ([#1457])
+- Stream responses frame the body one way. A fixed-length response no longer
+  sends a `Transfer-Encoding` the handler set next to `Content-Length`, and a
+  response to an HTTP/1.0 request, or one the handler made HTTP/1.0, is never
+  chunked, including through `streamhandler`. ([#1463])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1353,6 +1357,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1457]: https://github.com/JuliaWeb/HTTP.jl/issues/1457
 [#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
+[#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
