@@ -1335,8 +1335,9 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 # Build the head before writing anything, so that a response
                 # that cannot be sent, such as one whose streaming body was
                 # already sent (#1333) or one with an invalid header, gets 500.
+                peer_http10 = handler_request.proto_minor == UInt8(0)
                 head, use_chunked, trailer_values, allows_body = try
-                    _response_head(response_obj, _is_head_request(handler_request))
+                    _response_head(response_obj, _is_head_request(handler_request), peer_http10)
                 catch err
                     _log_handler_error(err, catch_backtrace(), request, tracked.conn)
                     _close_response_body!(response_obj)
@@ -1361,6 +1362,8 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
                     return nothing
                 end
+                # A body sent without a length or chunking ends only when the connection closes.
+                allows_body && !use_chunked && response_obj.content_length < 0 && _response_has_body(response_obj) && return nothing
             end
             _set_conn_state!(tracked, _ConnState.IDLE)
             _set_idle_deadline!(server, tracked.conn)
