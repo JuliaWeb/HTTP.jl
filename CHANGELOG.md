@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h2` through ALPN. ([#1385])
 
 ### Changed
+- The multipart parsers (`parse_multipart_form`, `parse_multipart`,
+  `parse_multipart_mixed`) take `max_parts`, 1000 by default as in Go's
+  `mime/multipart`, and throw for a body with more parts; `max_parts = 0`
+  removes the limit. Without a limit a 50 MB body of tiny parts allocated
+  820 MB while parsing. ([#1453])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -1252,3 +1257,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
+[#1453]: https://github.com/JuliaWeb/HTTP.jl/issues/1453
