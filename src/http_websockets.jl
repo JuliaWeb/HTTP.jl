@@ -84,8 +84,7 @@ import ..body_close!
 import ..read_request
 import ..write_response!
 import ..write_request!
-import .._is_transport_timeout
-import .._wrap_transport_timeout
+import .._wrap_client_transport_error
 import ..Stream
 import .._clear_deadlines!
 import .._wait_after_accept_error
@@ -1128,8 +1127,9 @@ function open(
             kwargs...,
         )
     catch err
-        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "websocket handshake"))
-        rethrow()
+        # Raise the HTTP error types `request` raises, such as `ConnectError`.
+        wrapped = _wrap_client_transport_error(err, "websocket handshake")
+        wrapped === err ? rethrow() : throw(wrapped)
     end
     return ws
 end
