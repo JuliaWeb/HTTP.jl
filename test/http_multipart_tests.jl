@@ -284,6 +284,24 @@ end
     @test HT.parse_multipart(ct, body, :mixed) === nothing
 end
 
+@testset "parse_multipart does not intern the sender's subtype" begin
+    # Symbols are never freed, so one per distinct subtype would let a client
+    # grow server memory without bound.
+    name = "x-unseen-" * string(rand(UInt64); base = 36)
+    interned(s) = ccall(:jl_symbol_lookup, Ptr{Cvoid}, (Cstring,), s) != C_NULL
+    body = Vector{UInt8}("--b\r\nContent-Type: text/plain\r\n\r\nhi\r\n--b--\r\n")
+    ct = "multipart/$name; boundary=b"
+    parts = HT.parse_multipart(ct, body)
+    @test length(parts) == 1
+    @test String(read(parts[1])) == "hi"
+    @test HT.parse_multipart(ct, body, :mixed) === nothing
+    @test HT.parse_multipart_mixed(ct, body) === nothing
+    @test !interned(replace(name, '-' => ""))
+    # A required type still matches its subtype, dashes removed as before.
+    @test length(HT.parse_multipart("multipart/mixed; boundary=b", body, :mixed)) == 1
+    @test HT.parse_multipart("multipart/form-data; boundary=b", body, :formdata) == HT.Multipart[]
+end
+
 @testset "parse_multipart(request) overload" begin
     boundary = "reqboundary7"
     body_text = join([
