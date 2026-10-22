@@ -212,6 +212,36 @@ end
     end
 end
 
+@testset "HTTP server SSE stream closes when the client stops reading" begin
+    # The client never reads, so events wait in the stream until they pass the
+    # cap (16 MiB here); the next write closes the stream and throws IOError.
+    outcome = Channel{Any}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return HT.sse_stream(200; max_len = 1024) do stream
+            event = HT.SSEEvent("x" ^ 1000)
+            result = :all_written
+            try
+                for _ in 1:50_000 # ~50 MB: more than the cap plus socket buffers
+                    write(stream, event)
+                end
+            catch err
+                result = err
+            end
+            put!(outcome, result)
+        end
+    end
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: x\r\n\r\n")))
+        @test take!(outcome) isa Base.IOError
+    finally
+        NC.close(sock)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
     # Serialize an event offline by writing it into an SSEStream and reading the
     # framed bytes back out, so we can assert on the exact wire output.
@@ -568,6 +598,24 @@ end
     finally
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP fileserver accepts a root with a trailing separator" begin
+    mktempdir() do dir
+        write(joinpath(dir, "hello.txt"), "hello")
+        server = HT.serve!(HT.fileserver(dir * "/"), "127.0.0.1", 0; listenany = true)
+        try
+            ok = HT.get("http://$(HT.server_addr(server))/hello.txt"; status_exception = false)
+            @test ok.status == 200
+            @test String(ok.body) == "hello"
+            # A NUL in the path is a bad request, not a server error.
+            nul = _raw_http_request(HT.port(server), "GET /%00hello.txt HTTP/1.1\r\nHost: x\r\n\r\n")
+            @test startswith(nul, "HTTP/1.1 400 Bad Request\r\n")
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
     end
 end
 
@@ -1551,8 +1599,9 @@ end
     end
 end
 
-@testset "HTTP server ordinary handlers suppress bodies for HEAD" begin
-    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+@testset "HTTP server ordinary handlers suppress bodies for HEAD" for start in (HT.serve!, (h, args...; kw...) -> HT.listen!(HT.streamhandler(h), args...; kw...))
+    # `serve!` and `streamhandler` send the same head.
+    server = start("127.0.0.1", 0; listenany = true) do request
             return HT.Response(
                 200,
                 HT.BytesBody(collect(codeunits("oops")));
@@ -1569,6 +1618,26 @@ end
         parts = split(head_raw, "\r\n\r\n"; limit = 2)
         @test length(parts) == 2
         @test parts[2] == ""
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
+@testset "HTTP server ordinary handlers end an HTTP/1.0 streaming body by closing" begin
+    # HTTP/1.0 has no chunked framing: a body of unknown length is sent as is and
+    # the connection closes after it, even when the client asked for keep-alive.
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        sent = Ref(false)
+        return HT.Response(200, HT.CallbackBody(dst -> sent[] ? 0 : (sent[] = true; copyto!(dst, 1, codeunits("hello"), 1, 5); 5), () -> nothing))
+    end
+    try
+        keep_alive = "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+        raw = _raw_http_request(HT.port(server), keep_alive * keep_alive)
+        @test !occursin("Transfer-Encoding", raw)
+        @test endswith(raw, "\r\n\r\nhello")
+        @test count("HTTP/1.1 200 OK", raw) == 1
     finally
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))
@@ -1671,6 +1740,24 @@ end
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))
     end
+end
+
+@testset "HTTP server buffers request bodies in memory that follows the bytes received" begin
+    n = 1 << 20
+    data = rand(UInt8, n)
+    buffer_body(io, declared) = HT._buffer_server_request(
+        HT.Request("POST", "/"; body = HT.FixedLengthBody(io, declared), content_length = declared), 64n)
+    @test buffer_body(IOBuffer(data), n).body.data == data
+    # Doubling up to the declared length costs under twice the body.
+    @test minimum(@allocated(buffer_body(IOBuffer(data), n)) for _ in 1:3) < 5n ÷ 2
+    # A declared length alone does not reserve memory: this body ends after 10 bytes.
+    truncated() = try
+        buffer_body(IOBuffer(data[1:10]), 32n)
+    catch err
+        err
+    end
+    @test truncated() isa HT.ParseError
+    @test minimum(@allocated(truncated()) for _ in 1:3) < 256 * 1024
 end
 
 @testset "HTTP server ordinary handlers reject oversized buffered request bodies" begin

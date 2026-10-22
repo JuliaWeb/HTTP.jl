@@ -238,3 +238,46 @@ end
     @test (frames[3]::HT.ContinuationFrame).end_headers
     @test (frames[3]::HT.ContinuationFrame).header_block_fragment == UInt8[0x09, 0x0a]
 end
+
+@testset "HTTP/2 frames read through a connection reader" begin
+    listener = Reseau.TCP.listen(Reseau.TCP.loopback_addr(0); backlog = 4)
+    addr = Reseau.TCP.addr(listener)::Reseau.TCP.SocketAddrV4
+    accepted = Channel{Reseau.TCP.Conn}(1)
+    errormonitor(Threads.@spawn put!(accepted, Reseau.TCP.accept(listener)))
+    client = Reseau.TCP.connect(Reseau.TCP.loopback_addr(Int(addr.port)))
+    server = take!(accepted)
+    try
+        updates = HT._window_update_frames(UInt32(3), UInt32(16384), true)
+        io = IOBuffer()
+        HT.write_frame!(io, HT.WindowUpdateFrame(UInt32(0), UInt32(16384)))
+        @test HT._window_update_frames(UInt32(3), UInt32(16384), false) == take!(copy(io))
+        HT.write_frame!(io, HT.WindowUpdateFrame(UInt32(3), UInt32(16384)))
+        @test updates == take!(io)
+        frames = HT.AbstractFrame[
+            HT.DataFrame(UInt32(3), false, UInt8[0x61, 0x62, 0x63]),
+            HT.PingFrame(false, (0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08)),
+        ]
+        bytes = vcat(updates, HT._frame_bytes(frames[1]), HT._frame_bytes(frames[2]))
+        function check(reader)
+            @test HT.read_frame!(reader) == HT.WindowUpdateFrame(UInt32(0), UInt32(16384))
+            @test HT.read_frame!(reader) == HT.WindowUpdateFrame(UInt32(3), UInt32(16384))
+            @test (HT.read_frame!(reader)::HT.DataFrame).data == UInt8[0x61, 0x62, 0x63]
+            @test (HT.read_frame!(reader)::HT.PingFrame).opaque_data == frames[2].opaque_data
+        end
+        # A 4-byte buffer splits every frame header and payload across reads.
+        write(client, bytes)
+        check(HT._ConnReader(server, 4))
+        # With the frames already buffered, headers and WINDOW_UPDATE frames are
+        # parsed in place: reading one allocates only the returned frame.
+        reader = HT._ConnReader(server)
+        copyto!(reader.buf, 1, bytes, 1, length(bytes))
+        reader.next, reader.stop = 1, length(bytes)
+        check(reader)
+        reader.next = 1
+        @test @allocated(HT.read_frame!(reader)) <= 64
+    finally
+        close(client)
+        close(server)
+        close(listener)
+    end
+end
