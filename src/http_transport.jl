@@ -352,13 +352,24 @@ end
 end
 
 # Servers may close idle keep-alive connections without a `Keep-Alive` hint
-# (MinIO and many Go servers do so after 30 seconds). Peek one byte without
-# waiting before reusing an idle connection: end-of-stream means the peer closed
-# it, and any byte is data an idle HTTP/1 connection must not have received
-# (for TLS, typically a close_notify alert). Either way it cannot carry a request,
-# and a non-idempotent request sent on it would fail without a safe retry.
+# (MinIO and many Go servers do so after 30 seconds). Before reusing an idle
+# connection, check without waiting whether the peer closed it or sent data an
+# idle HTTP/1 connection must not have received. Either way it cannot carry a
+# request, and a non-idempotent request sent on it would fail without a safe
+# retry. Plain TCP connections peek one byte from the socket.
 function _idle_conn_reusable(conn::Conn)::Bool
     _conn_reader_available(conn.reader) == 0 || return false
+    if conn.secure
+        # TLS may already hold records the socket no longer shows, and some
+        # records carry no data (session tickets). `tryread!` processes both
+        # without waiting: 0 means the peer closed, a count is data an idle
+        # HTTP/1 connection must not have, and `nothing` means it is idle.
+        return try
+            TLS.tryread!(conn.tls::TLS.Conn, Vector{UInt8}(undef, 1)) === nothing
+        catch
+            false
+        end
+    end
     byte = Ref{UInt8}(0)
     n = GC.@preserve byte SocketOps.recv_from!(
         conn.tcp.fd.pfd.sysfd, Base.unsafe_convert(Ptr{UInt8}, byte), Csize_t(1), SocketOps.MSG_PEEK)
