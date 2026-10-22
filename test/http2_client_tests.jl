@@ -3738,6 +3738,19 @@ end
     _wait_task_h2!(server_task)
 end
 
+# Read and discard until the peer closes. A server that closes with the
+# client's frames still unread resets the connection, and the client may then
+# lose response bytes it had not read yet.
+function _drain_h2_conn_until_eof!(conn)
+    buf = Vector{UInt8}(undef, 4096)
+    try
+        while readbytes!(conn, buf) > 0
+        end
+    catch
+    end
+    return nothing
+end
+
 @testset "HTTP/2 client treats flow-control violations by the server as errors" begin
     status_block(enc) = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
     # DATA past the stream's receive window: the stream fails (and is reset)
@@ -3750,6 +3763,7 @@ end
         end
         HT.write_frame!(io, HT.DataFrame(stream_id, true, UInt8[]))
         _write_all_h2_tcp!(conn, take!(io))
+        _drain_h2_conn_until_eof!(conn)
     end
     try
         err = _h2_scripted_roundtrip_error(address, "/")
@@ -3767,6 +3781,7 @@ end
             _write_frame_to_conn!(conn, HT.WindowUpdateFrame(stream_level ? stream_id : UInt32(0), UInt32(0x7fff_ffff)))
             _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
             _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("ok"))))
+            _drain_h2_conn_until_eof!(conn)
         end
         try
             err = _h2_scripted_roundtrip_error(address, "/")
