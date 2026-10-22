@@ -165,6 +165,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `write_idle_timeout` during an upload raises `TimeoutError` (it raised
   `NetClosingError`, or `TLSTransportError` over https) and is not retried,
   like a read timeout. ([#1449])
+- URLs are checked against RFC 3986 before a connection is made. A userinfo or
+  host with a backslash, a space, or a control character, a host with `%`
+  (hosts are not percent-decoded), a bracketed host that is not an IPv6
+  address, or a `URI` whose path does not start with `/` raises
+  `ArgumentError`; a redirect to such a location raises `ProtocolError`.
+  Special characters in URL credentials must be percent-encoded, such as a
+  Windows `DOMAIN\user` name as `DOMAIN%5Cuser`; a proxy environment variable
+  that does not parse is skipped with a warning. `URI` schemes match
+  case-insensitively, and URL parse errors leave out the userinfo. ([#1447])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1311,6 +1320,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1447]: https://github.com/JuliaWeb/HTTP.jl/issues/1447
 [#1448]: https://github.com/JuliaWeb/HTTP.jl/issues/1448
 [#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451

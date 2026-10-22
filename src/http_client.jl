@@ -2279,7 +2279,7 @@ function request(
         final_error = wrapped::Exception
         wrapped === err ? rethrow() : throw(wrapped)
     finally
-        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? String(url) : request_url::String))
+        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? _url_for_message(String(url)) : request_url::String))
     end
 end
 
@@ -2314,7 +2314,8 @@ Request and response:
   URL's query string.
 - `basicauth`: credentials as `user => password` or `(user, password)`. An
   `Authorization` header takes precedence; credentials in the URL are used when
-  neither is given.
+  neither is given. In a URL, percent-encode characters such as `/`, `?`, `#`,
+  space, and `\`, as in `https://user:p%2Fss@host/`.
 - `status_exception = true`: throw `StatusError` for a failing response.
 - `response_stream`: an `IO` or byte vector that receives the body instead of
   `response.body`, which is then `nothing` for an `IO` and the filled vector or
