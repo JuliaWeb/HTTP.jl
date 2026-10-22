@@ -50,6 +50,14 @@ struct _ProxyTarget
     pool_identity::Union{Nothing,UUID}
 end
 
+# `url` holds no credentials; printed configs, transports, and clients show only it.
+function Base.show(io::IO, target::_ProxyTarget)
+    print(io, "HTTP._ProxyTarget(", repr(target.url))
+    (target.authorization === nothing && target.username === nothing) || print(io, ", with credentials")
+    print(io, ")")
+    return nothing
+end
+
 """
     ProxyConfig(url; no_proxy=nothing)
     ProxyConfig(; http=nothing, https=nothing, all=nothing, no_proxy=nothing, env=false)
