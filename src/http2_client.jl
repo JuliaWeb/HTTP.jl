@@ -377,10 +377,13 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     lock(conn.state_lock)
     try
         while true
-            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
+            # A stream the peer is done with, such as one a GOAWAY rejected just
+            # before the connection closed, stops its upload first; its own error
+            # then reaches the caller. A failed connection keeps stream entries.
             stream_id in conn.send_closed_streams && return 0
             haskey(conn.stream_send_window, stream_id) || return 0
+            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
             stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
@@ -2067,7 +2070,17 @@ function _h2_roundtrip_incoming!(
             throw(_canceled_error(request_ctx))
         end
         end_stream = request.body isa EmptyBody
-        if !end_stream && !_write_request_body_h2!(conn, stream_state.stream_id, request)
+        sent = end_stream || try
+            _write_request_body_h2!(conn, stream_state.stream_id, request)
+        catch
+            # A GOAWAY or REFUSED_STREAM can close the connection under the
+            # upload. The stream's error then says why, and the request is safe
+            # to retry (RFC 9113 §8.7).
+            stream_err = lock(() -> stream_state.stream_error, stream_state.lock)
+            (stream_err !== nothing && _h2_guaranteed_unprocessed(stream_err)) || rethrow()
+            throw(stream_err)
+        end
+        if !sent
             # The upload was abandoned because the peer finished with the
             # stream first. When that was a benign early complete response
             # (no stream error), actively cancel our half of the stream
