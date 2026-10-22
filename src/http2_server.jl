@@ -967,6 +967,8 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
                 # written verbatim into an HTTP/1 request line, splitting the target
                 # and enabling request smuggling past path-based ACLs.
                 _string_contains_whitespace_byte(normalized) && throw(ProtocolError("invalid HTTP/2 :path pseudo-header: $(repr(normalized))"))
+                # It is an absolute path, or `*` (checked against the method below).
+                (startswith(normalized, '/') || normalized == "*") || throw(ProtocolError("invalid HTTP/2 :path pseudo-header: $(repr(normalized))"))
                 path = normalized
             elseif name == ":authority"
                 authority === nothing || throw(ProtocolError("duplicate HTTP/2 :authority pseudo-header"))
@@ -1020,6 +1022,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     else
         scheme === nothing && throw(ProtocolError("missing HTTP/2 :scheme pseudo-header"))
         path === nothing && throw(ProtocolError("missing HTTP/2 :path pseudo-header"))
+        path == "*" && method != "OPTIONS" && throw(ProtocolError("HTTP/2 :path * is only valid for OPTIONS"))
     end
     return method::String, scheme, path, authority, out_headers
 end
