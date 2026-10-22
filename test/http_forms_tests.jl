@@ -395,3 +395,50 @@ end
           Dict("user" => "a b", "x" => "1")
     @test HT.queryparams("a=b+c&d=e%20f") == Dict("a" => "b c", "d" => "e f")
 end
+
+@testset "multipart part headers quote names and reject CR/LF" begin
+    form = HT.Form([
+        "file" => HT.Multipart("x\"; name=\"is_admin", IOBuffer("data"), "text/plain"),
+        "a\r\nContent-Type: evil/type" => "v",
+    ])
+    body = read(form)
+    parts = HT.parse_multipart_form(HT.content_type(form), body)
+    @test length(parts) == 2
+    @test parts[1].name == "file"
+    @test parts[1].filename == "x%22; name=%22is_admin"
+    @test String(read(parts[1])) == "data"
+    @test parts[2].name == "a%0D%0AContent-Type: evil/type"
+    @test parts[2].contenttype == "text/plain"
+    @test String(read(parts[2])) == "v"
+
+    @test_throws ArgumentError HT.Form(["f" => HT.Multipart("a.txt", IOBuffer("d"), "text/plain\r\nX-Injected: 1")])
+    @test_throws ArgumentError HT.Form(["f" => HT.Multipart("a.txt", IOBuffer("d"), "text/plain", "binary\nX: 1")])
+end
+
+@testset "multipart Content-Type parameters" begin
+    body = Vector{UInt8}("--abc\r\nContent-Disposition: form-data; name=\"greeting\"\r\n\r\nhello\r\n--abc--\r\n")
+    for ct in (
+        "multipart/form-data; boundary=abc",
+        "multipart/form-data; boundary=\"abc\"",
+        "multipart/form-data;boundary=abc",
+        "Multipart/Form-Data; BOUNDARY=abc",
+        "multipart/form-data; charset=utf-8; boundary=abc",
+        "multipart/form-data; boundary=abc; charset=utf-8",
+    )
+        parts = HT.parse_multipart_form(ct, body)
+        @test parts !== nothing && length(parts) == 1 && parts[1].name == "greeting" && String(read(parts[1])) == "hello"
+        @test length(HT.parse_multipart(ct, body, :formdata)) == 1
+    end
+    @test HT.parse_multipart_form("multipart/form-data", body) === nothing
+    @test HT.parse_multipart_form("multipart/mixed; boundary=abc", body) === nothing
+    @test_throws ErrorException HT.parse_multipart_form("multipart/form-data; boundary=", body)
+    @test_throws ErrorException HT.parse_multipart_form("multipart/form-data; boundary=" * 'a'^71, body)
+
+    # Any AbstractVector body works, including one that is not contiguous in memory.
+    bytes = Vector{UInt8}("--b\r\nContent-Disposition: form-data; name=\"n\"\r\n\r\nv\r\n--b--\r\n")
+    interleaved = vec(permutedims(hcat(bytes, fill(UInt8('#'), length(bytes)))))
+    strided = view(interleaved, 1:2:length(interleaved))
+    @test strided == bytes
+    parts = HT.parse_multipart_form("multipart/form-data; boundary=b", strided)
+    @test length(parts) == 1 && parts[1].name == "n" && String(read(parts[1])) == "v"
+end
