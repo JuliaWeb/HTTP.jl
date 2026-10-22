@@ -56,6 +56,9 @@ mutable struct _H2SendWindowState
     peer_max_header_list_size::Int
     header_encoder::Encoder
     stream_send_window::Dict{UInt32,Int64}
+    # Connection-level receive window: the DATA bytes (padding included) the
+    # peer may still send before it needs more WINDOW_UPDATE credit.
+    @atomic conn_recv_window::Int64
     @atomic closed::Bool
 end
 
@@ -70,6 +73,7 @@ function _H2SendWindowState()
         0,
         Encoder(),
         Dict{UInt32,Int64}(),
+        Int64(_H2_DEFAULT_WINDOW_SIZE),
         false,
     )
 end
@@ -384,15 +388,20 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
     end
 end
 
+# Returns `nbytes` of receive-window credit to the peer: always at the
+# connection level, and at the stream level when `stream_level` is set.
 function _send_h2_server_window_updates!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
     stream_id::UInt32,
     nbytes::Int,
     stream_level::Bool=true,
 )::Nothing
     nbytes <= 0 && return nothing
     increment = UInt32(nbytes)
+    # Credit the window before the peer can see the update and use it.
+    @atomic send_state.conn_recv_window += nbytes
     try
         _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), increment))
         stream_level && _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(stream_id, increment))
@@ -415,7 +424,8 @@ function _maybe_cleanup_h2_server_state!(
     should_delete = false
     lock(state.lock)
     try
-        should_delete = state.handler_finished && state.stream_done && _h2_server_available_bytes(state) == 0
+        # An aborted stream was reset by one side, so no request body is coming.
+        should_delete = state.handler_finished && (state.stream_done || state.aborted) && _h2_server_available_bytes(state) == 0
     finally
         unlock(state.lock)
     end
@@ -436,28 +446,36 @@ function _maybe_cleanup_h2_server_state!(
     return nothing
 end
 
+# Drops the request bytes buffered for `state` and returns how many there were,
+# so the caller can return their connection-level credit. Callers hold `state.lock`.
+function _take_h2_server_unread_bytes!(state::_H2ServerStreamState)::Int
+    unread = _h2_server_available_bytes(state)
+    empty!(state.body)
+    state.body_read_index = 1
+    return unread
+end
+
+# Returns the number of buffered request bytes discarded (0 unless `discard_body`).
 function _set_h2_server_stream_cancelled!(
     state::_H2ServerStreamState,
     kind::_H2ServerStreamCancelKind,
     aborted::Bool=true,
     discard_body::Bool=true,
     finish_if_unstarted::Bool=false,
-)::Nothing
+)::Int
+    discarded = 0
     lock(state.lock)
     try
         state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN) && (state.cancel_kind = UInt8(kind))
         aborted && (state.aborted = true)
         state.stream_done = true
-        if discard_body
-            empty!(state.body)
-            state.body_read_index = 1
-        end
+        discard_body && (discarded = _take_h2_server_unread_bytes!(state))
         finish_if_unstarted && !state.handler_started && (state.handler_finished = true)
         notify(state.condition)
     finally
         unlock(state.lock)
     end
-    return nothing
+    return discarded
 end
 
 function _fail_h2_server_streams!(
@@ -497,7 +515,7 @@ function _fail_h2_server_stream!(
     finally
         unlock(state.lock)
     end
-    _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
+    discarded = _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
     if should_reset
         @try_ignore begin
             _write_frame_h2_server_threadsafe!(
@@ -508,6 +526,7 @@ function _fail_h2_server_stream!(
             )
         end
     end
+    @try_ignore _send_h2_server_window_updates!(conn, write_lock, send_state, state.stream_id, discarded, false)
     _unregister_h2_send_window!(send_state, state.stream_id)
     _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
     return nothing
@@ -554,7 +573,7 @@ function body_read!(body::_H2ServerBody, dst::Vector{UInt8})::Int
             unlock(body.state.lock)
         end
         if nread > 0
-            _send_h2_server_window_updates!(body.conn, body.write_lock, body.stream_id, nread)
+            _send_h2_server_window_updates!(body.conn, body.write_lock, body.send_state, body.stream_id, nread)
             return nread
         end
         if done
@@ -570,15 +589,18 @@ function body_close!(body::_H2ServerBody)::Nothing
     was_closed && return nothing
     @atomic :release body.closed = true
     should_reset = false
+    unread = 0
     lock(body.state.lock)
     try
-        if !body.state.stream_done && !body.state.aborted
-            body.state.aborted = true
-            should_reset = true
-        elseif body.state.stream_done && _h2_server_available_bytes(body.state) > 0
-            body.state.aborted = true
-            empty!(body.state.body)
-            body.state.body_read_index = 1
+        if !body.state.aborted
+            # Nobody reads these bytes now; their connection credit goes back below.
+            unread = _take_h2_server_unread_bytes!(body.state)
+            if !body.state.stream_done
+                body.state.aborted = true
+                should_reset = true
+            elseif unread > 0
+                body.state.aborted = true
+            end
         end
         notify(body.state.condition)
     finally
@@ -589,6 +611,7 @@ function body_close!(body::_H2ServerBody)::Nothing
             _write_frame_h2_server_threadsafe!(body.write_lock, body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)))
         end
     end
+    @try_ignore _send_h2_server_window_updates!(body.conn, body.write_lock, body.send_state, body.stream_id, unread, false)
     _maybe_cleanup_h2_server_state!(body.tracked, body.states_lock, body.states, body.state, body.send_state)
     return nothing
 end
@@ -1669,7 +1692,9 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, initial_settings), _server_write_deadline_ns(server))
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
         if server.http2_settings.connection_window_size > _H2_DEFAULT_WINDOW_SIZE
-            _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
+            bump = server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE
+            @atomic send_state.conn_recv_window += bump
+            _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(bump)), _server_write_deadline_ns(server))
         end
         _clear_deadlines!(conn)
         _set_conn_shutdown_hook!(tracked, _H2ShutdownHook(write_lock, conn_control))
@@ -1731,8 +1756,9 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(state.lock)
                 end
-                _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
+                discarded = _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
                 _unregister_h2_send_window!(send_state, rst.stream_id)
+                _send_h2_server_window_updates!(conn, write_lock, send_state, rst.stream_id, discarded, false)
                 _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 if first_reset
                     reset_stream_count += 1
@@ -1938,6 +1964,11 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 df = frame::DataFrame
                 df.stream_id == UInt32(0) && throw(ProtocolError("DATA stream id must be non-zero"))
                 iseven(df.stream_id) && throw(ProtocolError("DATA stream id must be odd for client-initiated streams"))
+                # RFC 9113 §6.9.1: the whole payload, padding included, counts
+                # against the connection window, whatever becomes of the frame.
+                frame_bytes = length(df.data) + df.padding
+                (@atomic send_state.conn_recv_window -= frame_bytes) >= 0 ||
+                    throw(ProtocolError("HTTP/2 DATA exceeded the connection flow-control window"))
                 lock(states_lock)
                 state = try
                     get(states, df.stream_id, nothing)
@@ -1948,22 +1979,27 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     df.stream_id > max_stream_id && throw(ProtocolError("DATA frame received before HEADERS"))
                     # A refused or finished stream: drop the DATA but return its
                     # connection-level flow-control credit.
-                    _send_h2_server_window_updates!(conn, write_lock, df.stream_id, length(df.data) + df.padding, false)
+                    _send_h2_server_window_updates!(conn, write_lock, send_state, df.stream_id, frame_bytes, false)
                     continue
                 end
                 stream_error = false
+                # Set for DATA that is not buffered for the handler, whose credit goes back now.
+                dropped = false
                 lock(state.lock)
                 try
                     state.headers_complete || throw(ProtocolError("DATA frame received before END_HEADERS"))
                     if state.stream_done || state.trailers_complete
                         stream_error = true
+                        dropped = true
                     elseif state.aborted
+                        dropped = true
                         df.end_stream && (state.stream_done = true)
                         notify(state.condition)
                     else
                         new_received = state.received_body_bytes + Int64(length(df.data))
                         if state.declared_body_bytes >= 0 && new_received > state.declared_body_bytes
                             stream_error = true
+                            dropped = true
                         else
                             available_after = _h2_server_available_bytes(state) + length(df.data)
                             available_after <= state.max_buffered_bytes || throw(ProtocolError("HTTP/2 request body exceeded buffered server limit"))
@@ -1987,10 +2023,16 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(state.lock)
                 end
+                if dropped
+                    _send_h2_server_window_updates!(conn, write_lock, send_state, df.stream_id, frame_bytes, false)
+                else
+                    # Padding never reaches the handler, so it goes back now; at
+                    # the stream level only while the stream can carry more DATA.
+                    _send_h2_server_window_updates!(conn, write_lock, send_state, df.stream_id, df.padding, !df.end_stream && !stream_error)
+                end
                 if stream_error
                     _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
-                elseif state.aborted
-                    _send_h2_server_window_updates!(conn, write_lock, df.stream_id, length(df.data), false)
+                elseif dropped
                     _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 end
                 continue
