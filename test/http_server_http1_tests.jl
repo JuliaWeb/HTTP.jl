@@ -2054,6 +2054,78 @@ end
     end
 end
 
+struct _AcceptErrorLogger <: Logging.AbstractLogger
+    messages::Channel{String}
+end
+Logging.min_enabled_level(::_AcceptErrorLogger) = Logging.Error
+Logging.shouldlog(::_AcceptErrorLogger, args...) = true
+Logging.catch_exceptions(::_AcceptErrorLogger) = false
+function Logging.handle_message(logger::_AcceptErrorLogger, level, message, args...; kwargs...)
+    put!(logger.messages, string(message))
+    return nothing
+end
+
+struct _FDLimit
+    cur::Culong
+    max::Culong
+end
+
+@testset "HTTP server keeps accepting after running out of file descriptors" begin
+    if Sys.iswindows()
+        @test_skip true
+    else
+        resource = Cint(Sys.islinux() ? 7 : 8) # RLIMIT_NOFILE
+        saved = Ref(_FDLimit(0, 0))
+        @test ccall(:getrlimit, Cint, (Cint, Ref{_FDLimit}), resource, saved) == 0
+        logger = _AcceptErrorLogger(Channel{String}(Inf))
+        server = Logging.with_logger(() -> HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0), logger)
+        # A server task that stops instead of retrying also wakes the test.
+        errormonitor(Threads.@spawn begin
+            try
+                wait(server)
+            catch
+            end
+            put!(logger.messages, "server stopped")
+        end)
+        port_num = HT.port(server)
+        dummies = IOStream[]
+        client = nothing
+        message = ""
+        try
+            probe = open("/dev/null")
+            lowest_free = Int(reinterpret(Int32, fd(probe)))
+            close(probe)
+            limit = Ref(_FDLimit(Culong(lowest_free + 16), saved[].max))
+            @test ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, limit) == 0
+            # Take every descriptor below the limit, then free one for the client:
+            # the server's accept of that connection then fails with EMFILE.
+            while true
+                stream = try
+                    open("/dev/null")
+                catch
+                    break
+                end
+                push!(dummies, stream)
+            end
+            close(pop!(dummies))
+            client = NC.connect(NC.loopback_addr(port_num))
+            message = take!(logger.messages)
+        finally
+            foreach(close, dummies)
+            ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, saved)
+        end
+        try
+            @test message == "server accept error; retrying"
+            if message == "server accept error; retrying"
+                @test HT.request("GET", "http://127.0.0.1:$(port_num)/"; retry = false).status == 200
+            end
+        finally
+            client === nothing || close(client)
+            HT.forceclose(server)
+        end
+    end
+end
+
 @testset "HTTP server shutdown rejects new requests" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
