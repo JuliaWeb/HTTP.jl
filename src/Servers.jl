@@ -391,34 +391,26 @@ function listenloop(
         try
             Base.acquire(sem)
             tcp = Sockets.accept(listener.server)::TCPSocket
-            # The TLS handshake runs in the connection's own task, bounded by `readtimeout`,
-            # so a client that does not complete it cannot hold up the next accept.
-            @async try
-                io = listener.ssl === nothing ? tcp : getsslcontext(tcp, listener.ssl, readtimeout)
-                if io === nothing
-                    verbose >= 0 && @warn "unable to accept new connection"
-                elseif !tcpisvalid(io)
-                    verbose >= 0 && @warn "!tcpisvalid: $io"
-                    close(io)
-                else
-                    conn = Connection(io)
-                    conn.state = IDLE
-                    Base.@lock conns_lock push!(conns, conn)
-                    conn.host, conn.port = listener.hostname, listener.hostport
-                    try
-                        handle_connection(f, conn, listener, readtimeout, access_log, verbose)
-                    finally
-                        # handle_connection is in charge of closing the underlying io
-                        Base.@lock conns_lock delete!(conns, conn)
+            if listener.ssl === nothing
+                serve_accepted(f, tcp, listener, conns, conns_lock, tcpisvalid, sem, readtimeout, access_log, verbose)
+            else
+                # The TLS handshake runs in its own task, bounded by `readtimeout`, so a client
+                # that does not complete it cannot hold up the next accept.
+                @async try
+                    io = getsslcontext(tcp, listener.ssl, readtimeout)
+                    if io === nothing
+                        verbose >= 0 && @warn "unable to accept new connection"
+                        Base.release(sem)
+                    else
+                        serve_accepted(f, io, listener, conns, conns_lock, tcpisvalid, sem, readtimeout, access_log, verbose)
+                    end
+                catch
+                    Base.release(sem)
+                    verbose >= 1 && @error begin
+                        msg = current_exceptions_to_string()
+                        "Server on $(listener.hostname):$(listener.hostport) failed to set up a connection. $msg"
                     end
                 end
-            catch
-                verbose >= 1 && @error begin
-                    msg = current_exceptions_to_string()
-                    "Server on $(listener.hostname):$(listener.hostport) failed to set up a connection. $msg"
-                end
-            finally
-                Base.release(sem)
             end
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
@@ -433,6 +425,30 @@ function listenloop(
                 sleep(0.05 + rand() * 0.05)
             end
         end
+    end
+    return
+end
+
+# Registers the accepted `io` as one of the server's connections and serves it in its own
+# task, which releases `sem` when the connection is done. A connection `tcpisvalid` rejects is
+# closed, and its `sem` slot released, right away.
+function serve_accepted(f, io, listener, conns, conns_lock, tcpisvalid, sem, readtimeout, access_log, verbose)
+    if !tcpisvalid(io)
+        verbose >= 0 && @warn "!tcpisvalid: $io"
+        close(io)
+        Base.release(sem)
+        return
+    end
+    conn = Connection(io)
+    conn.state = IDLE
+    Base.@lock conns_lock push!(conns, conn)
+    conn.host, conn.port = listener.hostname, listener.hostport
+    @async try
+        handle_connection(f, conn, listener, readtimeout, access_log, verbose)
+    finally
+        # handle_connection is in charge of closing the underlying io
+        Base.@lock conns_lock delete!(conns, conn)
+        Base.release(sem)
     end
     return
 end
