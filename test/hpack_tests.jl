@@ -136,3 +136,23 @@ end
     decoder = HT.Decoder(max_header_list_size = 96)
     @test_throws HT.ParseError HT.decode_header_block(decoder, block)
 end
+
+@testset "HPACK decoder rejects index 0 and integers past its limit" begin
+    decoder = HT.Decoder()
+    # RFC 7541 §6.1: index 0 is not used.
+    @test_throws HT.ProtocolError HT.decode_header_block(decoder, UInt8[0x80])
+    # An all-ones prefix and nine continuation bytes encode more than 2^63.
+    continuation = UInt8[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]
+    @test_throws HT.ParseError HT.decode_header_block(decoder, vcat(UInt8[0xff], continuation))
+    # The same integer as a literal's name length and as a table size update.
+    @test_throws HT.ParseError HT.decode_header_block(decoder, vcat(UInt8[0x40, 0x7f], continuation))
+    @test_throws HT.ParseError HT.decode_header_block(decoder, vcat(UInt8[0x3f], continuation))
+    # The largest accepted integer still decodes: a table size update to 2^32 - 1
+    # exceeds the 4096 allowed here, which is a different error.
+    err = try
+        HT.decode_header_block(decoder, UInt8[0x3f, 0xe0, 0xff, 0xff, 0xff, 0x0f])
+    catch e
+        e
+    end
+    @test err isa HT.ParseError && occursin("table size update too large", err.message)
+end

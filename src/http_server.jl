@@ -1042,13 +1042,18 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
+function _close_response_body!(response::Response)::Nothing
+    if response.body isa AbstractBody
+        @try_ignore body_close!(response.body::AbstractBody)
+    end
+    return nothing
+end
+
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, head::Bool=_is_head_request(response.request))::Nothing
     try
         _write_response!(conn, response, head)
     finally
-        if response.body isa AbstractBody
-            @try_ignore body_close!(response.body::AbstractBody)
-        end
+        _close_response_body!(response)
     end
     return nothing
 end
@@ -1077,6 +1082,13 @@ end
     return errno == Int(Base.Libc.ECONNRESET) ||
            errno == Int(Base.Libc.EPIPE) ||
            errno == Int(Base.Libc.ECONNABORTED)
+end
+
+# An error from writing to the client's connection: the client closed it or a
+# write deadline passed.
+@inline function _is_conn_write_error(err::Exception)::Bool
+    return _is_peer_close_error(err) || _is_transport_timeout(err) ||
+           err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa EOFError
 end
 
 @enum _ServerConnErrAction::UInt8 begin
@@ -1144,8 +1156,11 @@ function _stream_error_status(stream::Stream, err)::Int
     return status === nothing ? 500 : status::Int
 end
 
+# The record's `target` leaves out the query, which often carries credentials
+# such as tokens and signatures.
 function _log_handler_error(err, backtrace, request::Request, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    @error "server handler error" exception = (err, backtrace) method = request.method target = request.target peer = _conn_remote_addr(conn)
+    target, _ = _split_request_target(request.target)
+    @error "server handler error" exception = (err, backtrace) method = request.method target = target peer = _conn_remote_addr(conn)
     return nothing
 end
 
@@ -1273,13 +1288,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                             startwrite(stream)
                             closewrite(stream)
                         end
-                    elseif !(@atomic :acquire stream.head_committed)
-                        # Writing started but the response head was deferred
-                        # (h1 FIXED mode) and never reached the wire: answer
-                        # with a raw error response instead of silently
-                        # dropping the connection (#1303).
+                    end
+                    if !(@atomic :acquire stream.head_committed)
+                        # No head reached the wire: the handler's own headers
+                        # failed the attempt above, or writing had started with
+                        # a deferred fixed-length head (#1303). Answer with a
+                        # new error response.
                         _try_write_server_error!(tracked.conn, request, status)
-                        return nothing
                     end
                     # Return without `closewrite`: the connection closes, and a body
                     # that already started stays unterminated, so the client can tell
@@ -1309,18 +1324,30 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
                 # A handler may return one response for many requests at once: never store request state on it.
                 response_obj = response::Response
-                # A response whose streaming body was already sent cannot be
-                # serialized again. Answer 500 before any bytes go out instead
-                # of failing mid-response and dropping the connection (#1333).
-                try
-                    _check_response_body_unsent(response_obj, handler_request)
+                # Build the head before writing anything, so that a response
+                # that cannot be sent, such as one whose streaming body was
+                # already sent (#1333) or one with an invalid header, gets 500.
+                head, use_chunked, trailer_values, allows_body = try
+                    _response_head(response_obj, _is_head_request(handler_request))
                 catch err
-                    @error "server handler returned a response that cannot be sent" exception = err
+                    _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    _close_response_body!(response_obj)
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj, _is_head_request(handler_request))
+                try
+                    write(tracked.conn, head)
+                    allows_body && _write_response_body!(tracked.conn, response_obj, use_chunked, trailer_values)
+                catch err
+                    # The head may be out, so close the connection and leave the
+                    # body unfinished. An error that is not the connection's came
+                    # from the response body, such as a failing body callback.
+                    _is_conn_write_error(err::Exception) || _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    return nothing
+                finally
+                    _close_response_body!(response_obj)
+                end
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
