@@ -334,6 +334,19 @@ end
     return @atomic :acquire transport.closed
 end
 
+# A summary: the TLS config holds session state and the pool holds connections.
+function Base.show(io::IO, transport::Transport)
+    print(io, "HTTP.Transport(", _transport_closed(transport) ? "closed" : "open",
+        ", idle_connections=", @atomic(:acquire, transport.idle_total),
+        ", max_idle_per_host=", transport.max_idle_per_host,
+        ", max_conns_per_host=", transport.max_conns_per_host,
+        ", tls_config=", transport.tls_config === nothing ? "default" : "custom",
+        ", proxy=")
+    show(io, transport.proxy)
+    print(io, ")")
+    return nothing
+end
+
 @inline function _conn_closed(conn::Conn)::Bool
     return @atomic :acquire conn.closed
 end
@@ -1118,10 +1131,9 @@ function _new_conn_tls!(
     catch err
         @try_ignore TCP.close(tcp)
         # Type TLS failures at the site where the phase is known: a TLSError
-        # here arose during connection setup, so surface it as a handshake
-        # failure. TLS failures on established connections reach the public
-        # boundary as `TLSTransportError` instead.
-        err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+        # here arose during connection setup. TLS failures on established
+        # connections reach the public boundary as `TLSTransportError` instead.
+        err isa TLS.TLSError && throw(_tls_setup_error(err::TLS.TLSError, tls_handshake_timeout_ns, connect_deadline_ns, host_resolver.deadline_ns))
         rethrow()
     end
 end

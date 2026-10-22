@@ -280,6 +280,15 @@ end
     return string(addr)
 end
 
+# A TLS failure while a client connection is set up. A handshake cut off by
+# the setup deadline is a connect timeout, as for a TCP dial, unless the
+# request's own deadline was the earlier one.
+function _tls_setup_error(err::TLS.TLSError, handshake_timeout_ns::Int64, connect_deadline_ns::Int64, request_deadline_ns::Int64)::Exception
+    (err.op == "handshake" && err.cause isa IOPoll.DeadlineExceededError) || return TLSHandshakeError(err)
+    request_deadline_ns != 0 && request_deadline_ns <= connect_deadline_ns && return err.cause::IOPoll.DeadlineExceededError
+    return TLS.TLSHandshakeTimeoutError(handshake_timeout_ns)
+end
+
 function _wrap_op_error(err::HostResolvers.OpError, operation::AbstractString, timeout_ns::Int64, elapsed_ns::Int64=Int64(0))
     inner = err.err
     address = _opaddress(err)

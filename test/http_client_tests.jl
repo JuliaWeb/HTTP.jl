@@ -3555,3 +3555,29 @@ end
         HTTP.@try_ignore NC.close(listener)
     end
 end
+
+@testset "Printed clients, transports, and proxy configs leave out credentials" begin
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "https", "example.com", "/", HT.Headers(["Set-Cookie" => "sid=cookie-secret"]))
+    for proxy in ("http://puser:proxy-secret@proxy.local:3128", "socks5://suser:proxy-secret@proxy.local:1080")
+        transport = HT.Transport(proxy = proxy)
+        client = HT.Client(
+            transport = transport,
+            cookiejar = jar,
+            default_basicauth = "alice" => "auth-secret",
+            default_query = Dict("api_key" => "query-secret"),
+        )
+        try
+            for x in (client, transport, transport.proxy)
+                for text in (sprint(show, x), sprint(show, MIME"text/plain"(), x))
+                    @test !occursin("secret", text)
+                    @test !occursin(HT._base64encode("puser:proxy-secret"), text)
+                    @test occursin("proxy.local", text)
+                end
+            end
+            @test occursin("with credentials", sprint(show, transport.proxy))
+        finally
+            close(client)
+        end
+    end
+end
