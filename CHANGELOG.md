@@ -107,6 +107,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WebSockets.open` raises the error types `HTTP.request` raises, such as
   `ConnectError` for a refused connection, instead of Reseau exceptions such
   as `Reseau.HostResolvers.OpError`. ([#1456])
+- A TLS handshake that runs into the connect or request deadline raises
+  `TimeoutError` with operation `tls_handshake`, retried like a connect
+  timeout, or `request` when the request deadline came first. It raised
+  `TLSHandshakeError`, for HTTP/1, HTTP/2, and `wss://` connections. ([#1455])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1293,5 +1297,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
