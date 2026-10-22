@@ -886,7 +886,7 @@ end
     return nothing
 end
 
-function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integer)::Vector{UInt8}
+function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integer, content_length::Int64=Int64(-1))::Vector{UInt8}
     limit = Int64(max_body_bytes)
     limit >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
     body isa EmptyBody && return UInt8[]
@@ -895,17 +895,25 @@ function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integ
         _check_server_body_size!(Int64(length(body_bytes)), limit)
         return body_bytes
     end
-    out = IOBuffer()
+    # Memory follows the bytes that arrive, not the declared length: the buffer
+    # starts at 64 KiB at most and doubles as it fills, never past a declared
+    # Content-Length.
+    out = Vector{UInt8}(undef, content_length > 0 ? Int(min(content_length, 64 * 1024)) : 0)
     buf = Vector{UInt8}(undef, 16 * 1024)
-    received = Int64(0)
+    received = 0
     while true
         n = body_read!(body, buf)
         n == 0 && break
-        received += Int64(n)
-        _check_server_body_size!(received, limit)
-        write(out, @view(buf[1:n]))
+        received += n
+        _check_server_body_size!(Int64(received), limit)
+        if received > length(out)
+            grown = max(received, 2 * length(out))
+            content_length >= received && (grown = Int(min(Int64(grown), content_length)))
+            resize!(out, grown)
+        end
+        copyto!(out, received - n + 1, buf, 1, n)
     end
-    return take!(out)
+    return resize!(out, received)
 end
 
 function _rebuffered_request(
@@ -937,7 +945,7 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
         if request.content_length >= 0
             _check_server_body_size!(Int64(request.content_length), limit)
         end
-        _read_all_server_request_body(body, limit)
+        _read_all_server_request_body(body, limit, request.content_length)
     catch
         close_body_on_error && @try_ignore body_close!(body)
         rethrow()

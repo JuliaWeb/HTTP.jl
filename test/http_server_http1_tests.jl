@@ -1722,6 +1722,24 @@ end
     end
 end
 
+@testset "HTTP server buffers request bodies in memory that follows the bytes received" begin
+    n = 1 << 20
+    data = rand(UInt8, n)
+    buffer_body(io, declared) = HT._buffer_server_request(
+        HT.Request("POST", "/"; body = HT.FixedLengthBody(io, declared), content_length = declared), 64n)
+    @test buffer_body(IOBuffer(data), n).body.data == data
+    # Doubling up to the declared length costs under twice the body.
+    @test minimum(@allocated(buffer_body(IOBuffer(data), n)) for _ in 1:3) < 5n ÷ 2
+    # A declared length alone does not reserve memory: this body ends after 10 bytes.
+    truncated() = try
+        buffer_body(IOBuffer(data[1:10]), 32n)
+    catch err
+        err
+    end
+    @test truncated() isa HT.ParseError
+    @test minimum(@allocated(truncated()) for _ in 1:3) < 256 * 1024
+end
+
 @testset "HTTP server ordinary handlers reject oversized buffered request bodies" begin
     called = Channel{Bool}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request

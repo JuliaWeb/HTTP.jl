@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
   no limit); a larger body gets 413. Before, the body was read without any
   limit. ([#1472])
+- A request body that `serve!` buffers for its handler grows with the bytes
+  received: the buffer starts at the declared `Content-Length`, capped at
+  64 KiB, and doubles as it fills. A 1 MiB body allocated 3.6 times its size
+  on Julia 1.12 and now allocates about twice its size. ([#1470])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -1423,6 +1427,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467
 [#1468]: https://github.com/JuliaWeb/HTTP.jl/issues/1468
 [#1469]: https://github.com/JuliaWeb/HTTP.jl/issues/1469
+[#1470]: https://github.com/JuliaWeb/HTTP.jl/issues/1470
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
 [#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
