@@ -147,6 +147,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sends a `Transfer-Encoding` the handler set next to `Content-Length`, and a
   response to an HTTP/1.0 request, or one the handler made HTTP/1.0, is never
   chunked, including through `streamhandler`. ([#1463])
+- A WebSocket connection whose received messages wait unread past four times
+  `maxframesize` bytes is closed with status 1008. Before, a peer could queue
+  messages for a handler that received slowly or never without any limit.
+  ([#1474])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1366,5 +1370,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
 [#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
+[#1474]: https://github.com/JuliaWeb/HTTP.jl/issues/1474
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
