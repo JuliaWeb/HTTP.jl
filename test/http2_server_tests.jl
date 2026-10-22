@@ -2689,6 +2689,57 @@ end
     end
 end
 
+@testset "HTTP/2 server answers Expect: 100-continue" begin
+    # The client sends its body without waiting, so every exchange ends; the
+    # statuses on the stream show whether the interim 100 came first.
+    request_server = HT.serve!(request -> HT.Response(200, String(request.body)), "127.0.0.1", 0; listenany = true, max_body_bytes = 8)
+    stream_server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        HT.startread(stream)
+        write(stream, read(stream))
+    end
+    function statuses(address, body; expect = true)
+        conn, reader = _open_raw_h2_server_conn(address)
+        try
+            extra = HT.HeaderField[HT.HeaderField("content-length", string(length(body)), false)]
+            expect && push!(extra, HT.HeaderField("expect", "100-continue", false))
+            _write_h2_server_request_headers!(conn, HT.Encoder(), UInt32(1), address, "/"; method = "POST", end_stream = false, headers = extra)
+            _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), true, Vector{UInt8}(codeunits(body))))
+            decoder = HT.Decoder()
+            seen = String[]
+            text = UInt8[]
+            while true
+                frame = _read_h2_server_frame_until!(conn, reader, f -> f isa HT.HeadersFrame || f isa HT.DataFrame)
+                if frame isa HT.HeadersFrame
+                    decoded = HT.decode_header_block(decoder, (frame::HT.HeadersFrame).header_block_fragment)
+                    append!(seen, [field.value for field in decoded if field.name == ":status"])
+                    (frame::HT.HeadersFrame).end_stream && break
+                else
+                    append!(text, (frame::HT.DataFrame).data)
+                    (frame::HT.DataFrame).end_stream && break
+                end
+            end
+            return seen, String(text)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+    end
+    try
+        request_address = HT.server_addr(request_server)
+        stream_address = HT.server_addr(stream_server)
+        @test statuses(request_address, "hello") == (["100", "200"], "hello")
+        @test statuses(stream_address, "hello") == (["100", "200"], "hello")
+        # Without the expectation there is no interim response.
+        @test statuses(request_address, "hello"; expect = false) == (["200"], "hello")
+        # A body over max_body_bytes is refused without asking for it.
+        @test statuses(request_address, "too long for the limit")[1] == ["413"]
+    finally
+        HT.forceclose(request_server)
+        HT.forceclose(stream_server)
+        wait(request_server)
+        wait(stream_server)
+    end
+end
+
 @testset "HTTP/2 server answers handler errors with 500 and logs them" begin
     # Only a failure reading the request keeps a 4xx status. A handler that
     # throws a request-style error, or returns or writes a response that cannot

@@ -1114,6 +1114,18 @@ function _write_h2_header_block_locked!(
     return nothing
 end
 
+# Writes the interim `100 Continue` head that `Expect: 100-continue` asks for (RFC 9110 §10.1.1).
+function _write_h2_continue!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    write_deadline_ns::Int64,
+)::Nothing
+    _write_h2_header_fields!(conn, write_lock, send_state, stream_id, HeaderField[HeaderField(":status", "100", false)], false, write_deadline_ns)
+    return nothing
+end
+
 # Writes one header block, response headers or trailers, as HEADERS and any
 # CONTINUATION frames it needs.
 function _write_h2_header_fields!(
@@ -1486,6 +1498,9 @@ function _handle_h2_stream!(
                 closeread(stream)
             end
         else
+            if _continue_before_buffering(request, server.max_body_bytes)
+                _write_h2_continue!(conn, write_lock, send_state, stream_id, _server_write_deadline_ns(server))
+            end
             handler_request = try
                 _buffer_server_request(request, server.max_body_bytes; close_body_on_error=false)
             catch err
