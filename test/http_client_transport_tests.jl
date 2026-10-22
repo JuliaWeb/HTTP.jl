@@ -787,6 +787,50 @@ end
     end
 end
 
+@testset "HTTP client transport returns a response sent before the server closed mid-upload" begin
+    # The server answers once it has the head and closes with the body unread,
+    # so the client's upload fails with a reset or broken pipe. Rounds cover the
+    # writer failing before and after the response is read.
+    cert_file = joinpath(@__DIR__, "resources", "unittests.crt")
+    key_file = joinpath(@__DIR__, "resources", "unittests.key")
+    answer = collect(codeunits("HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 8\r\n\r\ntoo big!"))
+    payload = zeros(UInt8, 32 * 1024 * 1024)
+    rounds = 10
+    for secure in (false, true)
+        listener = secure ?
+            TL.listen("tcp", "127.0.0.1:0", TL.Config(verify_peer = false, cert_file = cert_file, key_file = key_file); backlog = 8) :
+            ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        port = Int(((secure ? TL.addr(listener) : NC.addr(listener))::NC.SocketAddrV4).port)
+        address = ND.join_host_port("127.0.0.1", port)
+        server_task = errormonitor(Threads.@spawn begin
+            for _ in 1:rounds
+                conn = secure ? TL.accept(listener) : NC.accept(listener)
+                try
+                    secure && TL.handshake!(conn)
+                    HT.read_request(HT._ConnReader(conn))
+                    write(conn, answer)
+                finally
+                    HTTP.@try_ignore close(conn)
+                end
+            end
+        end)
+        transport = secure ? HT.Transport(tls_config = TL.Config(verify_peer = false, verify_hostname = false)) : HT.Transport()
+        try
+            for _ in 1:rounds
+                req = HT.Request("POST", "/upload"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+                res = HT.roundtrip!(transport, address, req; secure = secure)
+                @test res.status == 413
+                @test String(_read_all_transport_body_bytes(res.body)) == "too big!"
+            end
+            _wait_task!(server_task)
+            @test HT.idle_connection_count(transport) == 0
+        finally
+            close(transport)
+            HTTP.@try_ignore close(listener)
+        end
+    end
+end
+
 @testset "HTTP upload failure and cancellation release the body and connection" begin
     for action in (:fail, :cancel)
         listener = NC.listen(NC.loopback_addr(0))
