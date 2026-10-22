@@ -104,6 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ENHANCE_YOUR_CALM`, like one with `NO_ERROR`: streams above
   `last_stream_id` fail with the retryable `H2GoAwayError` and the others keep
   their responses. It failed every stream on the connection. ([#1460])
+- `WebSockets.open` raises the error types `HTTP.request` raises, such as
+  `ConnectError` for a refused connection, instead of Reseau exceptions such
+  as `Reseau.HostResolvers.OpError`. ([#1456])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1290,4 +1293,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460

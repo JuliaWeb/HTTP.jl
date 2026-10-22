@@ -385,3 +385,17 @@ end
         _close_quiet!(task)
     end
 end
+
+@testset "HTTP.WebSockets client raises HTTP errors for connect failures" begin
+    # Nothing listens on the port, as for `HTTP.get`'s `ConnectError`.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    address = _listener_address(listener)
+    close(listener)
+    err = try
+        W.open("ws://$address/")
+        nothing
+    catch ex
+        ex
+    end
+    @test err isa HT.ConnectError
+end
