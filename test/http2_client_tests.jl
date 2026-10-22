@@ -2986,7 +2986,7 @@ end
         @test settings isa HT.SettingsFrame
         @test !(settings::HT.SettingsFrame).ack
         @test (settings::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1_048_576)]
+            Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0), UInt16(0x4) => UInt32(1_048_576)]
         wu = frames[2]
         @test wu isa HT.WindowUpdateFrame
         @test (wu::HT.WindowUpdateFrame).stream_id == UInt32(0)
@@ -3030,10 +3030,11 @@ end
         @test length(frames) == 2
         settings = frames[1]
         @test settings isa HT.SettingsFrame
-        # With default windows the client advertises an empty SETTINGS payload and
-        # sends no connection-level WINDOW_UPDATE: the frame after SETTINGS is the
+        # With default windows the client's SETTINGS only turns push off
+        # (SETTINGS_ENABLE_PUSH = 0, which defaults to on), and it sends no
+        # connection-level WINDOW_UPDATE: the frame after SETTINGS is the
         # client's SETTINGS ACK, never a WindowUpdateFrame.
-        @test isempty((settings::HT.SettingsFrame).settings)
+        @test (settings::HT.SettingsFrame).settings == Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0)]
         @test !(frames[2] isa HT.WindowUpdateFrame)
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
@@ -3074,7 +3075,7 @@ end
         # entry is emitted whenever it differs from the protocol default, not only when
         # it exceeds it.
         @test (settings::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(16_384)]
+            Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0), UInt16(0x4) => UInt32(16_384)]
         # A window below the default cap keeps the default per-stream buffer cap.
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
@@ -3165,6 +3166,7 @@ function _build_bare_h2_connection()
         UInt32(0),
         nothing,
         UInt8[],
+        0,
         0,
         Int64(0),
         UInt32(0),
@@ -3830,5 +3832,37 @@ end
         finally
             HTTP.@try_ignore NC.close(listener)
         end
+    end
+end
+
+@testset "HTTP/2 client counts frame headers against the header block limit" begin
+    # Empty CONTINUATION frames never grow the block's bytes, but each one costs
+    # its 9-byte frame header, so a peer cannot keep a block open forever.
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        conn.max_header_block_bytes = 85
+        empty_block!() = begin
+            HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(1), false, false, UInt8[]))
+            for _ in 1:7
+                HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+            end
+        end
+        # Nine frames (81 bytes) fit, and the next HEADERS frame starts a new count.
+        for _ in 1:2
+            empty_block!()
+            HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), true, UInt8[]))
+        end
+        empty_block!()
+        HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+        err = try
+            HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa HT.ProtocolError
+        @test occursin("header block exceeded maximum size", sprint(showerror, err))
+    finally
+        cleanup()
     end
 end

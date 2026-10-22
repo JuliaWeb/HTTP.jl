@@ -292,6 +292,8 @@ function _uri_request_target(uri::URI)::String
     if isempty(path)
         return has_query ? string("/?", query) : "/"
     end
+    # RFC 3986 §3.3: after an authority the path is empty or starts with "/".
+    startswith(path, '/') || throw(ArgumentError("URL path must start with \"/\" after the host: $(repr(path))"))
     return has_query ? string(path, "?", query) : path
 end
 
@@ -300,6 +302,69 @@ function _check_url_port(port::AbstractString)::Nothing
     n = all(isdigit, port) ? tryparse(Int, port) : nothing
     n !== nothing && 1 <= n <= 65535 && return nothing
     throw(ArgumentError("invalid URL port: $(repr(port))"))
+end
+
+@inline function _is_url_sub_delim(b::UInt8)::Bool
+    return b == UInt8('!') || b == UInt8('$') || b == UInt8('&') || b == UInt8('\'') ||
+        b == UInt8('(') || b == UInt8(')') || b == UInt8('*') || b == UInt8('+') ||
+        b == UInt8(',') || b == UInt8(';') || b == UInt8('=')
+end
+
+@inline _is_url_hex(b::UInt8)::Bool = 0x30 <= b <= 0x39 || 0x41 <= b <= 0x46 || 0x61 <= b <= 0x66
+
+# RFC 3986 §3.2.1 userinfo, plus `@` (the last `@` ends the userinfo, as in Go
+# and browsers) and non-ASCII bytes. Any other byte, such as a backslash, which
+# browsers read as the end of the authority, is rejected.
+function _check_url_userinfo(bytes::AbstractVector{UInt8}, lo::Int, hi::Int)::Nothing
+    i = lo
+    while i <= hi
+        b = @inbounds bytes[i]
+        if b == UInt8('%')
+            (i + 2 <= hi && _is_url_hex(bytes[i + 1]) && _is_url_hex(bytes[i + 2])) ||
+                throw(ArgumentError("invalid percent-encoding in URL userinfo"))
+            i += 3
+            continue
+        end
+        (b >= 0x80 || b == UInt8(':') || b == UInt8('@') || _is_unreserved_form_byte(b) || _is_url_sub_delim(b)) ||
+            throw(ArgumentError("invalid character $(repr(Char(b))) in URL userinfo"))
+        i += 1
+    end
+    return nothing
+end
+
+# A URL host the client dials as written: an IPv6 address (`bracketed`, with an
+# optional zone) or an RFC 3986 §3.2.2 reg-name of unreserved and sub-delim
+# characters and non-ASCII bytes. Hosts are not percent-decoded, so `%` is
+# rejected outside a zone.
+function _check_url_host(host::AbstractString, bracketed::Bool)::Nothing
+    bytes = codeunits(host)
+    if bracketed
+        zone = findfirst(==(UInt8('%')), bytes)
+        stop = zone === nothing ? length(bytes) : zone - 1
+        valid = stop > 0 && all(b -> _is_url_hex(b) || b == UInt8(':') || b == UInt8('.'), @view(bytes[1:stop])) &&
+            HostResolvers._parse_ipv6_literal(SubString(host, 1, stop)) !== nothing &&
+            (zone === nothing || (zone < length(bytes) &&
+                all(b -> _is_unreserved_form_byte(b) || b == UInt8('%'), @view(bytes[(zone + 1):end]))))
+        valid || throw(ArgumentError("invalid IPv6 address in URL host: $(repr(host))"))
+        return nothing
+    end
+    for b in bytes
+        (b >= 0x80 || _is_unreserved_form_byte(b) || _is_url_sub_delim(b)) ||
+            throw(ArgumentError("invalid character $(repr(Char(b))) in URL host $(repr(host))"))
+    end
+    return nothing
+end
+
+# `url` with any userinfo left out, for error messages.
+function _url_for_message(url::AbstractString)::String
+    s = String(url)
+    sep = findfirst("://", s)
+    sep === nothing && return s
+    start = last(sep) + 1
+    stop = something(findnext(c -> c == '/' || c == '?' || c == '#', s, start), ncodeunits(s) + 1)
+    at = findprev('@', s, prevind(s, stop))
+    (at === nothing || at < start) && return s
+    return string(SubString(s, 1, prevind(s, start)), SubString(s, nextind(s, at)))
 end
 
 function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
@@ -331,6 +396,7 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
     has_userinfo = false
     at_idx = _text_range_empty(authority_range) ? nothing : _find_last_url_byte(bytes, authority_range.first, authority_range.last, UInt8('@'))
     if at_idx !== nothing
+        _check_url_userinfo(bytes, authority_range.first, at_idx - 1)
         userinfo_range = _text_range(authority_range.first, prevind(s, at_idx))
         has_userinfo = !_text_range_empty(userinfo_range)
         authority_range = _text_range(nextind(s, at_idx), authority_range.last)
@@ -340,11 +406,12 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
         authority_range = _text_range(authority_range.first, prevind(s, authority_range.last))
     end
 
-    _text_range_empty(authority_range) && throw(ArgumentError("URL missing host: $s"))
+    _text_range_empty(authority_range) && throw(ArgumentError("URL missing host: $(_url_for_message(s))"))
 
     host_range = authority_range
     port_first = 0
-    if @inbounds bytes[authority_range.first] == UInt8('[')
+    bracketed = @inbounds bytes[authority_range.first] == UInt8('[')
+    if bracketed
         close_idx = _find_url_byte(bytes, authority_range.first, authority_range.last, UInt8(']'))
         close_idx === nothing && throw(ArgumentError("invalid IPv6 host authority: $(_text_range_string(s, authority_range))"))
         host_range = _text_range(nextind(s, authority_range.first), prevind(s, close_idx))
@@ -364,7 +431,8 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
     has_explicit_port && _check_url_port(SubString(s, port_first, authority_range.last))
     # RFC 9110 §4.2.1: an http(s) URI with an empty host is invalid. Dialing
     # one (`http://:8080/`) would reach the local machine.
-    _text_range_empty(host_range) && throw(ArgumentError("URL missing host: $s"))
+    _text_range_empty(host_range) && throw(ArgumentError("URL missing host: $(_url_for_message(s))"))
+    _check_url_host(SubString(s, host_range.first, host_range.last), bracketed)
 
     query_suffix = query === nothing ? "" : _query_string(query)
     default_port = secure ? UInt16(443) : UInt16(80)
@@ -390,19 +458,21 @@ end
 
 function _parse_http_url(url::URI, query=nothing)::_URLParts
     source = string(url)
-    scheme = _uri_component_present(url.scheme) ? String(url.scheme) : ""
+    scheme = _uri_component_present(url.scheme) ? lowercase(String(url.scheme)) : ""
     secure = if scheme == "http"
         false
     elseif scheme == "https"
         true
     elseif isempty(scheme)
-        throw(ArgumentError("URL must include http:// or https:// scheme: $source"))
+        throw(ArgumentError("URL must include http:// or https:// scheme: $(_url_for_message(source))"))
     else
         throw(ArgumentError("unsupported URL scheme '$scheme'; expected http or https"))
     end
 
     host = _uri_component_string(url.host)
-    isempty(host) && throw(ArgumentError("URL missing host: $source"))
+    isempty(host) && throw(ArgumentError("URL missing host: $(_url_for_message(source))"))
+    # URIs keeps an IPv6 address without its brackets.
+    _check_url_host(host, occursin(':', host))
 
     default_port = secure ? UInt16(443) : UInt16(80)
     # An absent or empty port means the scheme's default port.
@@ -418,6 +488,10 @@ function _parse_http_url(url::URI, query=nothing)::_URLParts
     query === nothing || (target = _escape_target_spaces(_append_query(target, query)))
 
     has_userinfo = _uri_component_present(url.userinfo) && !isempty(url.userinfo)
+    if has_userinfo
+        userinfo = String(url.userinfo)
+        _check_url_userinfo(codeunits(userinfo), 1, ncodeunits(userinfo))
+    end
     authorization = has_userinfo ? _userinfo_basic_authorization(String(url.userinfo)) : nothing
     return _URLParts(
         source,

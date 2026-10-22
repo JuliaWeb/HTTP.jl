@@ -189,6 +189,10 @@ mutable struct H2Connection
     # the fragments here until END_HEADERS, decode once, then discard.
     # Touched only from the single-threaded read loop.
     orphan_header_block::Vector{UInt8}
+    # Bytes the open header block has cost, counting each HEADERS/CONTINUATION
+    # frame's 9-byte header with its fragment, so empty CONTINUATION frames also
+    # reach `max_header_block_bytes`. Touched only from the read loop.
+    header_block_bytes::Int
     # Concurrent acquirers that have committed to opening a stream on this
     # connection but haven't reached `_register_stream!` yet. Used by
     # `_h2_conn_available` so a second caller doesn't decide a peer-capped
@@ -378,10 +382,13 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     lock(conn.state_lock)
     try
         while true
-            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
+            # A stream the peer is done with, such as one a GOAWAY rejected just
+            # before the connection closed, stops its upload first; its own error
+            # then reaches the caller. A failed connection keeps stream entries.
             stream_id in conn.send_closed_streams && return 0
             haskey(conn.stream_send_window, stream_id) || return 0
+            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
             stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
@@ -1128,6 +1135,15 @@ function _consume_orphan_header_fragment!(
     return nothing
 end
 
+# The peer cannot be allowed to keep a header block open without bound, even
+# with empty fragments: each frame costs its 9-byte header plus its fragment.
+function _charge_h2_header_block_frame!(conn::H2Connection, fragment::Vector{UInt8})::Nothing
+    conn.header_block_bytes += 9 + length(fragment)
+    conn.header_block_bytes > conn.max_header_block_bytes &&
+        throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
+    return nothing
+end
+
 function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
     # Frame-local validation already happened in `read_frame!`; this function is
     # responsible for connection- and stream-level state transitions.
@@ -1238,6 +1254,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         return nothing
     elseif frame isa HeadersFrame
         headers = frame::HeadersFrame
+        # A HEADERS frame opens a header block.
+        conn.header_block_bytes = 0
+        _charge_h2_header_block_frame!(conn, headers.header_block_fragment)
         state = _stream_state(conn, headers.stream_id)
         if state === nothing
             # Unknown or already-closed stream (e.g. trailers racing
@@ -1268,6 +1287,7 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         throw(ProtocolError("HTTP/2 server push is unsupported"))
     elseif frame isa ContinuationFrame
         cont = frame::ContinuationFrame
+        _charge_h2_header_block_frame!(conn, cont.header_block_fragment)
         open_state = conn.open_header_stream
         if open_state !== nothing
             # Continuation of a header block that began on a live stream. Route
@@ -1514,13 +1534,16 @@ function _connect_h2_from_tcp!(
             nothing,
             UInt8[],
             0,
+            0,
             Int64(time_ns()),
             UInt32(0),
             false,
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)
-        initial_settings = Pair{UInt16,UInt32}[]
+        # Push defaults to enabled (RFC 9113 §6.5.2), and this client fails the
+        # connection on PUSH_PROMISE, so it turns push off.
+        initial_settings = Pair{UInt16,UInt32}[_H2_SETTINGS_ENABLE_PUSH => UInt32(0)]
         if http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
             push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(http2_settings.initial_window_size))
         end
@@ -1851,9 +1874,10 @@ function _compact_stream_body_buffer!(state::H2StreamState)
     end
     if state.body_read_index > 4096 && state.body_read_index > (length(state.body) >>> 1)
         remaining = (length(state.body) - state.body_read_index) + 1
-        compacted = Vector{UInt8}(undef, remaining)
-        copyto!(compacted, 1, state.body, state.body_read_index, remaining)
-        state.body = compacted
+        # Move the unread bytes to the front in place: the buffer keeps its
+        # capacity, so later DATA frames append without reallocating.
+        copyto!(state.body, 1, state.body, state.body_read_index, remaining)
+        resize!(state.body, remaining)
         state.body_read_index = 1
     end
     return nothing
@@ -2100,7 +2124,17 @@ function _h2_roundtrip_incoming!(
             throw(_canceled_error(request_ctx))
         end
         end_stream = request.body isa EmptyBody
-        if !end_stream && !_write_request_body_h2!(conn, stream_state.stream_id, request)
+        sent = end_stream || try
+            _write_request_body_h2!(conn, stream_state.stream_id, request)
+        catch
+            # A GOAWAY or REFUSED_STREAM can close the connection under the
+            # upload. The stream's error then says why, and the request is safe
+            # to retry (RFC 9113 §8.7).
+            stream_err = lock(() -> stream_state.stream_error, stream_state.lock)
+            (stream_err !== nothing && _h2_guaranteed_unprocessed(stream_err)) || rethrow()
+            throw(stream_err)
+        end
+        if !sent
             # The upload was abandoned because the peer finished with the
             # stream first. When that was a benign early complete response
             # (no stream error), actively cancel our half of the stream
