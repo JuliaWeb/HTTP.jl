@@ -93,6 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/1 client bounds the informational (1xx) responses it reads before
+  the final one: their heads share the transport's `max_header_bytes` budget,
+  and past it the request fails with a `ProtocolError`. A server could send
+  `103 Early Hints` forever, and `read_idle_timeout` never fired because data
+  kept arriving. ([#1476])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1269,3 +1274,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
