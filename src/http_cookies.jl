@@ -779,6 +779,13 @@ function domainAndType!(jar::CookieJar, c::Cookie, host::String)
         return false
     end
     if ispublicsuffix(domain)
+        # RFC 6265 §5.3 step 5: a public suffix that is the request host itself,
+        # such as `localhost`, makes a host-only cookie.
+        if host == domain
+            c.domain = host
+            c.hostonly = true
+            return true
+        end
         c.domain = ""
         c.hostonly = false
         return false

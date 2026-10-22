@@ -580,6 +580,18 @@ end
     @test "__host-ok" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
 end
 
+@testset "HTTP CookieJar keeps a public-suffix Domain equal to the host as host-only" begin
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "http", "localhost", "/", _set_cookie_headers("a=1; Domain=localhost"))
+    stored = HT.getcookies!(jar, "http", "localhost", "/")
+    @test [c.name for c in stored] == ["a"]
+    @test only(stored).hostonly
+    # A host under the suffix still cannot set a cookie for the whole suffix.
+    HT.setcookies!(jar, "https", "a.co.uk", "/", _set_cookie_headers("b=1; Domain=co.uk"))
+    @test isempty(HT.getcookies!(jar, "https", "b.co.uk", "/"))
+    @test isempty(HT.getcookies!(jar, "https", "a.co.uk", "/"))
+end
+
 @testset "HTTP client matches cookie paths without the request query" begin
     seen = Dict{String,String}()
     server = HT.serve!("127.0.0.1", 0; listenany = true) do req
