@@ -7,65 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
-- HTTP 2.11.1 requires Reseau 1.6.1 or later, which rejects the eight eMudhra
-  CA public keys compromised in October 2026, including cross-signed
-  certificates and chains using explicit CA bundles. The check also applies
-  when revalidating cached TLS sessions. See the
-  [incident report](https://emudhra.we-have-a-problem.com/).
+## [v2.12.0] - 2026-10-22
 
 ### Added
 - `WebSockets.listen!` takes `read_header_timeout`, `read_timeout` and
   `idle_timeout` (and their `_ns` forms), off by default as in `HTTP.serve!`:
   they bound the handshake request and the silence on a session. Before, the
   WebSocket server had no timeouts at all. ([#1491])
-- The HTTP/1 connection pool now honors a server-advertised
-  `Keep-Alive: timeout=<seconds>` response header: the connection is not reused
-  once that window (less a one-second safety margin) has elapsed since it went
-  idle, whichever of it and `idle_timeout_ns` is tighter, and a hint with no
-  headroom (`timeout=1` or less) makes the connection non-reusable. Previously
-  a request could be written onto a connection the server had already closed
-  at its own keep-alive deadline. ([#1155])
-- Added `HTTP2Settings` to configure HTTP/2 receive flow-control windows (per-stream `initial_window_size` and connection-level `connection_window_size`). Pass it via the `http2_settings` keyword on `Client`, `Server`, `listen!`, `serve!`, `serve`, and `connect_h2!`. Defaults preserve the protocol-default 65535-byte windows, and the per-stream receive buffer cap is derived from the window. Raising the windows improves single-stream throughput on links with non-trivial latency.
-- Added `HTTP.peeraddr(::HTTP.Stream)`, returning the remote (client) `SocketAddr` of a server stream for both plain-TCP and TLS connections and both HTTP/1 and HTTP/2. This is the supported way to obtain the client IP (for rate limiting, audit logging, and per-client policy) without reaching into transport internals, and restores the capability `Sockets.getpeername(::HTTP.Stream)` provided in HTTP.jl 1.x.
-- Added `HTTP.RetrySkippedEvent`, a request trace event emitted when the retry
-  policy wanted to retry an attempt but the retry was not armed — because the
-  transport's `RetryBucket` denied capacity (`reason = :retry_bucket`) or the
-  request deadline preempted the backoff (`reason = :deadline`). Previously a
-  denied retry was indistinguishable from a non-retryable failure. ([#1353])
-- Added `HTTP.TLSTransportError`, raised when TLS-level I/O fails on an
-  established connection during a request. Previously such failures were
-  mislabeled `TLSHandshakeError`; that type is now reserved for actual
-  connection-setup failures. `HTTP.isrecoverable` classifies both wrappers by
-  their underlying cause. ([#1353])
-- Added `setheader!`, `appendheader!` and `removeheader!` as the conventional
-  mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
-  Each pair is the same function (extending one name extends the other), the
-  historical names are not deprecated, and all six are `public`. ([#1277])
-- Added `llms.txt` and `llms-full.txt` to the documentation site, following the
-  [llms.txt](https://llmstxt.org/) convention: a short index of the documentation
-  pages, and the full documentation with every docstring expanded, as plain
-  markdown for LLM tooling. They are published next to the HTML docs, for
-  example at `https://juliaweb.github.io/HTTP.jl/stable/llms.txt` and
-  `https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt`. ([#1351])
-- Added `HTTP.Handlers.logging_middleware`, an opt-in access-log middleware.
-  It wraps a request handler (or a stream handler) and emits one log record
-  per request through Julia's logging system with the method, target, response
-  status, elapsed milliseconds, the response body length when it is known
-  without reading the body, and the client peer address for stream handlers.
-  A handler exception is logged at `Logging.Error` and rethrown. This restores
-  the request logging that HTTP.jl 1.x offered through `access_log`; the
-  middleware is not exported and is off unless a handler is wrapped with it.
-  ([#1345])
-- Added `max_line_bytes` and `max_header_bytes` keywords to `Transport` so the
-  HTTP/1 client's per-line and header-block limits can be tuned per transport
-  (`HTTP.Transport(max_line_bytes = 128 * 1024)`). Both must be positive and
-  `max_line_bytes` may not exceed `max_header_bytes`. ([#1362])
-- Added an `allow_h2c` keyword to `Server`, `listen!`, `serve!` and `serve`.
-  With `allow_h2c = false`, plain TCP listeners parse every connection as
-  HTTP/1 instead of serving cleartext HTTP/2 (h2c) to clients that open with
-  the HTTP/2 preface. The default is unchanged, and TLS listeners still pick
-  `h2` through ALPN. ([#1385])
 
 ### Changed
 - HTTP/1 request and status lines are written without the allocations
@@ -95,33 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   WINDOW_UPDATE frames already buffered are parsed in place. A 1 MiB upload
   made about 2,800 allocations in client and server together and now makes
   about 1,160. The bytes sent are unchanged. ([#1487])
-- `HTTP.Headers` keeps each header name as the caller spelled it and matches
-  names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
-  rewrote every name into `Content-Type` form on insertion, so a request header
-  such as `providerId` went out as `Providerid`. That breaks servers that treat
-  header names as case-sensitive data, such as Azure Service Bus custom
-  message properties. HTTP/1 now sends names as spelled, HTTP/2 still sends
-  them in lowercase, and headers received from the network still use
-  `Content-Type` form. `canonicalize_headers=true` works again: it sends
-  request header names in `Content-Type` form, and no longer logs a
-  "has no effect" warning. ([#1377])
-- Raised the default HTTP/1 per-line limit (request/status lines and single
-  header lines) from 8 KiB to 64 KiB, matching Python's `http.client`. Real
-  origins send single header lines longer than 8 KiB — a 9,695-byte
-  `Content-Security-Policy` was reported — and HTTP.jl failed such responses
-  with `ProtocolError: HTTP/1 line exceeds configured max_line_bytes` while
-  curl and Python accepted them. The 1 MiB header-block limit is unchanged and
-  still bounds memory; the server-side request parser shares the new per-line
-  default. ([#1362])
-- After `HTTP.startwrite(stream)`, a fixed-length HTTP/1 stream response is
-  sent as it is written once its body passes 4 KiB, so a handler can stream a
-  large `Content-Length` body instead of holding all of it until `closewrite`.
-  A smaller body still goes out in one write with the head. A response started
-  by `write` alone is still held whole, so a handler failure can still get an
-  error response. ([#1384])
-- `HTTP.streamhandler` streams a response body that is not already in memory,
-  such as a `fileserver` file, as `serve!` does, instead of holding all of it
-  until the handler finishes. ([#1384])
 
 ### Fixed
 - With `idle_timeout` set, the HTTP/2 server closes a connection that has had
@@ -321,6 +242,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows `DOMAIN\user` name as `DOMAIN%5Cuser`; a proxy environment variable
   that does not parse is skipped with a warning. `URI` schemes match
   case-insensitively, and URL parse errors leave out the userinfo. ([#1447])
+
+## [v2.11.2] - 2026-10-22
+Every change from v2.1.0 through v2.11.2 is listed here; those releases did
+not get their own sections.
+
+### Security
+- HTTP 2.11.1 requires Reseau 1.6.1 or later, which rejects the eight eMudhra
+  CA public keys compromised in October 2026, including cross-signed
+  certificates and chains using explicit CA bundles. The check also applies
+  when revalidating cached TLS sessions. See the
+  [incident report](https://emudhra.we-have-a-problem.com/).
+
+### Added
+- The HTTP/1 connection pool now honors a server-advertised
+  `Keep-Alive: timeout=<seconds>` response header: the connection is not reused
+  once that window (less a one-second safety margin) has elapsed since it went
+  idle, whichever of it and `idle_timeout_ns` is tighter, and a hint with no
+  headroom (`timeout=1` or less) makes the connection non-reusable. Previously
+  a request could be written onto a connection the server had already closed
+  at its own keep-alive deadline. ([#1155])
+- Added `HTTP2Settings` to configure HTTP/2 receive flow-control windows (per-stream `initial_window_size` and connection-level `connection_window_size`). Pass it via the `http2_settings` keyword on `Client`, `Server`, `listen!`, `serve!`, `serve`, and `connect_h2!`. Defaults preserve the protocol-default 65535-byte windows, and the per-stream receive buffer cap is derived from the window. Raising the windows improves single-stream throughput on links with non-trivial latency.
+- Added `HTTP.peeraddr(::HTTP.Stream)`, returning the remote (client) `SocketAddr` of a server stream for both plain-TCP and TLS connections and both HTTP/1 and HTTP/2. This is the supported way to obtain the client IP (for rate limiting, audit logging, and per-client policy) without reaching into transport internals, and restores the capability `Sockets.getpeername(::HTTP.Stream)` provided in HTTP.jl 1.x.
+- Added `HTTP.RetrySkippedEvent`, a request trace event emitted when the retry
+  policy wanted to retry an attempt but the retry was not armed — because the
+  transport's `RetryBucket` denied capacity (`reason = :retry_bucket`) or the
+  request deadline preempted the backoff (`reason = :deadline`). Previously a
+  denied retry was indistinguishable from a non-retryable failure. ([#1353])
+- Added `HTTP.TLSTransportError`, raised when TLS-level I/O fails on an
+  established connection during a request. Previously such failures were
+  mislabeled `TLSHandshakeError`; that type is now reserved for actual
+  connection-setup failures. `HTTP.isrecoverable` classifies both wrappers by
+  their underlying cause. ([#1353])
+- Added `setheader!`, `appendheader!` and `removeheader!` as the conventional
+  mutating-name spellings of `setheader`, `appendheader` and `removeheader`.
+  Each pair is the same function (extending one name extends the other), the
+  historical names are not deprecated, and all six are `public`. ([#1277])
+- Added `llms.txt` and `llms-full.txt` to the documentation site, following the
+  [llms.txt](https://llmstxt.org/) convention: a short index of the documentation
+  pages, and the full documentation with every docstring expanded, as plain
+  markdown for LLM tooling. They are published next to the HTML docs, for
+  example at `https://juliaweb.github.io/HTTP.jl/stable/llms.txt` and
+  `https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt`. ([#1351])
+- Added `HTTP.Handlers.logging_middleware`, an opt-in access-log middleware.
+  It wraps a request handler (or a stream handler) and emits one log record
+  per request through Julia's logging system with the method, target, response
+  status, elapsed milliseconds, the response body length when it is known
+  without reading the body, and the client peer address for stream handlers.
+  A handler exception is logged at `Logging.Error` and rethrown. This restores
+  the request logging that HTTP.jl 1.x offered through `access_log`; the
+  middleware is not exported and is off unless a handler is wrapped with it.
+  ([#1345])
+- Added `max_line_bytes` and `max_header_bytes` keywords to `Transport` so the
+  HTTP/1 client's per-line and header-block limits can be tuned per transport
+  (`HTTP.Transport(max_line_bytes = 128 * 1024)`). Both must be positive and
+  `max_line_bytes` may not exceed `max_header_bytes`. ([#1362])
+- Added an `allow_h2c` keyword to `Server`, `listen!`, `serve!` and `serve`.
+  With `allow_h2c = false`, plain TCP listeners parse every connection as
+  HTTP/1 instead of serving cleartext HTTP/2 (h2c) to clients that open with
+  the HTTP/2 preface. The default is unchanged, and TLS listeners still pick
+  `h2` through ALPN. ([#1385])
+
+### Changed
+- `HTTP.Headers` keeps each header name as the caller spelled it and matches
+  names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
+  rewrote every name into `Content-Type` form on insertion, so a request header
+  such as `providerId` went out as `Providerid`. That breaks servers that treat
+  header names as case-sensitive data, such as Azure Service Bus custom
+  message properties. HTTP/1 now sends names as spelled, HTTP/2 still sends
+  them in lowercase, and headers received from the network still use
+  `Content-Type` form. `canonicalize_headers=true` works again: it sends
+  request header names in `Content-Type` form, and no longer logs a
+  "has no effect" warning. ([#1377])
+- Raised the default HTTP/1 per-line limit (request/status lines and single
+  header lines) from 8 KiB to 64 KiB, matching Python's `http.client`. Real
+  origins send single header lines longer than 8 KiB — a 9,695-byte
+  `Content-Security-Policy` was reported — and HTTP.jl failed such responses
+  with `ProtocolError: HTTP/1 line exceeds configured max_line_bytes` while
+  curl and Python accepted them. The 1 MiB header-block limit is unchanged and
+  still bounds memory; the server-side request parser shares the new per-line
+  default. ([#1362])
+- After `HTTP.startwrite(stream)`, a fixed-length HTTP/1 stream response is
+  sent as it is written once its body passes 4 KiB, so a handler can stream a
+  large `Content-Length` body instead of holding all of it until `closewrite`.
+  A smaller body still goes out in one write with the head. A response started
+  by `write` alone is still held whole, so a handler failure can still get an
+  error response. ([#1384])
+- `HTTP.streamhandler` streams a response body that is not already in memory,
+  such as a `fileserver` file, as `serve!` does, instead of holding all of it
+  until the handler finishes. ([#1384])
+
+### Fixed
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1175,7 +1187,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...HEAD
+[v2.12.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.11.2...v2.12.0
+[v2.11.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.0.0...v2.11.2
 [v2.0.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v1.11.0...v2.0.0
 [v1.11.0]: https://github.com/JuliaWeb/HTTP.jl/releases/tag/v1.11.0
 
