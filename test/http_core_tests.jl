@@ -4,6 +4,43 @@ using Reseau
 
 const HT = HTTP
 
+@testset "HTTP header names, hosts, and methods change case without copies" begin
+    # Character by character, as `canonical_header_key` is documented.
+    function canonical_reference(key)
+        out = IOBuffer()
+        upper_next = true
+        for c in key
+            c = isascii(c) ? (upper_next ? uppercase(c) : lowercase(c)) : c
+            print(out, c)
+            upper_next = c == '-'
+        end
+        return String(take!(out))
+    end
+    for s in ("", "user-agent", "User-Agent", "CONTENT-TYPE", "x-ÄB-cD", "straße", "STRASSE",
+              SubString("_Content-Type_", 2, 13), "a\xffB")
+        if isvalid(s)
+            @test HT._fast_lowercase(s) == lowercase(s)
+            @test HT._fast_uppercase(s) == uppercase(s)
+        else
+            # Base rejects invalid UTF-8, and so do these.
+            @test_throws Base.InvalidCharError HT._fast_lowercase(s)
+            @test_throws Base.InvalidCharError HT._fast_uppercase(s)
+        end
+        @test HT._ascii_lowercase_string(s) == String(map(c -> isascii(c) ? lowercase(c) : c, collect(s)))
+        @test HT.canonical_header_key(s) == canonical_reference(s)
+    end
+    for (lower, canonical) in HT._LOWERCASE_CANONICAL_HEADER_KEYS
+        @test canonical_reference(lower) == canonical
+    end
+    lower_name() = HT._fast_lowercase("user-agent")
+    canonical_name() = HT.canonical_header_key("content-type")
+    method() = HT._method_upper("GET")
+    lower_name(); canonical_name(); method()
+    @test minimum(@allocated(lower_name()) for _ in 1:3) < 32
+    @test minimum(@allocated(canonical_name()) for _ in 1:3) < 32
+    @test minimum(@allocated(method()) for _ in 1:3) < 32
+end
+
 @testset "HTTP core headers" begin
     @test HT.canonical_header_key("content-type") == "Content-Type"
     @test HT.canonical_header_key("X-CUSTOM-HEADER") == "X-Custom-Header"

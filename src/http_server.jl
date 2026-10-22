@@ -85,6 +85,10 @@ Start Julia with at least one interactive thread, such as `--threads=4,1`, so
 that tasks on the default pool that never yield cannot stall the server.
 Without an interactive thread, these tasks run on the default pool.
 
+When accepting a connection fails with an OS error, such as when the process
+has no file descriptors left, the server logs the error and tries again after
+a wait that grows from 5 ms to 1 s.
+
 On a plain TCP listener, a connection that starts with the HTTP/2 connection
 preface is served as cleartext HTTP/2; `allow_h2c = false` turns that off. A
 TLS listener offers HTTP/2 when its `TLS.Config` lists `"h2"` in
@@ -449,7 +453,7 @@ function _set_conn_shutdown_hook!(conn::_ServerConn, hook::Union{Nothing,_H2Shut
     return nothing
 end
 
-function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
+function _notify_conn_shutdown!(conn::_ServerConn, write_deadline_ns::Int64)::Nothing
     hook = nothing
     lock(conn.lock)
     try
@@ -458,7 +462,7 @@ function _notify_conn_shutdown!(conn::_ServerConn)::Nothing
         unlock(conn.lock)
     end
     hook === nothing && return nothing
-    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control)
+    _request_h2_conn_shutdown!(conn.conn, hook.write_lock, hook.control, write_deadline_ns)
     return nothing
 end
 
@@ -695,7 +699,7 @@ end
 
 function _request_conn_shutdowns!(server::Server)::Nothing
     for tracked in _server_conns(server)
-        _notify_conn_shutdown!(tracked)
+        _notify_conn_shutdown!(tracked, _server_write_deadline_ns(server))
     end
     return nothing
 end
@@ -882,7 +886,7 @@ end
     return nothing
 end
 
-function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integer)::Vector{UInt8}
+function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integer, content_length::Int64=Int64(-1))::Vector{UInt8}
     limit = Int64(max_body_bytes)
     limit >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
     body isa EmptyBody && return UInt8[]
@@ -891,17 +895,25 @@ function _read_all_server_request_body(body::AbstractBody, max_body_bytes::Integ
         _check_server_body_size!(Int64(length(body_bytes)), limit)
         return body_bytes
     end
-    out = IOBuffer()
+    # Memory follows the bytes that arrive, not the declared length: the buffer
+    # starts at 64 KiB at most and doubles as it fills, never past a declared
+    # Content-Length.
+    out = Vector{UInt8}(undef, content_length > 0 ? Int(min(content_length, 64 * 1024)) : 0)
     buf = Vector{UInt8}(undef, 16 * 1024)
-    received = Int64(0)
+    received = 0
     while true
         n = body_read!(body, buf)
         n == 0 && break
-        received += Int64(n)
-        _check_server_body_size!(received, limit)
-        write(out, @view(buf[1:n]))
+        received += n
+        _check_server_body_size!(Int64(received), limit)
+        if received > length(out)
+            grown = max(received, 2 * length(out))
+            content_length >= received && (grown = Int(min(Int64(grown), content_length)))
+            resize!(out, grown)
+        end
+        copyto!(out, received - n + 1, buf, 1, n)
     end
-    return take!(out)
+    return resize!(out, received)
 end
 
 function _rebuffered_request(
@@ -933,7 +945,7 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
         if request.content_length >= 0
             _check_server_body_size!(Int64(request.content_length), limit)
         end
-        _read_all_server_request_body(body, limit)
+        _read_all_server_request_body(body, limit, request.content_length)
     catch
         close_body_on_error && @try_ignore body_close!(body)
         rethrow()
@@ -946,6 +958,28 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
     return isempty(body_bytes) ?
            _rebuffered_request(request, EmptyBody(), Int64(0)) :
            _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))
+end
+
+# `serve!` reads a request body before its handler runs, so over HTTP/1.1 and
+# HTTP/2 it answers `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose
+# Content-Length is over `max_body_bytes` gets 413 from `_buffer_server_request`
+# instead.
+@inline function _continue_before_buffering(request::Request, max_body_bytes::Int64)::Bool
+    _request_expects_continue(request) || return false
+    return !(max_body_bytes > 0 && request.content_length > max_body_bytes)
+end
+
+function _write_continue_before_buffering!(conn::Union{TCP.Conn,TLS.Conn}, request::Request, max_body_bytes::Int64)::Nothing
+    _continue_before_buffering(request, max_body_bytes) || return nothing
+    response = Response(
+        100;
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        content_length=0,
+        request=request,
+    )
+    _write_all_response!(conn, response)
+    return nothing
 end
 
 @inline function _request_body_fully_consumed(request::Request)::Bool
@@ -1021,13 +1055,18 @@ end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
+function _close_response_body!(response::Response)::Nothing
+    if response.body isa AbstractBody
+        @try_ignore body_close!(response.body::AbstractBody)
+    end
+    return nothing
+end
+
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response, head::Bool=_is_head_request(response.request))::Nothing
     try
         _write_response!(conn, response, head)
     finally
-        if response.body isa AbstractBody
-            @try_ignore body_close!(response.body::AbstractBody)
-        end
+        _close_response_body!(response)
     end
     return nothing
 end
@@ -1056,6 +1095,13 @@ end
     return errno == Int(Base.Libc.ECONNRESET) ||
            errno == Int(Base.Libc.EPIPE) ||
            errno == Int(Base.Libc.ECONNABORTED)
+end
+
+# An error from writing to the client's connection: the client closed it or a
+# write deadline passed.
+@inline function _is_conn_write_error(err::Exception)::Bool
+    return _is_peer_close_error(err) || _is_transport_timeout(err) ||
+           err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa EOFError
 end
 
 @enum _ServerConnErrAction::UInt8 begin
@@ -1123,8 +1169,11 @@ function _stream_error_status(stream::Stream, err)::Int
     return status === nothing ? 500 : status::Int
 end
 
+# The record's `target` leaves out the query, which often carries credentials
+# such as tokens and signatures.
 function _log_handler_error(err, backtrace, request::Request, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    @error "server handler error" exception = (err, backtrace) method = request.method target = request.target peer = _conn_remote_addr(conn)
+    target, _ = _split_request_target(request.target)
+    @error "server handler error" exception = (err, backtrace) method = request.method target = target peer = _conn_remote_addr(conn)
     return nothing
 end
 
@@ -1140,6 +1189,26 @@ function _try_write_server_error!(conn::Union{TCP.Conn,TLS.Conn}, request::Union
     end
     @try_ignore begin
         _close_server_write!(conn)
+    end
+    _drain_before_close!(conn)
+    return nothing
+end
+
+# Closing a socket that still holds unread input makes the kernel reset the
+# connection, and the reset can make the peer drop a response it has received
+# but not yet read (Windows does). So before a close that the peer may not
+# expect, after the half-close, read and discard what the peer still sends until
+# it closes (RFC 9112 §9.6), for at most 500 ms and 1 MiB.
+function _drain_before_close!(conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    @try_ignore begin
+        _set_read_deadline!(conn, _deadline_after(Int64(500_000_000)))
+        buf = Vector{UInt8}(undef, 16 * 1024)
+        drained = 0
+        while drained < 1024 * 1024
+            n = conn isa TLS.Conn ? readbytes!(conn::TLS.Conn, buf; all=false) : readbytes!(conn::TCP.Conn, buf; all=false)
+            n == 0 && break
+            drained += n
+        end
     end
     return nothing
 end
@@ -1225,8 +1294,16 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     if !(@atomic :acquire stream.write_closed)
                         closewrite(stream)
                     end
+                    # `closeread` gives up on a body the handler left unread and
+                    # marks the response to close the connection.
+                    body_unread = !_stream_request_body_fully_consumed(stream)
                     closeread(stream)
                     _clear_deadlines!(server, tracked.conn)
+                    if body_unread
+                        @try_ignore _close_server_write!(tracked.conn)
+                        _drain_before_close!(tracked.conn)
+                        return nothing
+                    end
                     _server_shutting_down(server) && return nothing
                     if _request_wants_close(request) || _response_wants_close(stream.response)
                         return nothing
@@ -1252,13 +1329,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                             startwrite(stream)
                             closewrite(stream)
                         end
-                    elseif !(@atomic :acquire stream.head_committed)
-                        # Writing started but the response head was deferred
-                        # (h1 FIXED mode) and never reached the wire: answer
-                        # with a raw error response instead of silently
-                        # dropping the connection (#1303).
+                    end
+                    if !(@atomic :acquire stream.head_committed)
+                        # No head reached the wire: the handler's own headers
+                        # failed the attempt above, or writing had started with
+                        # a deferred fixed-length head (#1303). Answer with a
+                        # new error response.
                         _try_write_server_error!(tracked.conn, request, status)
-                        return nothing
                     end
                     # Return without `closewrite`: the connection closes, and a body
                     # that already started stays unterminated, so the client can tell
@@ -1267,6 +1344,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
             else
                 handler_request = try
+                    _write_continue_before_buffering!(tracked.conn, request, server.max_body_bytes)
                     _buffer_server_request(request, server.max_body_bytes)
                 catch err
                     status = _server_error_status(err)
@@ -1287,23 +1365,38 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
                 # A handler may return one response for many requests at once: never store request state on it.
                 response_obj = response::Response
-                # A response whose streaming body was already sent cannot be
-                # serialized again. Answer 500 before any bytes go out instead
-                # of failing mid-response and dropping the connection (#1333).
-                try
-                    _check_response_body_unsent(response_obj, handler_request)
+                # Build the head before writing anything, so that a response
+                # that cannot be sent, such as one whose streaming body was
+                # already sent (#1333) or one with an invalid header, gets 500.
+                peer_http10 = handler_request.proto_minor == UInt8(0)
+                head, use_chunked, trailer_values, allows_body = try
+                    _response_head(response_obj, _is_head_request(handler_request), peer_http10)
                 catch err
-                    @error "server handler returned a response that cannot be sent" exception = err
+                    _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    _close_response_body!(response_obj)
                     _try_write_server_error!(tracked.conn, request, 500)
                     return nothing
                 end
                 _set_write_deadline!(server, tracked.conn)
-                _write_all_response!(tracked.conn, response_obj, _is_head_request(handler_request))
+                try
+                    write(tracked.conn, head)
+                    allows_body && _write_response_body!(tracked.conn, response_obj, use_chunked, trailer_values)
+                catch err
+                    # The head may be out, so close the connection and leave the
+                    # body unfinished. An error that is not the connection's came
+                    # from the response body, such as a failing body callback.
+                    _is_conn_write_error(err::Exception) || _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    return nothing
+                finally
+                    _close_response_body!(response_obj)
+                end
                 _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
                     return nothing
                 end
+                # A body sent without a length or chunking ends only when the connection closes.
+                allows_body && !use_chunked && response_obj.content_length < 0 && _response_has_body(response_obj) && return nothing
             end
             _set_conn_state!(tracked, _ConnState.IDLE)
             _set_idle_deadline!(server, tracked.conn)
@@ -1324,10 +1417,22 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
     return nothing
 end
 
+# An OS error from accept, such as EMFILE (too many open files), passes once
+# connections close, so it must not end the accept loop: log it, wait, and let
+# the caller retry. The wait doubles from 5 ms to 1 s over consecutive failures;
+# the return value is the wait used, to pass back in on the next failure.
+function _wait_after_accept_error(err::Base.SystemError, delay_s::Float64)::Float64
+    delay_s = delay_s == 0.0 ? 0.005 : min(2 * delay_s, 1.0)
+    @error "server accept error; retrying" exception = err retry_in_s = delay_s
+    IOPoll.sleep(delay_s)
+    return delay_s
+end
+
 function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Listener}, ready::Threads.Event)
     _server_shutting_down(server) && throw(ProtocolError("server is shutting down"))
     _mark_server_listening!(server, listener)
     notify(ready)
+    accept_delay_s = 0.0
     while true
         _server_shutting_down(server) && return nothing
         conn = try
@@ -1339,8 +1444,11 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
             if err isa IOPoll.NetClosingError || err isa EOFError
                 return nothing
             end
-            rethrow(err)
+            err isa Base.SystemError || rethrow(err)
+            accept_delay_s = _wait_after_accept_error(err, accept_delay_s)
+            continue
         end
+        accept_delay_s = 0.0
         tracked = _ServerConn(conn, ReentrantLock(), nothing, _ConnState.NEW, floor(Int64, time()))
         _track_conn!(server, tracked)
         @_spawn_interactive _serve_conn!(server, tracked)

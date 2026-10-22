@@ -165,6 +165,27 @@ end
     @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), invalid_trailer_response)
 end
 
+@testset "HTTP/1 start and status lines are written without allocating" begin
+    io = IOBuffer(; sizehint = 4096)
+    # The same bytes `print` writes, for one-, two-, and three-digit versions.
+    for (status, major, minor) in ((100, 1, 1), (200, 1, 0), (999, 10, 2), (404, 255, 0))
+        HT._print_status_line!(io, HT.Response(status; reason = "R", proto_major = major, proto_minor = minor))
+        @test String(take!(io)) == string(major == 1 && minor == 0 ? "HTTP/1.0" : "HTTP/1.1", ' ', status, " R\r\n")
+        HT._print_request_line!(io, "GET", "/x", UInt8(major), UInt8(minor))
+        @test String(take!(io)) == string("GET /x HTTP/", major, '.', minor, "\r\n")
+    end
+    req = HT.Request("GET", "/path"; headers = ["Host" => "example.com"])
+    resp = HT.Response(200, ["Content-Type" => "text/plain"], "hello")
+    start_line() = (seekstart(io); HT._append_start_line!(io, req))
+    status_line() = (seekstart(io); HT._append_status_line!(io, resp))
+    value = "text/plain"
+    start_line(); status_line(); HT._trim_http_ows(value)
+    @test minimum(@allocated(start_line()) for _ in 1:3) < 32
+    @test minimum(@allocated(status_line()) for _ in 1:3) < 32
+    # A header value with nothing to trim is returned as is.
+    @test minimum(@allocated(HT._trim_http_ows(value)) for _ in 1:3) < 32
+end
+
 @testset "HTTP/1 response parse/write chunked" begin
     raw = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Trailer: done\r\n\r\n"
     resp = HT._read_response(IOBuffer(codeunits(raw)))
@@ -445,6 +466,25 @@ end
     @test_throws HT.ParseError HT._parse_chunk_size("g")
     # Overflow past Int64 range is rejected, not silently truncated.
     @test_throws HT.ParseError HT._parse_chunk_size("ffffffffffffffff0")
+
+    # Chunk extensions are ignored but may not hold control bytes, which another
+    # parser could take for a line end; HTAB is whitespace there.
+    @test HT._parse_chunk_size("a;name=\"v\"\tx") == 10
+    @test_throws HT.ParseError HT._parse_chunk_size("a;ext\rX")
+    @test_throws HT.ParseError HT._parse_chunk_size("a;ext\0")
+
+    # --- HTTP-version is exactly "HTTP/" DIGIT "." DIGIT (RFC 9112 §2.3). ---
+    @test HT._parse_http_version("HTTP/1.1") == (0x01, 0x01)
+    @test HT._parse_http_version("HTTP/1.0") == (0x01, 0x00)
+    for version in ("HTTP/1. 1", "HTTP/+1.1", "HTTP/01.1", "HTTP/1.10", "HTTP/1.1 ", "HTTP/1.1\r", "HTTP/1", "http/1.1")
+        @test_throws HT.ParseError HT._parse_http_version(version)
+    end
+    @test_throws HT.ParseError HT.read_request(IOBuffer("GET / HTTP/1.1\r\r\nHost: example.com\r\n\r\n"))
+
+    # --- The generic IO line reader rejects a bare LF like _ConnReader does. ---
+    @test_throws HT.ParseError HT.read_request(IOBuffer("GET / HTTP/1.1\r\nHost: example.com\nX-Smuggle: 1\r\n\r\n"))
+    @test_throws HT.ParseError HT._readline_crlf(IOBuffer("a\nb\r\n"), 64)
+    @test HT._readline_crlf(IOBuffer("ab\r\n"), 64) == "ab"
 
     # --- HTTP/1.0 + Transfer-Encoding is faulty framing (ANT-2026-YD5QTQDZ). ---
     h10_te = "POST / HTTP/1.0\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n0\r\n\r\n"

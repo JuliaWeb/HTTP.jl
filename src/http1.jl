@@ -147,11 +147,13 @@ function _readline_crlf(io::IO, max_line_bytes::Integer)::String
         b = _read_u8(io)
         push!(bytes, b)
         length(bytes) > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
+        b == 0x0a || continue
         n = length(bytes)
-        if n >= 2 && bytes[n-1] == 0x0d && bytes[n] == 0x0a
-            resize!(bytes, n - 2)
-            return String(bytes)
-        end
+        # Require CRLF, as `_readline_crlf(::_ConnReader, ...)` does: a bare LF
+        # that another parser takes for a line end must not stay in the line.
+        (n >= 2 && bytes[n-1] == 0x0d) || throw(ParseError("HTTP/1 line not terminated by CRLF (bare LF)"))
+        resize!(bytes, n - 2)
+        return String(bytes)
     end
 end
 
@@ -190,23 +192,14 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
     end
 end
 
+# HTTP-version = "HTTP/" DIGIT "." DIGIT (RFC 9112 §2.3). `parse(Int, ...)`
+# would also accept a sign, more digits, or whitespace around them.
 function _parse_http_version(version::AbstractString)::Tuple{UInt8,UInt8}
-    startswith(version, "HTTP/") || throw(ParseError("invalid HTTP version token: $(repr(version))"))
-    parts = split(String(SubString(version, 6)), '.'; limit=2)
-    length(parts) == 2 || throw(ParseError("invalid HTTP version token: $(repr(version))"))
-    major = try
-        parse(Int, parts[1])
-    catch
-        throw(ParseError("invalid HTTP major version: $(repr(version))"))
-    end
-    minor = try
-        parse(Int, parts[2])
-    catch
-        throw(ParseError("invalid HTTP minor version: $(repr(version))"))
-    end
-    (major < 0 || major > typemax(UInt8)) && throw(ParseError("invalid HTTP major version: $(repr(version))"))
-    (minor < 0 || minor > typemax(UInt8)) && throw(ParseError("invalid HTTP minor version: $(repr(version))"))
-    return UInt8(major), UInt8(minor)
+    bytes = codeunits(version)
+    (length(bytes) == 8 && startswith(version, "HTTP/") && bytes[7] == UInt8('.') &&
+     UInt8('0') <= bytes[6] <= UInt8('9') && UInt8('0') <= bytes[8] <= UInt8('9')) ||
+        throw(ParseError("invalid HTTP version token: $(repr(version))"))
+    return bytes[6] - UInt8('0'), bytes[8] - UInt8('0')
 end
 
 function _parse_int64_decimal_header_value(value::AbstractString, kind::AbstractString)::Int64
@@ -370,6 +363,13 @@ function _parse_chunk_size(line::AbstractString)::Int64
     # front-end proxy lacks enables request smuggling.
     semi = findfirst(';', line)
     token = semi === nothing ? line : SubString(line, firstindex(line), prevind(line, semi))
+    if semi !== nothing
+        # Extensions are ignored, but a control byte in one, such as a bare CR,
+        # could end the line for another parser.
+        for b in codeunits(SubString(line, semi))
+            ((b < 0x20 && b != 0x09) || b == 0x7f) && throw(ParseError("invalid chunk extension: $(repr(line))"))
+        end
+    end
     units = codeunits(token)
     isempty(units) && throw(ParseError("empty chunk size"))
     limit = UInt64(typemax(Int64))
@@ -456,7 +456,43 @@ function _write_start_line!(io::IO, request::Request, wire_target::Union{Nothing
     target = wire_target === nothing ? request.target : String(wire_target)
     # Reject CR/LF/CTL in the method or target before they reach the socket.
     _validate_request_start_line!(request.method, target)
-    print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+    _print_request_line!(io, request.method, target, request.proto_major, request.proto_minor)
+    return nothing
+end
+
+# `print` with mixed string, Char, and integer arguments allocates for each
+# integer and Char; these write the same bytes piece by piece instead.
+@inline function _print_decimal!(io::IO, n::Integer)::Nothing
+    if 0 <= n <= 9
+        write(io, UInt8('0') + UInt8(n))
+    elseif 100 <= n <= 999
+        write(io, UInt8('0') + UInt8(n ÷ 100), UInt8('0') + UInt8((n ÷ 10) % 10), UInt8('0') + UInt8(n % 10))
+    else
+        print(io, n)
+    end
+    return nothing
+end
+
+@inline function _print_request_line!(io::IO, method::String, target::String, major::UInt8, minor::UInt8)::Nothing
+    write(io, method)
+    write(io, UInt8(' '))
+    write(io, target)
+    write(io, " HTTP/")
+    _print_decimal!(io, major)
+    write(io, UInt8('.'))
+    _print_decimal!(io, minor)
+    write(io, "\r\n")
+    return nothing
+end
+
+@inline function _print_status_line!(io::IO, response::Response)::Nothing
+    reason = _response_reason_phrase(response)
+    write(io, _status_line_version(response))
+    write(io, UInt8(' '))
+    _print_decimal!(io, response.status)
+    write(io, UInt8(' '))
+    write(io, reason)
+    write(io, "\r\n")
     return nothing
 end
 
@@ -527,6 +563,8 @@ function _status_text(status::Integer)::String
 end
 
 @inline function _response_reason_phrase(response::Response)::String
+    # The status line carries a three-digit status code (RFC 9112 §4).
+    100 <= response.status <= 999 || throw(ProtocolError("invalid HTTP response status code: $(response.status)"))
     reason = isempty(response.reason) ? _status_text(response.status) : response.reason
     _string_contains_ctl_byte(reason) && throw(ProtocolError("invalid HTTP response reason phrase: $(repr(reason))"))
     return reason
@@ -539,30 +577,20 @@ end
     return response.proto_major == UInt8(1) && response.proto_minor == UInt8(0) ? "HTTP/1.0" : "HTTP/1.1"
 end
 
-@inline function _write_status_line!(io::IO, response::Response)::Nothing
-    reason = _response_reason_phrase(response)
-    print(io, _status_line_version(response), ' ', response.status, ' ', reason, "\r\n")
-    return nothing
-end
+@inline _write_status_line!(io::IO, response::Response)::Nothing = _print_status_line!(io, response)
 
-@inline function _append_status_line!(buf::IOBuffer, response::Response)::Nothing
-    reason = _response_reason_phrase(response)
-    print(buf, _status_line_version(response), ' ', response.status, ' ', reason, "\r\n")
-    return nothing
-end
+@inline _append_status_line!(buf::IOBuffer, response::Response)::Nothing = _print_status_line!(buf, response)
 
-function _append_headers!(buf::IOBuffer, hdrs::Headers)
+function _append_headers!(io::IO, hdrs::Headers)
     for (key, value) in hdrs
-        print(buf, key, ": ", value, "\r\n")
+        print(io, key, ": ", value, "\r\n")
     end
     return nothing
 end
 
 function _write_headers!(io::IO, hdrs::Headers)
     _normalize_outgoing_headers!(hdrs)
-    for (key, value) in hdrs
-        print(io, key, ": ", value, "\r\n")
-    end
+    _append_headers!(io, hdrs)
     return nothing
 end
 
@@ -719,6 +747,18 @@ function _write_chunked_body!(::IO, body, ::Headers)
     throw(ProtocolError("unsupported HTTP/1 response body type $(typeof(body))"))
 end
 
+function _write_eof_body!(io::IO, body::AbstractBody)::Nothing
+    buf = Vector{UInt8}(undef, 16 * 1024)
+    while true
+        n = body_read!(body, buf)
+        n == 0 && return nothing
+        write(io, n == length(buf) ? buf : @view(buf[1:n]))
+    end
+end
+
+_write_eof_body!(io::IO, body::Union{AbstractString,AbstractVector{UInt8}})::Nothing = (write(io, body); nothing)
+_write_eof_body!(::IO, body)::Nothing = throw(ProtocolError("unsupported HTTP/1 response body type $(typeof(body))"))
+
 function _request_has_body(request::Request)::Bool
     request.body isa EmptyBody && return false
     request.content_length == 0 && return false
@@ -782,7 +822,7 @@ function _append_start_line!(buf::IOBuffer, request::Request, wire_target::Union
     target = wire_target === nothing ? request.target : String(wire_target)
     # Reject CR/LF/CTL in the method or target before they reach the socket.
     _validate_request_start_line!(request.method, target)
-    print(buf, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+    _print_request_line!(buf, request.method, target, request.proto_major, request.proto_minor)
     return nothing
 end
 
@@ -863,6 +903,18 @@ write_response!(io::IO, response::Response, request::Union{Nothing,Request}) =
 # abstractly typed request into a non-inlined call dispatches at runtime,
 # which `juliac --trim` rejects.
 function _write_response!(io::IO, response::Response, response_to_head::Bool)
+    head, use_chunked, trailer_values, allows_body = _response_head(response, response_to_head)
+    write(io, head)
+    allows_body && _write_response_body!(io, response, use_chunked, trailer_values)
+    return nothing
+end
+
+# The response head as bytes, whether the body is chunked, the trailers to send
+# after it, and whether a body follows the head. Throws, before anything is
+# written, for a response that cannot be sent. For an HTTP/1.0 peer
+# (`peer_http10`), a body that would be chunked is instead ended by closing the
+# connection (RFC 9112 §6.1).
+function _response_head(response::Response, response_to_head::Bool, peer_http10::Bool=false)::Tuple{Vector{UInt8},Bool,Headers,Bool}
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
@@ -894,26 +946,36 @@ function _write_response!(io::IO, response::Response, response_to_head::Bool)
     else
         removeheader(headers, "Content-Length")
     end
+    if use_chunked && peer_http10
+        use_chunked = false
+        removeheader(headers, "Transfer-Encoding")
+        setheader(headers, "Connection", "close")
+    end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
     # `allows_body` already rules out HEAD.
     allows_body && _check_response_body_unsent(response, nothing)
-    # Buffer the entire response head (status line + all header lines + blank
-    # CRLF) into a single IOBuffer and write it to the transport in one
-    # syscall. The transport's `write` does not buffer internally, so emitting
-    # the head field-by-field via `print` translates to a write syscall per
-    # argument (~20 per typical response).
+    # Build the entire head (status line, header lines, blank CRLF) in one
+    # buffer so that it reaches the transport in one write. The transport's
+    # `write` does not buffer internally, so printing the head field by field
+    # costs a write syscall per argument (~20 per typical response).
     head_buf = IOBuffer()
     _append_status_line!(head_buf, response)
     _append_headers!(head_buf, headers)
     print(head_buf, "\r\n")
-    write(io, take!(head_buf))
-    allows_body || return nothing
+    return take!(head_buf), use_chunked, trailer_values, allows_body
+end
+
+function _write_response_body!(io::IO, response::Response, use_chunked::Bool, trailer_values::Headers)::Nothing
     if use_chunked
         _write_chunked_body!(io, response.body, trailer_values)
         return nothing
     end
-    response.content_length < 0 && return nothing
+    if response.content_length < 0
+        # Neither a length nor chunked: the body ends when the connection closes.
+        _response_has_body(response) && _write_eof_body!(io, response.body)
+        return nothing
+    end
     body = response.body
     if body isa BytesBody
         _write_exact_bytes_body!(io, body::BytesBody, response.content_length)
