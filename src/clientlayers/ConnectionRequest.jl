@@ -115,7 +115,7 @@ function connectionlayer(handler)
                     InnerIOType = sockettype(target_url, socket_type, socket_type_tls, get(kw, :sslconfig, nothing))
                     io = Connections.sslupgrade(InnerIOType, io, target_url.host; readtimeout=readtimeout, kw...)
                 end
-                req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
+                req.headers = filter(x -> !Messages.field_name_isequal(x.first, "Proxy-Authorization"), req.headers)
             end
 
             stream = Stream(req.response, io)
