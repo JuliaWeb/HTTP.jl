@@ -5,6 +5,8 @@ function _server_stream_allows_body(stream::Stream)::Bool
     return true
 end
 
+@inline _is_http10(message::Union{Request,Response})::Bool = message.proto_major == UInt8(1) && message.proto_minor == UInt8(0)
+
 function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
     # Framing is chosen late so explicit response headers win, while unread
     # request bodies still force connection close independently of write mode.
@@ -15,11 +17,14 @@ function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
                _ServerStreamWriteMode.FIXED :
                _ServerStreamWriteMode.IDENTITY
     end
-    headercontains(stream.response.headers, "Transfer-Encoding", "chunked") && return _ServerStreamWriteMode.CHUNKED
+    # HTTP/1.0 has no chunked framing (RFC 9112 §6.1): an HTTP/1.0 request, or a
+    # response the handler made HTTP/1.0, is sent close-delimited instead.
+    http10 = _is_http10(stream.message) || _is_http10(stream.response::Response)
+    !http10 && headercontains(stream.response.headers, "Transfer-Encoding", "chunked") && return _ServerStreamWriteMode.CHUNKED
     if hasheader(stream.response.headers, "Content-Length") || stream.response.content_length >= 0
         return _ServerStreamWriteMode.FIXED
     end
-    if stream.response.proto_major == UInt8(1) && stream.response.proto_minor == UInt8(0)
+    if http10
         stream.response.close = true
         return _ServerStreamWriteMode.IDENTITY
     end
@@ -127,6 +132,8 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
         _suppressed_body_content_length!(headers, response)
         removeheader(headers, "Transfer-Encoding")
     elseif mode == _ServerStreamWriteMode.FIXED
+        # Content-Length frames the body; a Transfer-Encoding would contradict it.
+        removeheader(headers, "Transfer-Encoding")
         if response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
         end
@@ -207,16 +214,22 @@ function _server_readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Int
     return n
 end
 
-function _server_read(stream::Stream)::Vector{UInt8}
+# Read the rest of the request body. With a `max_body_bytes` limit (`0` for
+# none), a body over it fails with the 413 error that `serve!` uses: a declared
+# length before anything is read or `100 Continue` is sent, a chunked body as
+# soon as it grows past the limit.
+function _server_read(stream::Stream, max_body_bytes::Int64=Int64(0))::Vector{UInt8}
     _require_server_stream(stream)
     out = UInt8[]
     buf = Vector{UInt8}(undef, 16 * 1024)
     try
+        _check_server_body_size!(stream.request_body_content_length, max_body_bytes)
         _maybe_write_continue!(stream)
         while true
             n = _stream_request_body_read!(stream, buf)
             n == 0 && break
             append!(out, @view(buf[1:n]))
+            _check_server_body_size!(Int64(length(out)), max_body_bytes)
         end
     catch err
         stream.io_error = err
@@ -560,11 +573,12 @@ end
 
 struct _StreamHandlerAdapter{F}
     handler::F
+    max_body_bytes::Int64
 end
 
-function _buffered_stream_request(stream::Stream)::Request
+function _buffered_stream_request(stream::Stream, max_body_bytes::Int64)::Request
     request = startread(stream)
-    body_bytes = read(stream)
+    body_bytes = _server_read(stream, max_body_bytes)
     body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
     return Request(
         request.method,
@@ -582,7 +596,7 @@ function _buffered_stream_request(stream::Stream)::Request
 end
 
 function (adapter::_StreamHandlerAdapter)(stream::Stream)
-    req = _buffered_stream_request(stream)
+    req = _buffered_stream_request(stream, adapter.max_body_bytes)
     resp = adapter.handler(req)
     resp isa Response || throw(ProtocolError("streamhandler request handler must return HTTP.Response"))
     response = resp::Response
@@ -609,12 +623,15 @@ function (adapter::_StreamHandlerAdapter)(stream::Stream)
 end
 
 """
-    streamhandler(request_handler) -> stream handler
+    streamhandler(request_handler; max_body_bytes=64 MiB) -> stream handler
 
 Return a stream handler, for `listen!`, that reads each request into memory,
-calls `request_handler(req)`, and writes the response it returns. A response
-body that is not in memory, such as a file from `fileserver`, is streamed.
+calls `request_handler(req)`, and writes the response it returns. A request
+body larger than `max_body_bytes` gets `413 Content Too Large`, as with
+[`serve!`](@ref); `0` means no limit. A response body that is not in memory,
+such as a file from `fileserver`, is streamed.
 """
-function streamhandler(handler)
-    return _StreamHandlerAdapter(handler)
+function streamhandler(handler; max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES)
+    max_body_bytes >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
+    return _StreamHandlerAdapter(handler, Int64(max_body_bytes))
 end
