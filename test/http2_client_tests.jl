@@ -3737,3 +3737,44 @@ end
     end
     _wait_task_h2!(server_task)
 end
+
+@testset "HTTP/2 client treats flow-control violations by the server as errors" begin
+    status_block(enc) = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+    # DATA past the stream's receive window: the stream fails (and is reset)
+    # instead of the read loop blocking until the body is read.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
+        io = IOBuffer()
+        for _ in 1:19
+            HT.write_frame!(io, HT.DataFrame(stream_id, false, fill(UInt8('z'), 16_000)))
+        end
+        HT.write_frame!(io, HT.DataFrame(stream_id, true, UInt8[]))
+        _write_all_h2_tcp!(conn, take!(io))
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/")
+        @test err isa HT.ProtocolError
+        @test occursin("flow-control window", sprint(showerror, err))
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A WINDOW_UPDATE that takes a window above 2^31-1, for the connection or
+    # for the stream.
+    for stream_level in (false, true)
+        listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+            _write_frame_to_conn!(conn, HT.WindowUpdateFrame(stream_level ? stream_id : UInt32(0), UInt32(0x7fff_ffff)))
+            _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
+            _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("ok"))))
+        end
+        try
+            err = _h2_scripted_roundtrip_error(address, "/")
+            @test err isa HT.ProtocolError
+            @test occursin("WINDOW_UPDATE overflowed", sprint(showerror, err))
+            _wait_task_h2!(server_task)
+        finally
+            HTTP.@try_ignore NC.close(listener)
+        end
+    end
+end
