@@ -115,7 +115,7 @@ _parse_ipv6_literal(host::AbstractString)::Union{Nothing,NTuple{16,UInt8}} =
     HostResolvers._parse_ipv6_literal(host)
 
 function _normalize_proxy_host(host::AbstractString)::String
-    normalized = lowercase(String(host))
+    normalized = _fast_lowercase(String(host))
     while !isempty(normalized) && last(normalized) == '.'
         normalized = normalized[1:prevind(normalized, lastindex(normalized))]
     end

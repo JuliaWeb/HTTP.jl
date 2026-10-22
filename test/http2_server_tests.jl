@@ -1708,6 +1708,9 @@ end
     ]
     _, _, _, _, headers = HT._validate_h2_request_headers!(fields)
     @test collect(headers) == ["X-Request-Id" => "abc", "Accept" => "*/*"]
+    # Lowercase names are checked and canonicalized without copies: each
+    # `lowercase` call alone cost seven allocations.
+    @test minimum(@allocated(HT._validate_h2_request_headers!(fields)) for _ in 1:3) < 1024
 end
 
 @testset "HTTP/2 server validates CONNECT request pseudo-headers" begin
@@ -2692,6 +2695,15 @@ end
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/public /admin"))
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/a\tb"))
 
+    # RFC 9113 §8.3.1: :path is an absolute path, or `*` for OPTIONS only. An
+    # empty :path reached the Request constructor, and "abc" was served, which
+    # HTTP/1 answers with 400.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path=""))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="abc"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="http://example.com/"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="*"))
+    @test HT._validate_h2_request_headers!(_h2_fields(method="OPTIONS", path="*"))[3] == "*"
+
     # ANT-2026-565042FN: :authority must pass host validation (no whitespace).
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(authority="allowed.example.com evil"))
 
@@ -2896,5 +2908,32 @@ end
         conn === nothing || HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         wait(server)
+    end
+end
+
+@testset "HTTP/2 server rejects request header bytes that are not UTF-8" begin
+    fields(authority, name, value) = HT.HeaderField[
+        HT.HeaderField(":method", "GET", false),
+        HT.HeaderField(":scheme", "http", false),
+        HT.HeaderField(":authority", authority, false),
+        HT.HeaderField(":path", "/", false),
+        HT.HeaderField(name, value, false),
+    ]
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(fields("example.test", "x-a\xffb", "v"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(fields("example.test", "te", "trailers\xff"))
+    server = HT.serve!(_ -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        # The connection ends with GOAWAY(PROTOCOL_ERROR), not a silent close.
+        conn, reader = _open_raw_h2_server_conn(address)
+        block = HT.encode_header_block(HT.Encoder(), fields(address, "x-a\xffb", "v"))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, block))
+        frame = HT.read_frame!(reader)
+        @test frame isa HT.GoAwayFrame && (frame::HT.GoAwayFrame).error_code == UInt32(0x1)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
