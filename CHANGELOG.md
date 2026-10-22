@@ -93,6 +93,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `serve!` answers a handler's response that cannot be sent with 500 and logs
+  it. Such a response has an unsupported `Transfer-Encoding`, a control
+  character in a header value, an invalid header name, reason phrase or
+  trailer, or a status code outside 100-999. Before, the connection closed with
+  no response and nothing logged. A response body that fails after the head is
+  sent is now logged as a handler error, and the body is left unfinished; before,
+  it ended the connection task silently. ([#1451])
+- The HTTP/2 client handles a `GOAWAY` with an error code, such as
+  `ENHANCE_YOUR_CALM`, like one with `NO_ERROR`: streams above
+  `last_stream_id` fail with the retryable `H2GoAwayError` and the others keep
+  their responses. It failed every stream on the connection. ([#1460])
+- `WebSockets.open` raises the error types `HTTP.request` raises, such as
+  `ConnectError` for a refused connection, instead of Reseau exceptions such
+  as `Reseau.HostResolvers.OpError`. ([#1456])
+- A TLS handshake that runs into the connect or request deadline raises
+  `TimeoutError` with operation `tls_handshake`, retried like a connect
+  timeout, or `request` when the request deadline came first. It raised
+  `TLSHandshakeError`, for HTTP/1, HTTP/2, and `wss://` connections. ([#1455])
+- Printing a `ProxyConfig`, `Transport`, or `Client` no longer shows
+  credentials. The default display showed a proxy's Basic credentials (base64
+  of `user:password`) and a SOCKS proxy's password in plain text, a client's
+  `default_basicauth` and `default_query` values and jar cookies, and the
+  transport's TLS session caches; they now print short summaries. ([#1465])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -131,6 +154,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streams were refused and `close(server)` waited forever; the stream is now
   removed once its handler finishes. DATA beyond the advertised connection
   window is a connection error instead of being buffered. ([#1452])
+- The client matches and stores cookie paths without the request's query, as
+  RFC 6265 §5.1.4 specifies. A `Path=/a` cookie was not sent to `/a?x=1`, and
+  a cookie set by `/d/e?next=/f/g` got the default path `/d/e?next=/f`
+  instead of `/d`. ([#1448])
+- An HTTP/1 upload that the server answers early and then closes, such as a
+  `413` sent after the request head, returns the server's response. The
+  client closed the connection when the upload's write failed, so it usually
+  raised a broken-pipe, connection-reset, or `TLSTransportError` instead. A
+  `write_idle_timeout` during an upload raises `TimeoutError` (it raised
+  `NetClosingError`, or `TLSTransportError` over https) and is not retried,
+  like a read timeout. ([#1449])
 - URLs are checked against RFC 3986 before a connection is made. A userinfo or
   host with a backslash, a space, or a control character, a host with `%`
   (hosts are not percent-decoded), a bracketed host that is not an IPv6
@@ -1287,4 +1321,11 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
 [#1447]: https://github.com/JuliaWeb/HTTP.jl/issues/1447
+[#1448]: https://github.com/JuliaWeb/HTTP.jl/issues/1448
+[#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
+[#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
+[#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
+[#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
+[#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465

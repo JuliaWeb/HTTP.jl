@@ -186,10 +186,12 @@ mutable struct _RequestWriteState
     @atomic allow_writer_close::Bool
     @atomic head_written::Bool
     @atomic writer_done::Bool
+    # The upload's failure, set before the writer closes the connection over it.
+    @atomic err::Union{Nothing,Exception}
 end
 
 function _RequestWriteState(expects_continue::Bool)
-    return _RequestWriteState(expects_continue, _REQUEST_WRITE_CONTINUE_PENDING, false, true, false, false)
+    return _RequestWriteState(expects_continue, _REQUEST_WRITE_CONTINUE_PENDING, false, true, false, false, nothing)
 end
 
 """
@@ -332,6 +334,19 @@ end
     return @atomic :acquire transport.closed
 end
 
+# A summary: the TLS config holds session state and the pool holds connections.
+function Base.show(io::IO, transport::Transport)
+    print(io, "HTTP.Transport(", _transport_closed(transport) ? "closed" : "open",
+        ", idle_connections=", @atomic(:acquire, transport.idle_total),
+        ", max_idle_per_host=", transport.max_idle_per_host,
+        ", max_conns_per_host=", transport.max_conns_per_host,
+        ", tls_config=", transport.tls_config === nothing ? "default" : "custom",
+        ", proxy=")
+    show(io, transport.proxy)
+    print(io, ")")
+    return nothing
+end
+
 @inline function _conn_closed(conn::Conn)::Bool
     return @atomic :acquire conn.closed
 end
@@ -452,6 +467,22 @@ end
 
 @inline function _request_write_head_written_or_done(write_state::Union{Nothing,_RequestWriteState})::Bool
     return _request_write_head_written(write_state) || _request_write_done(write_state)
+end
+
+@inline function _request_write_error(write_state::Union{Nothing,_RequestWriteState})::Union{Nothing,Exception}
+    write_state === nothing && return nothing
+    return @atomic :acquire (write_state::_RequestWriteState).err
+end
+
+# The peer closed or reset the connection during the upload. A response it sent
+# before closing is still readable, and otherwise the reader sees EOF or a reset.
+@inline function _request_write_peer_closed(err::Exception)::Bool
+    if err isa TLS.TLSError
+        cause = (err::TLS.TLSError).cause
+        cause isa Exception || return false
+        err = cause::Exception
+    end
+    return _is_peer_close_error(err)
 end
 
 function _wait_request_head!(write_state::_RequestWriteState, writer_task::Task, request_deadline::Int64)::Nothing
@@ -927,13 +958,16 @@ function _start_request_writer!(
     write_state::_RequestWriteState,
     request_deadline::Int64,
     conn::Conn,
-    writer_err::Base.RefValue{Union{Nothing,Exception}},
 ) where {S}
     return Threads.@spawn begin
         try
             _write_request_streaming!(request_io, stream, request, plan, write_state, request_deadline)
         catch err
-            writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
+            ex = err isa Exception ? err : ProtocolError("request upload failed")
+            @atomic :release write_state.err = ex
+            # Any other failure leaves the reader waiting for a response that
+            # will not come, so the connection is closed under it.
+            _request_write_peer_closed(ex) && return nothing
             _request_write_allows_close(write_state) || return nothing
             @try_ignore _close_conn!(conn)
         finally
@@ -1097,10 +1131,9 @@ function _new_conn_tls!(
     catch err
         @try_ignore TCP.close(tcp)
         # Type TLS failures at the site where the phase is known: a TLSError
-        # here arose during connection setup, so surface it as a handshake
-        # failure. TLS failures on established connections reach the public
-        # boundary as `TLSTransportError` instead.
-        err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+        # here arose during connection setup. TLS failures on established
+        # connections reach the public boundary as `TLSTransportError` instead.
+        err isa TLS.TLSError && throw(_tls_setup_error(err::TLS.TLSError, tls_handshake_timeout_ns, connect_deadline_ns, host_resolver.deadline_ns))
         rethrow()
     end
 end
@@ -1686,6 +1719,8 @@ const _retryable_method = _retryable_request_method
 end
 
 @inline function _request_upload_abort_error(err)::Bool
+    # TLS reports the TCP write failure as its cause.
+    err isa TLS.TLSError && (err = (err::TLS.TLSError).cause)
     err isa EOFError && return true
     err isa SystemError && return true
     err isa IOPoll.NetClosingError && return true
@@ -1982,6 +2017,7 @@ function _roundtrip_incoming!(
             end
         end
         _on_cancel!(request_ctx, cancel_cb)
+        write_state = nothing
         try
             canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
             _apply_conn_deadline!(conn, request_deadline)
@@ -1990,17 +2026,18 @@ function _roundtrip_incoming!(
             deadline_stream = _RequestDeadlineWriteIO(stream, conn, attempt_request)
             has_request_body = _request_has_body(attempt_request)
             write_state = has_request_body ? _RequestWriteState(_request_expects_continue(attempt_request)) : nothing
-            writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
             writer_task = nothing
             if has_request_body
                 writer_task = _start_request_writer!(
                     request_io, deadline_stream, attempt_request, plan,
-                    write_state::_RequestWriteState, request_deadline, conn, writer_err,
+                    write_state::_RequestWriteState, request_deadline, conn,
                 )
                 _wait_request_head!(write_state::_RequestWriteState, writer_task::Task, request_deadline)
-                if _request_write_done(write_state)
-                    err = writer_err[]
-                    err === nothing || throw(err::Exception)
+                # A server may answer once it has the head and close before taking
+                # the body; that answer is read below.
+                err = _request_write_error(write_state)
+                if err !== nothing && !(_request_write_head_written(write_state) && _request_write_peer_closed(err::Exception))
+                    throw(err::Exception)
                 end
             else
                 try
@@ -2047,9 +2084,12 @@ function _roundtrip_incoming!(
                 end
             end
             if has_request_body && writer_task !== nothing && istaskdone(writer_task::Task)
-                err = writer_err[]
-                if err !== nothing && !(early_final && _request_upload_abort_error(err::Exception))
-                    throw(err::Exception)
+                err = _request_write_error(write_state)
+                if err !== nothing
+                    # A peer that closed during the upload answered before taking the whole body.
+                    peer_closed = _request_write_peer_closed(err::Exception)
+                    (peer_closed || (early_final && _request_upload_abort_error(err::Exception))) || throw(err::Exception)
+                    early_final = true
                 end
             end
             reusable = _response_reusable(raw_response, attempt_request)
@@ -2060,7 +2100,12 @@ function _roundtrip_incoming!(
                 body_close!(body)
             end
             return _IncomingResponse(raw_response.head, body)
-        catch err
+        catch caught
+            # An upload failure, such as a write timeout, explains a failed read:
+            # the writer or the peer closed the connection under it. Read before
+            # closing here, which fails a still-running upload.
+            write_err = _request_write_error(write_state)
+            err = write_err === nothing ? caught : write_err::Exception
             _remove_cancel_callback!(request_ctx, cancel_cb)
             _close_owned_conn!(transport, conn)
             if attempt <= transport.max_idle_per_host && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
@@ -2069,7 +2114,7 @@ function _roundtrip_incoming!(
                 continue
             end
             wrapped = err isa Exception ? _wrap_tls_transport_error(err::Exception) : err
-            wrapped === err ? rethrow() : throw(wrapped)
+            wrapped === caught ? rethrow() : throw(wrapped)
         end
     end
 end

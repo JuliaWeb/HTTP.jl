@@ -787,6 +787,50 @@ end
     end
 end
 
+@testset "HTTP client transport returns a response sent before the server closed mid-upload" begin
+    # The server answers once it has the head and closes with the body unread,
+    # so the client's upload fails with a reset or broken pipe. Rounds cover the
+    # writer failing before and after the response is read.
+    cert_file = joinpath(@__DIR__, "resources", "unittests.crt")
+    key_file = joinpath(@__DIR__, "resources", "unittests.key")
+    answer = collect(codeunits("HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 8\r\n\r\ntoo big!"))
+    payload = zeros(UInt8, 32 * 1024 * 1024)
+    rounds = 10
+    for secure in (false, true)
+        listener = secure ?
+            TL.listen("tcp", "127.0.0.1:0", TL.Config(verify_peer = false, cert_file = cert_file, key_file = key_file); backlog = 8) :
+            ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        port = Int(((secure ? TL.addr(listener) : NC.addr(listener))::NC.SocketAddrV4).port)
+        address = ND.join_host_port("127.0.0.1", port)
+        server_task = errormonitor(Threads.@spawn begin
+            for _ in 1:rounds
+                conn = secure ? TL.accept(listener) : NC.accept(listener)
+                try
+                    secure && TL.handshake!(conn)
+                    HT.read_request(HT._ConnReader(conn))
+                    write(conn, answer)
+                finally
+                    HTTP.@try_ignore close(conn)
+                end
+            end
+        end)
+        transport = secure ? HT.Transport(tls_config = TL.Config(verify_peer = false, verify_hostname = false)) : HT.Transport()
+        try
+            for _ in 1:rounds
+                req = HT.Request("POST", "/upload"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+                res = HT.roundtrip!(transport, address, req; secure = secure)
+                @test res.status == 413
+                @test String(_read_all_transport_body_bytes(res.body)) == "too big!"
+            end
+            _wait_task!(server_task)
+            @test HT.idle_connection_count(transport) == 0
+        finally
+            close(transport)
+            HTTP.@try_ignore close(listener)
+        end
+    end
+end
+
 @testset "HTTP upload failure and cancellation release the body and connection" begin
     for action in (:fail, :cancel)
         listener = NC.listen(NC.loopback_addr(0))
@@ -1388,6 +1432,55 @@ end
         close(transport)
         HTTP.@try_ignore NC.close(listener)
     end
+end
+
+@testset "HTTP client TLS handshake past the connect deadline is a timeout" begin
+    # The TCP connect has no deadline and the connect deadline has already
+    # passed, so the handshake's first write fails.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:2
+            conn = NC.accept(listener)
+            HTTP.@try_ignore read(conn)
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    tls_config = TL.Config(verify_peer = false, verify_hostname = false)
+    transport = HT.Transport(tls_config = tls_config)
+    try
+        plan = HT._proxy_plan(transport.proxy, true, address)
+        h1_err = try
+            HT._new_conn!(transport, plan, address, true, "localhost", transport.host_resolver, Int64(1), Int64(5_000_000_000))
+            nothing
+        catch e
+            e
+        end
+        h2_err = try
+            HT.connect_h2!(address; secure = true, tls_config = tls_config, connect_deadline_ns = Int64(1))
+            nothing
+        catch e
+            e
+        end
+        for err in (h1_err, h2_err)
+            @test err isa TL.TLSHandshakeTimeoutError
+            @test HT.isrecoverable(err)
+            wrapped = HT._wrap_client_transport_error(err, "request")
+            @test wrapped isa HT.TimeoutError && wrapped.operation == "tls_handshake"
+        end
+        _wait_task!(server_task)
+    finally
+        close(transport)
+        HTTP.@try_ignore NC.close(listener)
+    end
+    # The request deadline is a request timeout when it came first.
+    deadline_err = TL.TLSError("handshake", Int32(0), "i/o timeout", Reseau.IOPoll.DeadlineExceededError())
+    @test HT._tls_setup_error(deadline_err, Int64(5), Int64(100), Int64(200)) isa TL.TLSHandshakeTimeoutError
+    request_err = HT._tls_setup_error(deadline_err, Int64(5), Int64(100), Int64(100))
+    @test request_err isa Reseau.IOPoll.DeadlineExceededError
+    @test HT._wrap_client_transport_error(request_err, "request").operation == "request"
+    @test HT._tls_setup_error(TL.TLSError("handshake", Int32(0), "bad certificate", nothing), Int64(5), Int64(100), Int64(0)) isa HT.TLSHandshakeError
 end
 
 @testset "HTTP client transport classifies TLS-wrapped reused errors by cause (#1353)" begin
