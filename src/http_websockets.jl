@@ -87,6 +87,7 @@ import ..write_request!
 import .._wrap_client_transport_error
 import ..Stream
 import .._clear_deadlines!
+import .._resolve_server_timeout_ns
 import .._wait_after_accept_error
 import ..@_spawn_interactive
 
@@ -1264,6 +1265,9 @@ mutable struct Server{F}
     maxfragmentation::Int
     read_buffer_bytes::Int
     compress::Bool
+    # Limits on reading the handshake request and on a session's silence; 0 is none.
+    read_header_timeout_ns::Int64
+    idle_timeout_ns::Int64
     lock::ReentrantLock
     listener::Union{Nothing,TCP.Listener,TLS.Listener}
     serve_task::Union{Nothing,Task}
@@ -1286,10 +1290,14 @@ function Server(;
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     compress::Bool=false,
+    read_header_timeout_ns::Integer=0,
+    idle_timeout_ns::Integer=0,
 ) where {F}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
     maxfragmentation > 0 || throw(ArgumentError("maxfragmentation must be > 0"))
     read_buffer_bytes > 0 || throw(ArgumentError("read_buffer_bytes must be > 0"))
+    read_header_timeout_ns >= 0 || throw(ArgumentError("read_header_timeout_ns must be >= 0"))
+    idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     return Server(
         String(network),
         String(address),
@@ -1301,6 +1309,8 @@ function Server(;
         Int(maxfragmentation),
         Int(read_buffer_bytes),
         compress,
+        Int64(read_header_timeout_ns),
+        Int64(idle_timeout_ns),
         ReentrantLock(),
         nothing,
         nothing,
@@ -1686,6 +1696,7 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
         subprotocol=header(response.headers, "Sec-WebSocket-Protocol"),
         maxframesize=server.maxframesize,
         maxfragmentation=server.maxfragmentation,
+        read_idle_timeout_ns=server.idle_timeout_ns,
         is_client=false,
         pmce=_server_pmce_context(request, server.compress),
     )
@@ -1724,7 +1735,10 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
     task = current_task()
     _track_conn!(server, conn, task)
     try
+        server.read_header_timeout_ns > 0 &&
+            _ws_arm_read_deadline!(conn, _ws_read_deadline_ns(server.read_header_timeout_ns))
         request = read_request(_ConnReader(conn))
+        server.read_header_timeout_ns > 0 && _ws_arm_read_deadline!(conn, Int64(0))
         response = _upgrade_response(request, server)
         _write_ws_response!(conn, response)
         response.status == 101 || return nothing
@@ -1877,6 +1891,12 @@ address.
   frame, and the most frames in one message. Messages that have arrived but
   not been received may hold up to four times `maxframesize` bytes; past that
   the connection is closed with status 1008.
+- `read_header_timeout`, `read_timeout`, `idle_timeout`: timeouts in seconds,
+  all off by default, as for `HTTP.serve!`; each also has a nanosecond form
+  ending in `_ns`. `read_header_timeout` limits the handshake, from accepting
+  the connection to the end of the upgrade request, and `idle_timeout` closes
+  a connection on which nothing arrives for that long. Both fall back to
+  `read_timeout` when they are `0`.
 
 WebSocket server tasks use Julia's `:interactive` thread pool. Start Julia with
 at least one interactive thread, such as `--threads=4,1`, to isolate server work
@@ -1895,8 +1915,17 @@ function listen!(
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     listenany::Bool=false,
     compress::Bool=false,
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    idle_timeout=nothing,
+    read_timeout_ns::Integer=Int64(0),
+    read_header_timeout_ns::Integer=Int64(0),
+    idle_timeout_ns::Integer=Int64(0),
 )::Server
     bind_port = listenany ? 0 : Int(port)
+    read_ns = _resolve_server_timeout_ns("read_timeout_ns", read_timeout_ns, "read_timeout", read_timeout)
+    header_ns = _resolve_server_timeout_ns("read_header_timeout_ns", read_header_timeout_ns, "read_header_timeout", read_header_timeout)
+    idle_ns = _resolve_server_timeout_ns("idle_timeout_ns", idle_timeout_ns, "idle_timeout", idle_timeout)
     server = Server(
         network="tcp",
         address=HostResolvers.join_host_port(host, bind_port),
@@ -1908,6 +1937,8 @@ function listen!(
         maxfragmentation=maxfragmentation,
         read_buffer_bytes=read_buffer_bytes,
         compress=compress,
+        read_header_timeout_ns=header_ns > 0 ? header_ns : read_ns,
+        idle_timeout_ns=idle_ns > 0 ? idle_ns : read_ns,
     )
     ready = Threads.Event(true)
     server.serve_task = @_spawn_interactive begin
