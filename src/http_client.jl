@@ -587,13 +587,14 @@ function _acquire_h2_conn!(
                 proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
                 tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
                 try
-                    connect_h2!(
+                    _connect_h2_from_tcp!(
                         tcp,
-                        address;
-                        secure=secure,
-                        tls_config=tls_cfg,
-                        connect_deadline_ns=connect_deadline_ns,
-                        http2_settings=client.http2_settings,
+                        address,
+                        secure,
+                        tls_cfg,
+                        connect_deadline_ns,
+                        client.http2_settings,
+                        connect_host_resolver.deadline_ns,
                     )
                 catch
                     @try_ignore begin
