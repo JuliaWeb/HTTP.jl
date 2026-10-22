@@ -2151,6 +2151,38 @@ end
     @test waited == Int64[6]
 end
 
+@testset "HTTP/2 server writes ignore a write deadline left on the connection" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true, write_timeout_ns = 60_000_000_000) do request
+        return HT.Response(200, "read $(length(request.body))")
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        tracked = only(HT._server_conns(server))
+        # IDLE comes after the server clears its setup deadlines.
+        while HT._conn_state(tracked) != HT._ConnState.IDLE
+            yield()
+        end
+        # An earlier response write's deadline that has since passed.
+        HT._set_write_deadline!(tracked.conn, Int64(1))
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/upload"; method = "POST", end_stream = false)
+        # Reading the body sends WINDOW_UPDATE, the first write since the deadline expired.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), true, fill(UInt8('x'), 100)))
+        headers_frame, fragments, _ = _read_h2_server_header_block!(conn::NC.Conn, reader)
+        decoded = HT.decode_header_block(decoder, fragments)
+        ok = any(field -> field.name == ":status" && field.value == "200", decoded)
+        @test ok
+        ok && @test String(_read_h2_server_data_frame!(conn::NC.Conn, reader).data) == "read 100"
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 buffered responses send headers before waiting for send credit" begin
     # HEADERS are not flow-controlled: with no stream credit yet, a String body
     # still sends its headers at once, as a streamed body does.

@@ -183,6 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass four times `max_len`, and at least 16 MiB: the `write` throws `IOError`,
   as for a client that disconnected. Before, the server kept every event
   written to such a client. ([#1478])
+- An HTTP/2 server with `write_timeout` set no longer fails control-frame
+  writes after an earlier response's write deadline has passed. A WINDOW_UPDATE
+  after a request-body read inherited that expired deadline, so a request with
+  a body on a reused connection got `408` and the connection could close. Every
+  server write now sets its own deadline. ([#1458])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1396,6 +1401,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1457]: https://github.com/JuliaWeb/HTTP.jl/issues/1457
+[#1458]: https://github.com/JuliaWeb/HTTP.jl/issues/1458
 [#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
 [#1461]: https://github.com/JuliaWeb/HTTP.jl/issues/1461

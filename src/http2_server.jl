@@ -59,10 +59,12 @@ mutable struct _H2SendWindowState
     # Connection-level receive window: the DATA bytes (padding included) the
     # peer may still send before it needs more WINDOW_UPDATE credit.
     @atomic conn_recv_window::Int64
+    # The server's `write_timeout_ns`, for writes made without the `Server`.
+    const write_timeout_ns::Int64
     @atomic closed::Bool
 end
 
-function _H2SendWindowState()
+function _H2SendWindowState(write_timeout_ns::Integer=0)
     lock = ReentrantLock()
     return _H2SendWindowState(
         lock,
@@ -74,9 +76,12 @@ function _H2SendWindowState()
         Encoder(),
         Dict{UInt32,Int64}(),
         Int64(_H2_DEFAULT_WINDOW_SIZE),
+        Int64(write_timeout_ns),
         false,
     )
 end
+
+@inline _h2_write_deadline_ns(send_state::_H2SendWindowState)::Int64 = _deadline_after(send_state.write_timeout_ns)
 
 @enum _H2ServerStreamCancelKind::UInt8 begin
     _H2_SERVER_STREAM_OPEN = 0
@@ -402,9 +407,10 @@ function _send_h2_server_window_updates!(
     increment = UInt32(nbytes)
     # Credit the window before the peer can see the update and use it.
     @atomic send_state.conn_recv_window += nbytes
+    deadline_ns = _h2_write_deadline_ns(send_state)
     try
-        _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), increment))
-        stream_level && _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(stream_id, increment))
+        _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), increment), deadline_ns)
+        stream_level && _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(stream_id, increment), deadline_ns)
     catch err
         if err isa EOFError || err isa IOPoll.NetClosingError || err isa SystemError
             return nothing
@@ -608,7 +614,7 @@ function body_close!(body::_H2ServerBody)::Nothing
     end
     if should_reset
         @try_ignore begin
-            _write_frame_h2_server_threadsafe!(body.write_lock, body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)))
+            _write_frame_h2_server_threadsafe!(body.write_lock, body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)), _h2_write_deadline_ns(body.send_state))
         end
     end
     @try_ignore _send_h2_server_window_updates!(body.conn, body.write_lock, body.send_state, body.stream_id, unread, false)
@@ -759,10 +765,13 @@ function _write_all_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, bytes::Vector{UIn
     return nothing
 end
 
+# Callers hold the connection's write lock. Every write sets the socket's write
+# deadline, `0` for none: the deadline outlives the write, and another task's
+# expired deadline would fail this one.
 function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))::Nothing
     io = IOBuffer()
     write_frame!(io, frame)
-    write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
+    _set_write_deadline!(conn, write_deadline_ns)
     _write_all_h2_server!(conn, take!(io))
     return nothing
 end
@@ -834,7 +843,6 @@ function _write_data_frames_h2_server!(
         send_state.peer_max_send_frame_size
     end
     max_frame_size = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
-    write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
     # Each pass reserves send window (at most one frame's worth), copies the
     # DATA frame header and payload into one buffer, and writes it in one call.
     while offset <= total_len
@@ -870,6 +878,7 @@ function _write_data_frames_h2_server!(
         end
         lock(write_lock)
         try
+            _set_write_deadline!(conn, write_deadline_ns)
             _write_all_h2_server!(conn, out)
         finally
             unlock(write_lock)
@@ -1327,7 +1336,6 @@ function _write_h2_headers_and_first_batch!(
     max_header_list_size::Int,
     write_deadline_ns::Int64,
 )::Nothing
-    write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
     total_len = length(body)
     # Per-frame cap — the smaller of our local cap and the peer's setting.
     peer_max = lock(send_state.state_lock) do
@@ -1340,6 +1348,7 @@ function _write_h2_headers_and_first_batch!(
     # Acquire write_lock and emit HEADERS + DATA batch atomically.
     lock(write_lock)
     try
+        _set_write_deadline!(conn, write_deadline_ns)
         # 1. HEADERS frame bytes (encoder state advances under the lock).
         headers_bytes = _encode_h2_headers_frame_bytes_locked!(
             send_state, stream_id, response_status, response_headers,
@@ -1442,7 +1451,7 @@ function _handle_h2_stream!(
             catch err
                 if @atomic :acquire stream.response_started
                     @try_ignore begin
-                        _write_frame_h2_server_threadsafe!(write_lock, conn, RSTStreamFrame(stream_id, UInt32(0x2)))
+                        _write_frame_h2_server_threadsafe!(write_lock, conn, RSTStreamFrame(stream_id, UInt32(0x2)), _server_write_deadline_ns(server))
                     end
                 else
                     status = _server_error_status(err)
@@ -1583,9 +1592,10 @@ function _try_write_h2_goaway!(
     write_lock::ReentrantLock,
     last_stream_id::UInt32,
     error_code::UInt32,
+    write_deadline_ns::Int64,
 )::Nothing
     @try_ignore begin
-        _write_frame_h2_server_threadsafe!(write_lock, conn, GoAwayFrame(last_stream_id, error_code, UInt8[]))
+        _write_frame_h2_server_threadsafe!(write_lock, conn, GoAwayFrame(last_stream_id, error_code, UInt8[]), write_deadline_ns)
     end
     return nothing
 end
@@ -1594,11 +1604,12 @@ function _request_h2_conn_shutdown!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
     control::_H2ServerConnControl,
+    write_deadline_ns::Int64,
 )::Nothing
     @atomic :release control.shutdown_requested = true
     (@atomic :acquire control.goaway_sent) && return nothing
     last_stream_id = @atomic :acquire control.graceful_last_stream_id
-    _try_write_h2_goaway!(conn, write_lock, last_stream_id, UInt32(0))
+    _try_write_h2_goaway!(conn, write_lock, last_stream_id, UInt32(0), write_deadline_ns)
     @atomic :release control.goaway_sent = true
     return nothing
 end
@@ -1656,7 +1667,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     max_header_block_bytes = _h2_max_header_block_bytes(server)
     write_lock = ReentrantLock()
     states_lock = ReentrantLock()
-    send_state = _H2SendWindowState()
+    send_state = _H2SendWindowState(server.write_timeout_ns)
     conn_control = _H2ServerConnControl()
     states = Dict{UInt32,_H2ServerStreamState}()
     continuation_stream = UInt32(0)
@@ -2043,7 +2054,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         close_kind == _H2_CONN_CLOSE_INTERNAL && rethrow(err)
         return nothing
     finally
-        close_kind == _H2_CONN_CLOSE_PROTOCOL && _try_write_h2_goaway!(conn, write_lock, max_stream_id, UInt32(0x1))
+        close_kind == _H2_CONN_CLOSE_PROTOCOL && _try_write_h2_goaway!(conn, write_lock, max_stream_id, UInt32(0x1), _server_write_deadline_ns(server))
         _fail_h2_send_window_state!(send_state)
         _fail_h2_server_streams!(states_lock, states, send_state)
         _set_conn_shutdown_hook!(tracked, nothing)
