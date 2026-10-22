@@ -1121,6 +1121,150 @@ end
     end
 end
 
+# Reads frames until `done(frame)`, decoding header blocks to keep `decoder` in
+# sync, and returns the connection-level WINDOW_UPDATE credit seen on the way.
+function _read_h2_server_conn_credit_until!(reader::IO, decoder::HT.Decoder, done)::Int
+    credit = 0
+    for _ in 1:64
+        frame = HT.read_frame!(reader)
+        frame isa HT.HeadersFrame && HT.decode_header_block(decoder, (frame::HT.HeadersFrame).header_block_fragment)
+        if frame isa HT.WindowUpdateFrame && (frame::HT.WindowUpdateFrame).stream_id == UInt32(0)
+            credit += Int((frame::HT.WindowUpdateFrame).window_size_increment)
+        end
+        done(frame) && return credit
+    end
+    error("expected HTTP/2 frame was not found")
+end
+
+@testset "HTTP/2 server returns flow-control credit for DATA padding" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        return HT.Response(200, "got $(length(request.body))")
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/upload"; method = "POST", end_stream = false)
+        # 10 body bytes after a Pad Length octet, then 99 bytes of padding.
+        payload = vcat(UInt8[99], fill(UInt8('x'), 10), zeros(UInt8, 99))
+        header = HT._encode_header_bytes(HT.FrameHeader(length(payload), HT.FRAME_DATA, HT.FLAG_PADDED | HT.FLAG_END_STREAM, UInt32(1)))
+        _write_all_h2_server_raw!(conn::NC.Conn, vcat(header, payload))
+        # The server reads this PING after the DATA, so the ACK follows the credit returned for it.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        credit = 0
+        body = UInt8[]
+        seen_ack = false
+        seen_end = false
+        while !(seen_ack && seen_end)
+            credit += _read_h2_server_conn_credit_until!(reader, decoder, f -> begin
+                f isa HT.PingFrame && (f::HT.PingFrame).ack && (seen_ack = true; return true)
+                if f isa HT.DataFrame
+                    append!(body, (f::HT.DataFrame).data)
+                    (f::HT.DataFrame).end_stream && (seen_end = true; return true)
+                end
+                return false
+            end)
+        end
+        @test String(body) == "got 10"
+        @test credit == length(payload)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+@testset "HTTP/2 server frees a stream whose handler answers before the body ends" begin
+    go = Channel{Nothing}(1)
+    answered = Channel{HT.Stream}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true, max_concurrent_streams = 1) do stream
+        request = HT.startread(stream)
+        if request.target == "/early"
+            take!(go)
+            put!(answered, stream)
+        end
+        write(stream, "ok")
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/early"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), false, fill(UInt8('x'), 1000)))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        # The ACK shows the 1000 bytes are buffered before the handler answers.
+        credit = _read_h2_server_conn_credit_until!(reader, decoder, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        put!(go, nothing)
+        state = (take!(answered).request_body::HT._H2ServerBody).state
+        # The handler leaves the body unread, so the server resets the stream.
+        credit += _read_h2_server_conn_credit_until!(reader, decoder,
+            f -> f isa HT.RSTStreamFrame && (f::HT.RSTStreamFrame).stream_id == UInt32(1))
+        while !lock(() -> state.handler_finished, state.lock)
+            yield()
+        end
+        # This ACK follows everything the finished handler wrote.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        credit += _read_h2_server_conn_credit_until!(reader, decoder, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        @test credit == 1000
+        if credit == 1000
+            # The reset stream no longer counts against max_concurrent_streams = 1.
+            tracked = only(HT._server_conns(server))
+            while HT._conn_state(tracked) != HT._ConnState.IDLE
+                yield()
+            end
+            _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/next")
+            @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
+        end
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+@testset "HTTP/2 server rejects DATA beyond the connection receive window" begin
+    stashed = Channel{HT.Stream}(1)
+    release = Channel{Nothing}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        HT.startread(stream)
+        put!(stashed, stream)
+        # Never reads, so no credit goes back to the client.
+        take!(release)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/upload"; method = "POST", end_stream = false)
+        state = (take!(stashed).request_body::HT._H2ServerBody).state
+        # Four full frames are one byte more than the 65535-byte connection window.
+        for _ in 1:4
+            _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), false, fill(UInt8('x'), 16_384)))
+        end
+        settled() = lock(state.lock) do
+            state.cancel_kind != UInt8(HT._H2_SERVER_STREAM_OPEN) || state.received_body_bytes == 4 * 16_384
+        end
+        while !settled()
+            yield()
+        end
+        closed = lock(() -> state.cancel_kind == UInt8(HT._H2_SERVER_STREAM_CONN_CLOSED), state.lock)
+        @test closed
+        if closed
+            goaway = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.GoAwayFrame)
+            @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_PROTOCOL
+            @test lock(() -> state.received_body_bytes, state.lock) == 3 * 16_384
+        end
+    finally
+        HTTP.@try_ignore put!(release, nothing)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server stream handlers start reading bodies before upload completion" begin
     first_chunk_seen = Channel{String}(1)
     final_chunk_requested = Channel{Nothing}(1)

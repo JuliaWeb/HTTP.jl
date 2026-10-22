@@ -91,6 +91,24 @@ function Base.read(f::Form, n::Integer)
     return result
 end
 
+# Field names and file names go inside a quoted `Content-Disposition`
+# parameter. Escape `"`, CR, and LF as browsers do (WHATWG HTML
+# multipart/form-data encoding), so a name can't end the parameter or the
+# header line.
+function _escape_multipart_quoted(value::AbstractString)::String
+    raw = String(value)
+    any(c -> c == '"' || c == '\r' || c == '\n', raw) || return raw
+    return replace(raw, '"' => "%22", '\r' => "%0D", '\n' => "%0A")
+end
+
+# Part header values such as a content type are written as is; reject CR/LF,
+# which would end the header line.
+function _check_multipart_header_value(name::AbstractString, value::AbstractString)::String
+    raw = String(value)
+    any(c -> c == '\r' || c == '\n', raw) && throw(ArgumentError("multipart part $name must not contain CR or LF: $(repr(raw))"))
+    return raw
+end
+
 function _default_form_boundary()::String
     return replace(string(UUIDs.uuid4()), '-' => "")
 end
@@ -105,7 +123,7 @@ function Form(d; boundary=_default_form_boundary(), type::Symbol=:formdata)
     io = IOBuffer()
     for (i, (k, v)) in enumerate(d)
         write(io, (i == 1 ? "" : "\r\n") * "--" * boundary * "\r\n")
-        type == :mixed || write(io, "Content-Disposition: form-data; name=\"$k\"")
+        type == :mixed || write(io, "Content-Disposition: form-data; name=\"", _escape_multipart_quoted(string(k)), "\"")
         if isa(v, IO)
             writemultipartheader(io, v, type)
             seekstart(io)
@@ -127,7 +145,7 @@ function writemultipartheader(io::IOBuffer, stream::IOStream, type::Symbol=:form
     if type == :mixed
         write(io, "Content-Type: $(sniff(stream))\r\n\r\n")
     else
-        write(io, "; filename=\"$(basename(stream.name[7:end-1]))\"\r\n")
+        write(io, "; filename=\"", _escape_multipart_quoted(basename(stream.name[7:end-1])), "\"\r\n")
         write(io, "Content-Type: $(sniff(stream))\r\n\r\n")
     end
     return nothing
@@ -218,11 +236,15 @@ function writemultipartheader(io::IOBuffer, part::Multipart, type::Symbol=:formd
     elseif part.filename === nothing
         write(io, "\r\n")
     else
-        write(io, "; filename=\"$(part.filename)\"\r\n")
+        write(io, "; filename=\"", _escape_multipart_quoted(part.filename), "\"\r\n")
     end
-    detected = part.contenttype == "" ? sniff(part.data) : part.contenttype
-    write(io, "Content-Type: $(detected)\r\n")
-    write(io, part.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(part.contenttransferencoding)\r\n\r\n")
+    detected = part.contenttype == "" ? sniff(part.data) : _check_multipart_header_value("content type", part.contenttype)
+    write(io, "Content-Type: ", detected, "\r\n")
+    if part.contenttransferencoding == ""
+        write(io, "\r\n")
+    else
+        write(io, "Content-Transfer-Encoding: ", _check_multipart_header_value("content transfer encoding", part.contenttransferencoding), "\r\n\r\n")
+    end
     return nothing
 end
 
@@ -307,12 +329,12 @@ end
 
 function parse_multipart_chunk(chunk; require_contentdisposition::Bool=true)
     _, end_index = find_header_boundary(chunk)
-    ind = end_index
-    header = unsafe_string(pointer(chunk), ind)
+    # Copy by index: `chunk` may be any AbstractVector, not contiguous memory.
+    header = String(chunk[1:end_index])
     content = view(chunk, end_index+1:lastindex(chunk))
 
     # find content disposition
-    disposition_match = match(r"^[Cc]ontent-[Dd]isposition:[ \t]*form-data;[ \t]*(.*)\r\n"mx, header)
+    disposition_match = match(r"^content-disposition:[ \t]*form-data;[ \t]*(.*)\r\n"imx, header)
     content_disposition_available = disposition_match !== nothing
 
     if !content_disposition_available && require_contentdisposition
@@ -322,7 +344,7 @@ function parse_multipart_chunk(chunk; require_contentdisposition::Bool=true)
     name = nothing
     filename = nothing
     if content_disposition_available
-        content_disposition = SubString(disposition_match.match, sizeof("Content-Disposition: form-data;") + 1)
+        content_disposition = something(disposition_match.captures[1])
         while !isempty(content_disposition)
             pair_match = match(r"""^
         [ \t]*([!#$%&'*+\-.^_`|~[:alnum:]]+)[ \t]*=[ \t]*"(.*?)";?
@@ -347,9 +369,35 @@ function parse_multipart_chunk(chunk; require_contentdisposition::Bool=true)
         name === nothing && return nothing
     end
 
-    content_type_match = match(r"(?i)Content-Type: (\S*[^;\s])", header)
+    content_type_match = match(r"^content-type:[ \t]*(\S*[^;\s])"im, header)
     detected = content_type_match === nothing ? "text/plain" : content_type_match.captures[1]
     return Multipart(filename, IOBuffer(content), detected, "", name === nothing ? "" : name)
+end
+
+# Split a `multipart/*` Content-Type value into its lowercase subtype, such as
+# "form-data", and its `boundary` parameter. Parameter names and the media
+# type are case-insensitive and the boundary may be a quoted string
+# (RFC 2045 §5.1, RFC 2046 §5.1.1). Returns `nothing` for any other media type
+# or a value without a boundary.
+function _multipart_subtype_and_boundary(content_type::AbstractString)::Union{Nothing,Tuple{String,String}}
+    fields = split(content_type, ';')
+    media_type = lowercase(strip(fields[1]))
+    startswith(media_type, "multipart/") || return nothing
+    subtype = String(SubString(media_type, ncodeunits("multipart/") + 1))
+    for field in Iterators.drop(fields, 1)
+        eq = findfirst(==('='), field)
+        eq === nothing && continue
+        lowercase(strip(SubString(field, firstindex(field), prevind(field, eq)))) == "boundary" || continue
+        value = strip(SubString(field, nextind(field, eq)))
+        if length(value) >= 2 && startswith(value, '"') && endswith(value, '"')
+            value = replace(SubString(value, nextind(value, firstindex(value)), prevind(value, lastindex(value))), r"\\(.)" => s"\1")
+        end
+        boundary = String(value)
+        # RFC 2046 §5.1.1: 1 to 70 characters.
+        1 <= length(boundary) <= 70 || error("multipart boundary must be 1 to 70 characters: $(repr(boundary))")
+        return subtype, boundary
+    end
+    return nothing
 end
 
 function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString; require_contentdisposition::Bool=true)::Vector{Multipart}
@@ -418,11 +466,9 @@ function parse_multipart_form(
     body::Union{AbstractVector{UInt8},Nothing},
 )::Union{Vector{Multipart},Nothing}
     (content_type_header === nothing || body === nothing) && return nothing
-    matched = match(r"multipart/form-data; boundary=(.*)$", content_type_header)
-    matched === nothing && return nothing
-    boundary_delimiter = matched[1]
-    length(boundary_delimiter) > 70 && error("boundary delimiter must not be greater than 70 characters")
-    return parse_multipart_body(body, boundary_delimiter)
+    parsed = _multipart_subtype_and_boundary(content_type_header)
+    (parsed === nothing || parsed[1] != "form-data") && return nothing
+    return parse_multipart_body(body, parsed[2])
 end
 
 function parse_multipart_form(message::Union{Request,Response})::Union{Vector{Multipart},Nothing}
@@ -459,18 +505,11 @@ function parse_multipart(
     required_type::Union{Symbol,Nothing}=nothing,
 )::Union{Vector{Multipart},Nothing}
     (content_type_header === nothing || body === nothing) && return nothing
-
-    # parse multipart type and boundary from Content-Type
-    matched = match(r"multipart/([^;]*); boundary=(.*)$", content_type_header)
-    matched === nothing && return nothing
-
-    type = Symbol(replace(matched[1], '-' => ""))
-    boundary_delimiter = matched[2]
+    parsed = _multipart_subtype_and_boundary(content_type_header)
+    parsed === nothing && return nothing
+    subtype, boundary_delimiter = parsed
+    type = Symbol(replace(subtype, '-' => ""))
     required_type !== nothing && required_type != type && return nothing
-
-    # RFC2046 5.1.1: boundary must not be greater than 70 characters
-    length(boundary_delimiter) > 70 && error("boundary delimiter must not be greater than 70 characters")
-
     return parse_multipart_body(body, boundary_delimiter; require_contentdisposition=(type == :formdata))
 end
 
