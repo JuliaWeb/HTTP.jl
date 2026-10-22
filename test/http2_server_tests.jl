@@ -2692,6 +2692,15 @@ end
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/public /admin"))
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/a\tb"))
 
+    # RFC 9113 §8.3.1: :path is an absolute path, or `*` for OPTIONS only. An
+    # empty :path reached the Request constructor, and "abc" was served, which
+    # HTTP/1 answers with 400.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path=""))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="abc"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="http://example.com/"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="*"))
+    @test HT._validate_h2_request_headers!(_h2_fields(method="OPTIONS", path="*"))[3] == "*"
+
     # ANT-2026-565042FN: :authority must pass host validation (no whitespace).
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(authority="allowed.example.com evil"))
 
