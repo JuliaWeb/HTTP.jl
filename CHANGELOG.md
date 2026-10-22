@@ -127,6 +127,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waited for its own timeout (1 s for HTTP.jl and curl) before sending the
   body. A body whose `Content-Length` is over `max_body_bytes` still gets 413
   without the interim response. ([#1446])
+- The HTTP/2 server returns flow-control credit for every request byte it
+  drops: DATA padding, request bytes a handler leaves unread, and DATA for a
+  reset stream. That credit was lost, so a connection's receive window shrank
+  until uploads on it stalled. A handler that answered before the request body
+  ended left its stream counted against `max_concurrent_streams`, so later
+  streams were refused and `close(server)` waited forever; the stream is now
+  removed once its handler finishes. DATA beyond the advertised connection
+  window is a connection error instead of being buffered. ([#1452])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1273,4 +1281,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
 [#1478]: https://github.com/JuliaWeb/HTTP.jl/issues/1478
