@@ -2244,6 +2244,47 @@ end
     end
 end
 
+@testset "HTTP/2 server starts the idle timeout when the last stream goes" begin
+    listener = NC.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    client = ND.connect("tcp", ND.join_host_port("127.0.0.1", Int(laddr.port)))
+    conn = NC.accept(listener)
+    try
+        # A byte is waiting, so only a deadline that has passed fails a read.
+        write(client, UInt8[0x01])
+        buf = Vector{UInt8}(undef, 1)
+        # The read loop waits under an open stream's deadline (none) when the
+        # stream's handler finishes; a 1 ns idle timeout has passed once it is set.
+        send_state = HT._H2SendWindowState(0, 1)
+        states_lock = ReentrantLock()
+        states = Dict{UInt32, HT._H2ServerStreamState}()
+        state = HT._H2ServerStreamState(UInt32(1))
+        state.handler_finished = true
+        state.stream_done = true
+        states[UInt32(1)] = state
+        tracked = HT._ServerConn(conn, ReentrantLock(), nothing, HT._ConnState.ACTIVE, Int64(0))
+        HT._maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
+        @test isempty(states)
+        @test_throws Reseau.IOPoll.DeadlineExceededError readbytes!(conn, buf, 1)
+
+        # While the connection stays idle, frames such as PING do not move the
+        # deadline: the read loop sets the one the idle period started with.
+        server = HT.Server(handler = identity, idle_timeout_ns = 60_000_000_000)
+        idle_state = HT._H2SendWindowState(0, server.idle_timeout_ns)
+        @atomic idle_state.idle_deadline_ns = Int64(1)
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0))
+        @test_throws Reseau.IOPoll.DeadlineExceededError readbytes!(conn, buf, 1)
+        # An open stream gets the read timeout (none here) instead.
+        states[UInt32(3)] = HT._H2ServerStreamState(UInt32(3))
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0))
+        @test readbytes!(conn, buf, 1) == 1
+    finally
+        HTTP.@try_ignore NC.close(client)
+        HTTP.@try_ignore NC.close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 buffered responses send headers before waiting for send credit" begin
     # HEADERS are not flow-controlled: with no stream credit yet, a String body
     # still sends its headers at once, as a streamed body does.

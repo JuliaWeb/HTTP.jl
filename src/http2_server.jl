@@ -61,10 +61,15 @@ mutable struct _H2SendWindowState
     @atomic conn_recv_window::Int64
     # The server's `write_timeout_ns`, for writes made without the `Server`.
     const write_timeout_ns::Int64
+    # How long the connection may stay without open streams, and when that time
+    # is up (0: never). The deadline is set when the last stream goes, so frames
+    # that arrive meanwhile, such as PING, do not extend it.
+    const idle_timeout_ns::Int64
+    @atomic idle_deadline_ns::Int64
     @atomic closed::Bool
 end
 
-function _H2SendWindowState(write_timeout_ns::Integer=0)
+function _H2SendWindowState(write_timeout_ns::Integer=0, idle_timeout_ns::Integer=0)
     lock = ReentrantLock()
     return _H2SendWindowState(
         lock,
@@ -77,8 +82,20 @@ function _H2SendWindowState(write_timeout_ns::Integer=0)
         Dict{UInt32,Int64}(),
         Int64(_H2_DEFAULT_WINDOW_SIZE),
         Int64(write_timeout_ns),
+        Int64(idle_timeout_ns),
+        Int64(0),
         false,
     )
+end
+
+# Starts the idle period of a connection that has no open streams. Callers hold
+# `states_lock`, as the read loop does when it sets its read deadline, so the
+# deadline set last matches the streams that are open.
+function _start_h2_idle_period_locked!(conn::Union{TCP.Conn,TLS.Conn}, send_state::_H2SendWindowState)::Nothing
+    deadline = _deadline_after(send_state.idle_timeout_ns)
+    @atomic :release send_state.idle_deadline_ns = deadline
+    @try_ignore _set_read_deadline!(conn, deadline)
+    return nothing
 end
 
 @inline _h2_write_deadline_ns(send_state::_H2SendWindowState)::Int64 = _deadline_after(send_state.write_timeout_ns)
@@ -450,6 +467,8 @@ function _maybe_cleanup_h2_server_state!(
         if current === state
             delete!(states, state.stream_id)
             removed = true
+            # The read loop may be waiting under an open stream's deadline.
+            isempty(states) && _start_h2_idle_period_locked!(tracked.conn, send_state)
         end
     finally
         unlock(states_lock)
@@ -902,24 +921,33 @@ function _h2_server_has_active_streams(states_lock::ReentrantLock, states::Dict{
     end
 end
 
+# The longest an HTTP/2 connection may stay without open streams.
+@inline function _h2_idle_timeout_ns(server::Server)::Int64
+    server.idle_timeout_ns > 0 && return server.idle_timeout_ns
+    return server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
+end
+
 function _set_h2_frame_read_deadline!(
     server::Server,
     conn::Union{TCP.Conn,TLS.Conn},
     states_lock::ReentrantLock,
     states::Dict{UInt32,_H2ServerStreamState},
+    send_state::_H2SendWindowState,
     continuation_stream::UInt32,
 )::Nothing
-    timeout = Int64(0)
-    if continuation_stream != UInt32(0)
-        timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
-    elseif _h2_server_has_active_streams(states_lock, states)
-        timeout = server.read_timeout_ns
-    elseif server.idle_timeout_ns > 0
-        timeout = server.idle_timeout_ns
-    else
-        timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
+    lock(states_lock)
+    try
+        deadline = if continuation_stream != UInt32(0)
+            _deadline_after(server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns)
+        elseif !isempty(states)
+            _deadline_after(server.read_timeout_ns)
+        else
+            @atomic :acquire send_state.idle_deadline_ns
+        end
+        _set_read_deadline!(conn, deadline)
+    finally
+        unlock(states_lock)
     end
-    _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
@@ -1722,7 +1750,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     max_header_block_bytes = _h2_max_header_block_bytes(server)
     write_lock = ReentrantLock()
     states_lock = ReentrantLock()
-    send_state = _H2SendWindowState(server.write_timeout_ns)
+    send_state = _H2SendWindowState(server.write_timeout_ns, _h2_idle_timeout_ns(server))
     conn_control = _H2ServerConnControl()
     states = Dict{UInt32,_H2ServerStreamState}()
     continuation_stream = UInt32(0)
@@ -1765,13 +1793,14 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(bump)), _server_write_deadline_ns(server))
         end
         _clear_deadlines!(conn)
+        lock(() -> _start_h2_idle_period_locked!(conn, send_state), states_lock)
         _set_conn_shutdown_hook!(tracked, _H2ShutdownHook(write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
         while true
             # A graceful shutdown keeps reading until the streams its GOAWAY
             # covered are done; they still need WINDOW_UPDATE, PING, and DATA.
             _server_shutting_down(server) && !_h2_server_has_active_streams(states_lock, states) && return nothing
-            _set_h2_frame_read_deadline!(server, conn, states_lock, states, continuation_stream)
+            _set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, continuation_stream)
             frame = try
                 read_frame!(reader)
             catch err
