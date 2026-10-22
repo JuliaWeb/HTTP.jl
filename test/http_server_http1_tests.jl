@@ -1638,6 +1638,27 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers answer Expect: 100-continue before reading the body" begin
+    server = HT.serve!(request -> HT.Response(200, String(request.body)), "127.0.0.1", 0; listenany = true, max_body_bytes = 8)
+    port_num = HT.port(server)
+    expect_head(version, length) =
+        "POST / $(version)\r\nHost: localhost\r\nContent-Length: $(length)\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
+    try
+        raw, _ = _raw_http_request_until_close(port_num, expect_head("HTTP/1.1", 5) * "hello")
+        @test startswith(raw, "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n")
+        @test endswith(raw, "\r\n\r\nhello")
+        # A body over max_body_bytes is refused without asking for it.
+        raw, _ = _raw_http_request_until_close(port_num, expect_head("HTTP/1.1", 50))
+        @test startswith(raw, "HTTP/1.1 413 Content Too Large\r\n")
+        # HTTP/1.0 clients do not know 1xx responses (RFC 9110 §10.1.1).
+        raw, _ = _raw_http_request_until_close(port_num, expect_head("HTTP/1.0", 5) * "hello")
+        @test startswith(raw, "HTTP/1.1 200 OK\r\n")
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server stream handler request and response flow" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             _ = HT.startread(stream)
