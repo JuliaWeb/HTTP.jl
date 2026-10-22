@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h2` through ALPN. ([#1385])
 
 ### Changed
+- HTTP/1 request and status lines are written without the allocations
+  `print` makes for each integer and `Char`, a header value with nothing to
+  trim is no longer copied, and the client normalizes its request headers once.
+  An in-process HTTP/1 GET makes about 218 allocations instead of 263. The
+  bytes sent are unchanged. ([#1492])
 - `streamhandler` limits the request body it reads into memory to
   `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
   no limit); a larger body gets 413. Before, the body was read without any
@@ -1475,3 +1480,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1487]: https://github.com/JuliaWeb/HTTP.jl/issues/1487
 [#1489]: https://github.com/JuliaWeb/HTTP.jl/issues/1489
 [#1491]: https://github.com/JuliaWeb/HTTP.jl/issues/1491
+[#1492]: https://github.com/JuliaWeb/HTTP.jl/issues/1492

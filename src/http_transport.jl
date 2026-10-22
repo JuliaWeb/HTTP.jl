@@ -909,7 +909,7 @@ function _write_start_line!(io::IO, request::Request, plan::_ProxyPlan)
         # internal host. Validate the components before assembling the wire form.
         _validate_request_start_line!(request.method, request.target, forward_address)
         target = _request_url(false, forward_address, request.target)
-        print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+        _print_request_line!(io, request.method, target, request.proto_major, request.proto_minor)
         return nothing
     end
     return _write_start_line!(io, request)
@@ -924,7 +924,7 @@ function _write_request_head!(
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, request.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
     _write_start_line!(io, request, plan)
-    _write_headers!(io, headers)
+    _append_headers!(io, headers)
     write(io, "\r\n")
     return use_chunked, trailer_values
 end

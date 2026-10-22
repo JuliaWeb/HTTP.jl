@@ -456,7 +456,43 @@ function _write_start_line!(io::IO, request::Request, wire_target::Union{Nothing
     target = wire_target === nothing ? request.target : String(wire_target)
     # Reject CR/LF/CTL in the method or target before they reach the socket.
     _validate_request_start_line!(request.method, target)
-    print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+    _print_request_line!(io, request.method, target, request.proto_major, request.proto_minor)
+    return nothing
+end
+
+# `print` with mixed string, Char, and integer arguments allocates for each
+# integer and Char; these write the same bytes piece by piece instead.
+@inline function _print_decimal!(io::IO, n::Integer)::Nothing
+    if 0 <= n <= 9
+        write(io, UInt8('0') + UInt8(n))
+    elseif 100 <= n <= 999
+        write(io, UInt8('0') + UInt8(n ÷ 100), UInt8('0') + UInt8((n ÷ 10) % 10), UInt8('0') + UInt8(n % 10))
+    else
+        print(io, n)
+    end
+    return nothing
+end
+
+@inline function _print_request_line!(io::IO, method::String, target::String, major::UInt8, minor::UInt8)::Nothing
+    write(io, method)
+    write(io, UInt8(' '))
+    write(io, target)
+    write(io, " HTTP/")
+    _print_decimal!(io, major)
+    write(io, UInt8('.'))
+    _print_decimal!(io, minor)
+    write(io, "\r\n")
+    return nothing
+end
+
+@inline function _print_status_line!(io::IO, response::Response)::Nothing
+    reason = _response_reason_phrase(response)
+    write(io, _status_line_version(response))
+    write(io, UInt8(' '))
+    _print_decimal!(io, response.status)
+    write(io, UInt8(' '))
+    write(io, reason)
+    write(io, "\r\n")
     return nothing
 end
 
@@ -541,30 +577,20 @@ end
     return response.proto_major == UInt8(1) && response.proto_minor == UInt8(0) ? "HTTP/1.0" : "HTTP/1.1"
 end
 
-@inline function _write_status_line!(io::IO, response::Response)::Nothing
-    reason = _response_reason_phrase(response)
-    print(io, _status_line_version(response), ' ', response.status, ' ', reason, "\r\n")
-    return nothing
-end
+@inline _write_status_line!(io::IO, response::Response)::Nothing = _print_status_line!(io, response)
 
-@inline function _append_status_line!(buf::IOBuffer, response::Response)::Nothing
-    reason = _response_reason_phrase(response)
-    print(buf, _status_line_version(response), ' ', response.status, ' ', reason, "\r\n")
-    return nothing
-end
+@inline _append_status_line!(buf::IOBuffer, response::Response)::Nothing = _print_status_line!(buf, response)
 
-function _append_headers!(buf::IOBuffer, hdrs::Headers)
+function _append_headers!(io::IO, hdrs::Headers)
     for (key, value) in hdrs
-        print(buf, key, ": ", value, "\r\n")
+        print(io, key, ": ", value, "\r\n")
     end
     return nothing
 end
 
 function _write_headers!(io::IO, hdrs::Headers)
     _normalize_outgoing_headers!(hdrs)
-    for (key, value) in hdrs
-        print(io, key, ": ", value, "\r\n")
-    end
+    _append_headers!(io, hdrs)
     return nothing
 end
 
@@ -796,7 +822,7 @@ function _append_start_line!(buf::IOBuffer, request::Request, wire_target::Union
     target = wire_target === nothing ? request.target : String(wire_target)
     # Reject CR/LF/CTL in the method or target before they reach the socket.
     _validate_request_start_line!(request.method, target)
-    print(buf, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+    _print_request_line!(buf, request.method, target, request.proto_major, request.proto_minor)
     return nothing
 end
 
