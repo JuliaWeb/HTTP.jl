@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [incident report](https://emudhra.we-have-a-problem.com/).
 
 ### Added
+- `WebSockets.listen!` takes `read_header_timeout`, `read_timeout` and
+  `idle_timeout` (and their `_ns` forms), off by default as in `HTTP.serve!`:
+  they bound the handshake request and the silence on a session. Before, the
+  WebSocket server had no timeouts at all. ([#1491])
 - The HTTP/1 connection pool now honors a server-advertised
   `Keep-Alive: timeout=<seconds>` response header: the connection is not reused
   once that window (less a one-second safety margin) has elapsed since it went
@@ -1457,3 +1461,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
 [#1486]: https://github.com/JuliaWeb/HTTP.jl/issues/1486
 [#1487]: https://github.com/JuliaWeb/HTTP.jl/issues/1487
+[#1491]: https://github.com/JuliaWeb/HTTP.jl/issues/1491
