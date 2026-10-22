@@ -1236,11 +1236,28 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     (err === stream.io_error || err isa WebSockets.WebSocketError) ||
                         _log_handler_error(err, catch_backtrace(), request, tracked.conn)
                     status = _stream_error_status(stream, err)
+                    if !(@atomic :acquire stream.response_started)
+                        @try_ignore begin
+                            setstatus(stream, status)
+                            stream.response.close = true
+                            # The handler's response may declare framing for a
+                            # body the error path never writes (e.g. a reused
+                            # response whose body is already closed); reset it
+                            # so closewrite can flush the error head instead of
+                            # failing a Content-Length check before the head
+                            # reaches the wire.
+                            stream.response.content_length = 0
+                            removeheader(stream.response.headers, "Content-Length")
+                            removeheader(stream.response.headers, "Transfer-Encoding")
+                            startwrite(stream)
+                            closewrite(stream)
+                        end
+                    end
                     if !(@atomic :acquire stream.head_committed)
-                        # No head reached the wire, though writing may have
-                        # started with a deferred fixed-length head (#1303).
-                        # Answer with a new response: the handler's own
-                        # headers or framing may be what failed.
+                        # No head reached the wire: the handler's own headers
+                        # failed the attempt above, or writing had started with
+                        # a deferred fixed-length head (#1303). Answer with a
+                        # new error response.
                         _try_write_server_error!(tracked.conn, request, status)
                     end
                     # Return without `closewrite`: the connection closes, and a body

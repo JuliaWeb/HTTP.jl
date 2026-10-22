@@ -93,10 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
-- A stream handler that fails before its response head is sent gets a new
-  error response, without the headers the handler set. Before, the server
-  retried the handler's own response; when one of its headers was invalid, the
-  retry failed too and the client got no response. ([#1457])
+- A stream handler that fails before its response head is sent always gets an
+  error response. The server still sends the error with the handler's headers,
+  but when those headers are what failed, such as a NUL in a value, it now
+  falls back to a new error response instead of sending nothing. ([#1457])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
