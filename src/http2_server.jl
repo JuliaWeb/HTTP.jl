@@ -403,8 +403,13 @@ function _send_h2_server_window_updates!(
     # Credit the window before the peer can see the update and use it.
     @atomic send_state.conn_recv_window += nbytes
     try
-        _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), increment))
-        stream_level && _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(stream_id, increment))
+        bytes = _window_update_frames(stream_id, increment, stream_level)
+        lock(write_lock)
+        try
+            _write_all_h2_server!(conn, bytes)
+        finally
+            unlock(write_lock)
+        end
     catch err
         if err isa EOFError || err isa IOPoll.NetClosingError || err isa SystemError
             return nothing
@@ -760,10 +765,9 @@ function _write_all_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, bytes::Vector{UIn
 end
 
 function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))::Nothing
-    io = IOBuffer()
-    write_frame!(io, frame)
+    bytes = _frame_bytes(frame)
     write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
-    _write_all_h2_server!(conn, take!(io))
+    _write_all_h2_server!(conn, bytes)
     return nothing
 end
 
