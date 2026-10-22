@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/2 server rejects a request whose `:path` is not an absolute path,
+  or `*` for OPTIONS, as RFC 9113 §8.3.1 requires. An empty `:path` reset the
+  stream with `INTERNAL_ERROR` and logged a server error, and a `:path` such as
+  `abc` reached the handler, though HTTP/1 answers that target with 400. ([#1484])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -1295,3 +1299,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
+[#1484]: https://github.com/JuliaWeb/HTTP.jl/issues/1484
