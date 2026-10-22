@@ -1708,6 +1708,9 @@ end
     ]
     _, _, _, _, headers = HT._validate_h2_request_headers!(fields)
     @test collect(headers) == ["X-Request-Id" => "abc", "Accept" => "*/*"]
+    # Lowercase names are checked and canonicalized without copies: each
+    # `lowercase` call alone cost seven allocations.
+    @test minimum(@allocated(HT._validate_h2_request_headers!(fields)) for _ in 1:3) < 1024
 end
 
 @testset "HTTP/2 server validates CONNECT request pseudo-headers" begin
@@ -2733,6 +2736,15 @@ end
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/public /admin"))
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/a\tb"))
 
+    # RFC 9113 §8.3.1: :path is an absolute path, or `*` for OPTIONS only. An
+    # empty :path reached the Request constructor, and "abc" was served, which
+    # HTTP/1 answers with 400.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path=""))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="abc"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="http://example.com/"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="*"))
+    @test HT._validate_h2_request_headers!(_h2_fields(method="OPTIONS", path="*"))[3] == "*"
+
     # ANT-2026-565042FN: :authority must pass host validation (no whitespace).
     @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(authority="allowed.example.com evil"))
 
@@ -2805,6 +2817,57 @@ end
         close(conn)
         HT.forceclose(server)
         wait(server)
+    end
+end
+
+@testset "HTTP/2 server answers Expect: 100-continue" begin
+    # The client sends its body without waiting, so every exchange ends; the
+    # statuses on the stream show whether the interim 100 came first.
+    request_server = HT.serve!(request -> HT.Response(200, String(request.body)), "127.0.0.1", 0; listenany = true, max_body_bytes = 8)
+    stream_server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        HT.startread(stream)
+        write(stream, read(stream))
+    end
+    function statuses(address, body; expect = true)
+        conn, reader = _open_raw_h2_server_conn(address)
+        try
+            extra = HT.HeaderField[HT.HeaderField("content-length", string(length(body)), false)]
+            expect && push!(extra, HT.HeaderField("expect", "100-continue", false))
+            _write_h2_server_request_headers!(conn, HT.Encoder(), UInt32(1), address, "/"; method = "POST", end_stream = false, headers = extra)
+            _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), true, Vector{UInt8}(codeunits(body))))
+            decoder = HT.Decoder()
+            seen = String[]
+            text = UInt8[]
+            while true
+                frame = _read_h2_server_frame_until!(conn, reader, f -> f isa HT.HeadersFrame || f isa HT.DataFrame)
+                if frame isa HT.HeadersFrame
+                    decoded = HT.decode_header_block(decoder, (frame::HT.HeadersFrame).header_block_fragment)
+                    append!(seen, [field.value for field in decoded if field.name == ":status"])
+                    (frame::HT.HeadersFrame).end_stream && break
+                else
+                    append!(text, (frame::HT.DataFrame).data)
+                    (frame::HT.DataFrame).end_stream && break
+                end
+            end
+            return seen, String(text)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+    end
+    try
+        request_address = HT.server_addr(request_server)
+        stream_address = HT.server_addr(stream_server)
+        @test statuses(request_address, "hello") == (["100", "200"], "hello")
+        @test statuses(stream_address, "hello") == (["100", "200"], "hello")
+        # Without the expectation there is no interim response.
+        @test statuses(request_address, "hello"; expect = false) == (["200"], "hello")
+        # A body over max_body_bytes is refused without asking for it.
+        @test statuses(request_address, "too long for the limit")[1] == ["413"]
+    finally
+        HT.forceclose(request_server)
+        HT.forceclose(stream_server)
+        wait(request_server)
+        wait(stream_server)
     end
 end
 
@@ -2937,5 +3000,32 @@ end
         conn === nothing || HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         wait(server)
+    end
+end
+
+@testset "HTTP/2 server rejects request header bytes that are not UTF-8" begin
+    fields(authority, name, value) = HT.HeaderField[
+        HT.HeaderField(":method", "GET", false),
+        HT.HeaderField(":scheme", "http", false),
+        HT.HeaderField(":authority", authority, false),
+        HT.HeaderField(":path", "/", false),
+        HT.HeaderField(name, value, false),
+    ]
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(fields("example.test", "x-a\xffb", "v"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(fields("example.test", "te", "trailers\xff"))
+    server = HT.serve!(_ -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        # The connection ends with GOAWAY(PROTOCOL_ERROR), not a silent close.
+        conn, reader = _open_raw_h2_server_conn(address)
+        block = HT.encode_header_block(HT.Encoder(), fields(address, "x-a\xffb", "v"))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, block))
+        frame = HT.read_frame!(reader)
+        @test frame isa HT.GoAwayFrame && (frame::HT.GoAwayFrame).error_code == UInt32(0x1)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end

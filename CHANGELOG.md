@@ -68,6 +68,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h2` through ALPN. ([#1385])
 
 ### Changed
+- HTTP/1 request and status lines are written without the allocations
+  `print` makes for each integer and `Char`, a header value with nothing to
+  trim is no longer copied, and the client normalizes its request headers once.
+  An in-process HTTP/1 GET makes about 218 allocations instead of 263. The
+  bytes sent are unchanged. ([#1492])
+- Header names, hosts, and methods change case without copies: ASCII text
+  is converted byte by byte and a string already in the wanted case is kept,
+  instead of building each result through an `IOBuffer` (seven allocations
+  per call). An in-process HTTP/2 GET makes about 269 allocations instead of
+  449. Results are unchanged. ([#1493])
 - `streamhandler` limits the request body it reads into memory to
   `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
   no limit); a larger body gets 413. Before, the body was read without any
@@ -123,6 +133,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the request header block limit (`2 * max_header_bytes`). Empty
   CONTINUATION frames added nothing to the block, so a client could keep one
   header block open across any number of them. ([#1479])
+- The HTTP/2 server rejects a request whose `:path` is not an absolute path,
+  or `*` for OPTIONS, as RFC 9113 §8.3.1 requires. An empty `:path` reset the
+  stream with `INTERNAL_ERROR` and logged a server error, and a `:path` such as
+  `abc` reached the handler, though HTTP/1 answers that target with 400. ([#1484])
+- The HTTP/1 pool checks an idle TLS connection with `TLS.tryread!` instead of
+  peeking the raw socket, so a `close_notify` TLS has already read and a
+  record without data (a late session ticket) are judged correctly. ([#1489])
+- `serve!` sends a response body of unknown length to an HTTP/1.0 client
+  without chunking and closes the connection after it; before, the body was
+  chunked, which HTTP/1.0 clients cannot read. ([#1485])
+- An HTTP/2 request header name or `TE` value with bytes that are not UTF-8 gets
+  GOAWAY with PROTOCOL_ERROR instead of closing the connection without one, and
+  the HTTP/2 client rejects response header names that are not tokens. ([#1495])
+- After an error response, or when a stream handler leaves the request body unread,
+  the server reads what the client still sends (up to 500 ms and 1 MiB) before
+  closing the connection, so the close does not reset the connection and lose the
+  response before the client reads it. ([#1494])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -209,6 +236,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass four times `max_len`, and at least 16 MiB: the `write` throws `IOError`,
   as for a client that disconnected. Before, the server kept every event
   written to such a client. ([#1478])
+- The HTTP/2 server answers `Expect: 100-continue`: `serve!` sends the interim
+  `100` response before it reads the body, and a stream handler sends it on its
+  first body read, as over HTTP/1. A client that waits for it before sending
+  its body, such as Go's, waited for its own timeout on every upload. ([#1488])
 - The HTTP/2 server answers any exception a handler throws with
   `500 Internal Server Error` and logs it as `server handler error`, as the
   HTTP/1 server does. A `ProtocolError` or `ParseError` from a handler got
@@ -228,6 +259,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stalling every stream on the connection. A `WINDOW_UPDATE` or
   `SETTINGS_INITIAL_WINDOW_SIZE` change that takes a window above 2^31-1 is a
   `FLOW_CONTROL_ERROR` instead of being accepted. ([#1464])
+- `WebSockets.listen!` logs an error that its handler or `check_origin`
+  callback throws (as `websocket server error`); before, the error was lost,
+  and the client only saw close status 1011. A malformed handshake request
+  gets 400 instead of a closed connection. ([#1482])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1463,8 +1498,17 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1478]: https://github.com/JuliaWeb/HTTP.jl/issues/1478
 [#1479]: https://github.com/JuliaWeb/HTTP.jl/issues/1479
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
+[#1482]: https://github.com/JuliaWeb/HTTP.jl/issues/1482
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
+[#1484]: https://github.com/JuliaWeb/HTTP.jl/issues/1484
+[#1485]: https://github.com/JuliaWeb/HTTP.jl/issues/1485
 [#1486]: https://github.com/JuliaWeb/HTTP.jl/issues/1486
 [#1487]: https://github.com/JuliaWeb/HTTP.jl/issues/1487
+[#1488]: https://github.com/JuliaWeb/HTTP.jl/issues/1488
+[#1489]: https://github.com/JuliaWeb/HTTP.jl/issues/1489
 [#1491]: https://github.com/JuliaWeb/HTTP.jl/issues/1491
+[#1492]: https://github.com/JuliaWeb/HTTP.jl/issues/1492
+[#1493]: https://github.com/JuliaWeb/HTTP.jl/issues/1493
+[#1494]: https://github.com/JuliaWeb/HTTP.jl/issues/1494
+[#1495]: https://github.com/JuliaWeb/HTTP.jl/issues/1495
 [#1496]: https://github.com/JuliaWeb/HTTP.jl/issues/1496

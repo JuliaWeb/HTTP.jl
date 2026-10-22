@@ -183,7 +183,7 @@ end
 
 @inline function _retry_bucket_partition_key(partition)::String
     partition === nothing && throw(ArgumentError("retry bucket partition is required"))
-    key = lowercase(String(partition))
+    key = _fast_lowercase(String(partition))
     isempty(key) && throw(ArgumentError("retry bucket partition must not be empty"))
     return key
 end

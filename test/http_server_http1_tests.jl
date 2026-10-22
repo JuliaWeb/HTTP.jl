@@ -1624,6 +1624,26 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers end an HTTP/1.0 streaming body by closing" begin
+    # HTTP/1.0 has no chunked framing: a body of unknown length is sent as is and
+    # the connection closes after it, even when the client asked for keep-alive.
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        sent = Ref(false)
+        return HT.Response(200, HT.CallbackBody(dst -> sent[] ? 0 : (sent[] = true; copyto!(dst, 1, codeunits("hello"), 1, 5); 5), () -> nothing))
+    end
+    try
+        keep_alive = "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+        raw = _raw_http_request(HT.port(server), keep_alive * keep_alive)
+        @test !occursin("Transfer-Encoding", raw)
+        @test endswith(raw, "\r\n\r\nhello")
+        @test count("HTTP/1.1 200 OK", raw) == 1
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server ordinary handlers suppress bodies for 204 and 304" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             status = request.target == "/nocontent" ? 204 : 304
@@ -2594,5 +2614,31 @@ end
     finally
         HT.forceclose(server)
         wait(server)
+    end
+end
+
+@testset "HTTP server reads what the client still sends before closing after an error response" begin
+    listener = NC.listen(NC.loopback_addr(0); backlog = 16)
+    try
+        port = Int((NC.addr(listener)::NC.SocketAddrV4).port)
+        accepted = Task(() -> NC.accept(listener))
+        schedule(accepted)
+        client = NC.connect(NC.loopback_addr(port))
+        server_conn = fetch(accepted)::NC.Conn
+        try
+            # Request bytes the server never read, then the client's half-close.
+            write(client, Vector{UInt8}(codeunits("unread request body")))
+            NC.closewrite(client)
+            HT._try_write_server_error!(server_conn, nothing, 413)
+            # The server read and dropped them, up to the client's close, so closing
+            # it now sends no reset that could drop the 413 before the client reads it.
+            @test readbytes!(server_conn, Vector{UInt8}(undef, 64); all = false) == 0
+            @test startswith(String(read(client)), "HTTP/1.1 413 ")
+        finally
+            HT.@try_ignore NC.close(client)
+            HT.@try_ignore NC.close(server_conn)
+        end
+    finally
+        HT.@try_ignore NC.close(listener)
     end
 end

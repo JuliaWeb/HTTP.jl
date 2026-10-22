@@ -3866,3 +3866,11 @@ end
         cleanup()
     end
 end
+
+@testset "HTTP/2 client rejects response header names that are not tokens" begin
+    for name in ("x-a\xffb", "bad name")
+        fields = HT.HeaderField[HT.HeaderField(":status", "200", false), HT.HeaderField(name, "v", false)]
+        @test_throws HT.ProtocolError HT._decode_response_headers(fields)
+    end
+    @test_throws HT.ProtocolError HT._decode_h2_trailer_headers(HT.HeaderField[HT.HeaderField("x-a\xffb", "v", false)])
+end

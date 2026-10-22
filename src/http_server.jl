@@ -960,12 +960,17 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
            _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))
 end
 
-# `serve!` reads an HTTP/1.1 request body before its handler runs, so it answers
-# `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose Content-Length
-# is over `max_body_bytes` gets 413 from `_buffer_server_request` instead.
+# `serve!` reads a request body before its handler runs, so over HTTP/1.1 and
+# HTTP/2 it answers `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose
+# Content-Length is over `max_body_bytes` gets 413 from `_buffer_server_request`
+# instead.
+@inline function _continue_before_buffering(request::Request, max_body_bytes::Int64)::Bool
+    _request_expects_continue(request) || return false
+    return !(max_body_bytes > 0 && request.content_length > max_body_bytes)
+end
+
 function _write_continue_before_buffering!(conn::Union{TCP.Conn,TLS.Conn}, request::Request, max_body_bytes::Int64)::Nothing
-    _request_expects_continue(request) || return nothing
-    max_body_bytes > 0 && request.content_length > max_body_bytes && return nothing
+    _continue_before_buffering(request, max_body_bytes) || return nothing
     response = Response(
         100;
         proto_major=Int(request.proto_major),
@@ -1185,6 +1190,26 @@ function _try_write_server_error!(conn::Union{TCP.Conn,TLS.Conn}, request::Union
     @try_ignore begin
         _close_server_write!(conn)
     end
+    _drain_before_close!(conn)
+    return nothing
+end
+
+# Closing a socket that still holds unread input makes the kernel reset the
+# connection, and the reset can make the peer drop a response it has received
+# but not yet read (Windows does). So before a close that the peer may not
+# expect, after the half-close, read and discard what the peer still sends until
+# it closes (RFC 9112 §9.6), for at most 500 ms and 1 MiB.
+function _drain_before_close!(conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    @try_ignore begin
+        _set_read_deadline!(conn, _deadline_after(Int64(500_000_000)))
+        buf = Vector{UInt8}(undef, 16 * 1024)
+        drained = 0
+        while drained < 1024 * 1024
+            n = conn isa TLS.Conn ? readbytes!(conn::TLS.Conn, buf; all=false) : readbytes!(conn::TCP.Conn, buf; all=false)
+            n == 0 && break
+            drained += n
+        end
+    end
     return nothing
 end
 
@@ -1269,8 +1294,16 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     if !(@atomic :acquire stream.write_closed)
                         closewrite(stream)
                     end
+                    # `closeread` gives up on a body the handler left unread and
+                    # marks the response to close the connection.
+                    body_unread = !_stream_request_body_fully_consumed(stream)
                     closeread(stream)
                     _clear_deadlines!(server, tracked.conn)
+                    if body_unread
+                        @try_ignore _close_server_write!(tracked.conn)
+                        _drain_before_close!(tracked.conn)
+                        return nothing
+                    end
                     _server_shutting_down(server) && return nothing
                     if _request_wants_close(request) || _response_wants_close(stream.response)
                         return nothing
@@ -1335,8 +1368,9 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 # Build the head before writing anything, so that a response
                 # that cannot be sent, such as one whose streaming body was
                 # already sent (#1333) or one with an invalid header, gets 500.
+                peer_http10 = handler_request.proto_minor == UInt8(0)
                 head, use_chunked, trailer_values, allows_body = try
-                    _response_head(response_obj, _is_head_request(handler_request))
+                    _response_head(response_obj, _is_head_request(handler_request), peer_http10)
                 catch err
                     _log_handler_error(err, catch_backtrace(), request, tracked.conn)
                     _close_response_body!(response_obj)
@@ -1361,6 +1395,8 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
                     return nothing
                 end
+                # A body sent without a length or chunking ends only when the connection closes.
+                allows_body && !use_chunked && response_obj.content_length < 0 && _response_has_body(response_obj) && return nothing
             end
             _set_conn_state!(tracked, _ConnState.IDLE)
             _set_idle_deadline!(server, tracked.conn)

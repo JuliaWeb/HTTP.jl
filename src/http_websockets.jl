@@ -20,6 +20,7 @@ import ..IOPoll
 import ..Conn as TransportConn
 import ..BytesBody
 import ..EmptyBody
+import ..ParseError
 import ..ProtocolError
 import ..TooManyRedirectsError
 import ..Client
@@ -85,6 +86,8 @@ import ..read_request
 import ..write_response!
 import ..write_request!
 import .._wrap_client_transport_error
+import .._is_peer_close_error
+import .._is_transport_timeout
 import ..Stream
 import .._clear_deadlines!
 import .._resolve_server_timeout_ns
@@ -1746,17 +1749,35 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
     try
         server.read_header_timeout_ns > 0 &&
             _ws_arm_read_deadline!(conn, _ws_read_deadline_ns(server.read_header_timeout_ns))
-        request = read_request(_ConnReader(conn))
+        request = try
+            read_request(_ConnReader(conn))
+        catch err
+            (err isa ParseError || err isa ProtocolError) || rethrow()
+            # A malformed handshake request gets 400 before the connection closes.
+            @try_ignore _write_ws_response!(conn, Response(400, EmptyBody(); content_length=0, close=true))
+            return nothing
+        end
         server.read_header_timeout_ns > 0 && _ws_arm_read_deadline!(conn, Int64(0))
         response = _upgrade_response(request, server)
         _write_ws_response!(conn, response)
         response.status == 101 || return nothing
         _serve_ws_session!(server, conn, request, response)
+    catch err
+        # Nothing waits on this task, so an error the handler (or a
+        # `check_origin` callback) raised is reported here.
+        _ws_peer_error(err) || @error "websocket server error" exception = (err, catch_backtrace())
     finally
         _close_ws_server_conn!(conn)
         _untrack_conn!(server, conn, task)
     end
     return nothing
+end
+
+# An error that comes from the connection rather than from server code: the peer
+# closed it, broke the protocol, or stopped responding.
+@inline function _ws_peer_error(err)::Bool
+    return err isa WebSocketError || err isa EOFError || err isa IOPoll.NetClosingError ||
+           err isa TLS.TLSError || _is_transport_timeout(err) || (err isa Exception && _is_peer_close_error(err::Exception))
 end
 
 function _mark_ws_server_listening!(server::Server, listener)::Nothing
