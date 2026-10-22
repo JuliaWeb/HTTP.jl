@@ -85,6 +85,10 @@ Start Julia with at least one interactive thread, such as `--threads=4,1`, so
 that tasks on the default pool that never yield cannot stall the server.
 Without an interactive thread, these tasks run on the default pool.
 
+When accepting a connection fails with an OS error, such as when the process
+has no file descriptors left, the server logs the error and tries again after
+a wait that grows from 5 ms to 1 s.
+
 On a plain TCP listener, a connection that starts with the HTTP/2 connection
 preface is served as cleartext HTTP/2; `allow_h2c = false` turns that off. A
 TLS listener offers HTTP/2 when its `TLS.Config` lists `"h2"` in
@@ -948,6 +952,23 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
            _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))
 end
 
+# `serve!` reads an HTTP/1.1 request body before its handler runs, so it answers
+# `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose Content-Length
+# is over `max_body_bytes` gets 413 from `_buffer_server_request` instead.
+function _write_continue_before_buffering!(conn::Union{TCP.Conn,TLS.Conn}, request::Request, max_body_bytes::Int64)::Nothing
+    _request_expects_continue(request) || return nothing
+    max_body_bytes > 0 && request.content_length > max_body_bytes && return nothing
+    response = Response(
+        100;
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        content_length=0,
+        request=request,
+    )
+    _write_all_response!(conn, response)
+    return nothing
+end
+
 @inline function _request_body_fully_consumed(request::Request)::Bool
     body = request.body
     body isa EmptyBody && return true
@@ -1279,6 +1300,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
             else
                 handler_request = try
+                    _write_continue_before_buffering!(tracked.conn, request, server.max_body_bytes)
                     _buffer_server_request(request, server.max_body_bytes)
                 catch err
                     status = _server_error_status(err)
@@ -1348,10 +1370,22 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
     return nothing
 end
 
+# An OS error from accept, such as EMFILE (too many open files), passes once
+# connections close, so it must not end the accept loop: log it, wait, and let
+# the caller retry. The wait doubles from 5 ms to 1 s over consecutive failures;
+# the return value is the wait used, to pass back in on the next failure.
+function _wait_after_accept_error(err::Base.SystemError, delay_s::Float64)::Float64
+    delay_s = delay_s == 0.0 ? 0.005 : min(2 * delay_s, 1.0)
+    @error "server accept error; retrying" exception = err retry_in_s = delay_s
+    IOPoll.sleep(delay_s)
+    return delay_s
+end
+
 function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Listener}, ready::Threads.Event)
     _server_shutting_down(server) && throw(ProtocolError("server is shutting down"))
     _mark_server_listening!(server, listener)
     notify(ready)
+    accept_delay_s = 0.0
     while true
         _server_shutting_down(server) && return nothing
         conn = try
@@ -1363,8 +1397,11 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
             if err isa IOPoll.NetClosingError || err isa EOFError
                 return nothing
             end
-            rethrow(err)
+            err isa Base.SystemError || rethrow(err)
+            accept_delay_s = _wait_after_accept_error(err, accept_delay_s)
+            continue
         end
+        accept_delay_s = 0.0
         tracked = _ServerConn(conn, ReentrantLock(), nothing, _ConnState.NEW, floor(Int64, time()))
         _track_conn!(server, tracked)
         @_spawn_interactive _serve_conn!(server, tracked)
