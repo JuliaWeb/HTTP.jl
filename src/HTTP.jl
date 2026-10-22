@@ -18,6 +18,13 @@ module HTTP
 
 using URIs
 
+# `VERSION` is read from Project.toml during precompilation, so the precompiled image has to
+# be rebuilt when that file changes, not only when a source file does.
+@static if Base.VERSION >= v"1.11"
+    include_dependency(joinpath(dirname(@__DIR__), "Project.toml"); track_content=true)
+else
+    include_dependency(joinpath(dirname(@__DIR__), "Project.toml"))
+end
 const VERSION = pkgversion(@__MODULE__)
 
 macro _spawn_interactive(ex)

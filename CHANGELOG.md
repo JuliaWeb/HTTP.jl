@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about 1,160. The bytes sent are unchanged. ([#1487])
 
 ### Fixed
+- The default `User-Agent` carries the version in Project.toml. The version
+  is read when the package is precompiled, and the precompiled image now
+  depends on Project.toml, so a change to the version alone rebuilds it.
+  Before, a development checkout or a restored CI cache kept sending the old
+  version. ([#1498])
 - With `idle_timeout` set, the HTTP/2 server closes a connection that has had
   no open streams for that long. A connection that had served a request never
   idle-closed, and frames such as PING restarted the timer, so a client that
@@ -1526,3 +1531,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1494]: https://github.com/JuliaWeb/HTTP.jl/issues/1494
 [#1495]: https://github.com/JuliaWeb/HTTP.jl/issues/1495
 [#1496]: https://github.com/JuliaWeb/HTTP.jl/issues/1496
+[#1498]: https://github.com/JuliaWeb/HTTP.jl/issues/1498
