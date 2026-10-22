@@ -76,7 +76,12 @@ function _rsr_serve!(listener; scenario::Symbol, refuse_first::Int = 1, rst_code
                                 _rsr_write_frame!(conn, HT.RSTStreamFrame(hf.stream_id, rst_code))
                             elseif scenario === :goaway
                                 _rsr_write_frame!(conn, HT.GoAwayFrame(UInt32(0), _RSR_NO_ERROR, UInt8[]))
-                                break
+                                # Read until the client closes. Closing with request
+                                # bytes still unread sends a reset, and the client's
+                                # stack may then drop the GOAWAY before reading it.
+                                while true
+                                    HT.read_frame!(reader)
+                                end
                             else
                                 error("unknown scenario $scenario")
                             end
@@ -221,3 +226,46 @@ end
 end
 
 end # parent testset
+
+# The GOAWAY can close the connection before the request task writes any body
+# DATA. The upload must then stop, and the request fail with the retryable
+# H2GoAwayError instead of "connection is closed".
+@testset "HTTP/2 client reports GOAWAY for a body written after the connection closed" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    attempts, conns, accept_task = _rsr_serve!(listener; scenario = :goaway)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        sent = Ref(false)
+        body = HT.CallbackBody(dst -> begin
+            sent[] && return 0
+            # Hold the first chunk until the read loop has handled the GOAWAY,
+            # closed the connection, and exited.
+            lock(h2_conn.state_lock)
+            try
+                while !(@atomic :acquire h2_conn.closed) || h2_conn.read_task !== nothing
+                    wait(h2_conn.read_loop_condition)
+                end
+            finally
+                unlock(h2_conn.state_lock)
+            end
+            sent[] = true
+            dst[1] = UInt8('x')
+            return 1
+        end, () -> nothing)
+        request = HT.Request("POST", "/"; host = address, body = body, content_length = -1)
+        err = try
+            HT.h2_roundtrip!(h2_conn, request)
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa HT.H2GoAwayError
+        @test attempts[] == 1
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(accept_task)
+    end
+end

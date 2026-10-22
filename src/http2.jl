@@ -17,8 +17,8 @@ const FLAG_PADDED = UInt8(0x8)
 const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
 const _H2_MAX_FRAME_SIZE = 16_384
 
-# SETTINGS parameter identifier for the per-stream initial receive window
-# (RFC 7540 §6.5.2). Used when advertising a non-default flow-control window.
+# SETTINGS parameter identifiers (RFC 9113 §6.5.2).
+const _H2_SETTINGS_ENABLE_PUSH = UInt16(0x2)
 const _H2_SETTINGS_INITIAL_WINDOW_SIZE = UInt16(0x4)
 
 # Protocol-default flow-control window (RFC 7540 §6.9.2) and the default
@@ -189,32 +189,40 @@ end
     return nothing
 end
 
-@inline function _encode_header_bytes!(bytes::Vector{UInt8}, header::FrameHeader)
+@inline function _encode_header_bytes!(bytes::Vector{UInt8}, header::FrameHeader, pos::Int=1)
     header.length < 0 && throw(ArgumentError("HTTP/2 frame length must be >= 0"))
     header.length <= 0x00ff_ffff || throw(ArgumentError("HTTP/2 frame length must fit 24 bits"))
-    length(bytes) >= 9 || throw(ArgumentError("HTTP/2 frame header needs 9 bytes"))
-    bytes[1] = UInt8((header.length >> 16) & 0xff)
-    bytes[2] = UInt8((header.length >> 8) & 0xff)
-    bytes[3] = UInt8(header.length & 0xff)
-    bytes[4] = header.type
-    bytes[5] = header.flags
-    bytes[6] = UInt8((header.stream_id >> 24) & 0x7f)
-    bytes[7] = UInt8((header.stream_id >> 16) & 0xff)
-    bytes[8] = UInt8((header.stream_id >> 8) & 0xff)
-    bytes[9] = UInt8(header.stream_id & 0xff)
+    length(bytes) >= pos + 8 || throw(ArgumentError("HTTP/2 frame header needs 9 bytes"))
+    bytes[pos] = UInt8((header.length >> 16) & 0xff)
+    bytes[pos+1] = UInt8((header.length >> 8) & 0xff)
+    bytes[pos+2] = UInt8(header.length & 0xff)
+    bytes[pos+3] = header.type
+    bytes[pos+4] = header.flags
+    bytes[pos+5] = UInt8((header.stream_id >> 24) & 0x7f)
+    bytes[pos+6] = UInt8((header.stream_id >> 16) & 0xff)
+    bytes[pos+7] = UInt8((header.stream_id >> 8) & 0xff)
+    bytes[pos+8] = UInt8(header.stream_id & 0xff)
     return bytes
 end
 
 @inline _encode_header_bytes(header::FrameHeader)::Vector{UInt8} =
     _encode_header_bytes!(Vector{UInt8}(undef, 9), header)
 
+@inline function _parse_frame_header(bytes::Vector{UInt8}, i::Int)::FrameHeader
+    length = (Int(bytes[i]) << 16) | (Int(bytes[i+1]) << 8) | Int(bytes[i+2])
+    return FrameHeader(length, bytes[i+3], bytes[i+4], _read_u32_be(bytes, i + 5) & 0x7fff_ffff)
+end
+
 function _read_frame_header!(io::IO)::FrameHeader
-    header_bytes = _read_exact_bytes!(io, 9)
-    length = (Int(header_bytes[1]) << 16) | (Int(header_bytes[2]) << 8) | Int(header_bytes[3])
-    ftype = header_bytes[4]
-    flags = header_bytes[5]
-    stream_id = _read_u32_be(header_bytes, 6) & 0x7fff_ffff
-    return FrameHeader(length, ftype, flags, stream_id)
+    return _parse_frame_header(_read_exact_bytes!(io, 9), 1)
+end
+
+# Parse the header in place when the reader already buffers all 9 bytes.
+function _read_frame_header!(reader::_ConnReader)::FrameHeader
+    _conn_reader_available(reader) >= 9 || return _parse_frame_header(_read_exact_bytes!(reader, 9), 1)
+    header = _parse_frame_header(reader.buf, reader.next)
+    reader.next += 9
+    return header
 end
 
 function _parse_settings_payload(payload::Vector{UInt8})::Vector{Pair{UInt16,UInt32}}
@@ -298,6 +306,13 @@ Throws:
 function read_frame!(io::IO)::AbstractFrame
     header = _read_frame_header!(io)
     header.length <= _H2_MAX_FRAME_SIZE || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
+    if io isa _ConnReader && header.type == FRAME_WINDOW_UPDATE && header.length == 4 && _conn_reader_available(io) >= 4
+        # Flow control sends these for every read; parse them in place.
+        increment = _read_u32_be(io.buf, io.next) & 0x7fff_ffff
+        io.next += 4
+        increment == 0 && throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
+        return WindowUpdateFrame(header.stream_id, increment)
+    end
     payload = _read_exact_bytes!(io, header.length)
     # This function intentionally validates only frame-local invariants. Stream-
     # level rules such as "HEADERS must precede DATA" live in the client/server
@@ -382,8 +397,7 @@ end
         f = frame::DataFrame
         _require_nonzero_stream_id(f.stream_id, "DATA")
         flags = f.end_stream ? FLAG_END_STREAM : UInt8(0)
-        payload = copy(f.data)
-        return FrameHeader(length(payload), FRAME_DATA, flags, f.stream_id), payload
+        return FrameHeader(length(f.data), FRAME_DATA, flags, f.stream_id), f.data
     end
     if frame isa HeadersFrame
         f = frame::HeadersFrame
@@ -391,8 +405,7 @@ end
         flags = UInt8(0)
         f.end_stream && (flags |= FLAG_END_STREAM)
         f.end_headers && (flags |= FLAG_END_HEADERS)
-        payload = copy(f.header_block_fragment)
-        return FrameHeader(length(payload), FRAME_HEADERS, flags, f.stream_id), payload
+        return FrameHeader(length(f.header_block_fragment), FRAME_HEADERS, flags, f.stream_id), f.header_block_fragment
     end
     if frame isa PriorityFrame
         f = frame::PriorityFrame
@@ -452,12 +465,11 @@ end
         f = frame::ContinuationFrame
         _require_nonzero_stream_id(f.stream_id, "CONTINUATION")
         flags = f.end_headers ? FLAG_END_HEADERS : UInt8(0)
-        payload = copy(f.header_block_fragment)
-        return FrameHeader(length(payload), FRAME_CONTINUATION, flags, f.stream_id), payload
+        return FrameHeader(length(f.header_block_fragment), FRAME_CONTINUATION, flags, f.stream_id), f.header_block_fragment
     end
     if frame isa UnknownFrame
         f = frame::UnknownFrame
-        return f.header, copy(f.payload)
+        return f.header, f.payload
     end
     throw(ArgumentError("unsupported HTTP/2 frame type"))
 end
@@ -473,9 +485,46 @@ cannot be represented legally, plus any exception raised by the underlying
 larger than the 16 KiB default.
 """
 function write_frame!(io::IO, frame::AbstractFrame)
+    write(io, _frame_bytes(frame))
+    return nothing
+end
+
+"""
+    _frame_bytes(frame) -> Vector{UInt8}
+
+Return the wire bytes of `frame`, its 9-byte header followed by the payload, in
+one new vector. Throws like [`write_frame!`](@ref).
+"""
+function _frame_bytes(frame::AbstractFrame)::Vector{UInt8}
     header, payload = _serialize_frame(frame)
-    write(io, _encode_header_bytes(header))
-    isempty(payload) || write(io, payload)
+    bytes = Vector{UInt8}(undef, 9 + length(payload))
+    _encode_header_bytes!(bytes, header)
+    copyto!(bytes, 10, payload, 1, length(payload))
+    return bytes
+end
+
+"""
+    _window_update_frames(stream_id, increment, stream_level) -> Vector{UInt8}
+
+Return the wire bytes of a connection-level WINDOW_UPDATE frame for `increment`,
+followed by the same update for `stream_id` when `stream_level` is `true`, so
+both go out in one write. `increment` must be positive.
+"""
+function _window_update_frames(stream_id::UInt32, increment::UInt32, stream_level::Bool)::Vector{UInt8}
+    increment > 0 || throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
+    bytes = Vector{UInt8}(undef, stream_level ? 26 : 13)
+    _encode_window_update!(bytes, 1, UInt32(0), increment)
+    stream_level && _encode_window_update!(bytes, 14, stream_id, increment)
+    return bytes
+end
+
+@inline function _encode_window_update!(bytes::Vector{UInt8}, pos::Int, stream_id::UInt32, increment::UInt32)::Nothing
+    _encode_header_bytes!(bytes, FrameHeader(4, FRAME_WINDOW_UPDATE, UInt8(0), stream_id), pos)
+    value = increment & 0x7fff_ffff
+    bytes[pos+9] = UInt8((value >> 24) & 0xff)
+    bytes[pos+10] = UInt8((value >> 16) & 0xff)
+    bytes[pos+11] = UInt8((value >> 8) & 0xff)
+    bytes[pos+12] = UInt8(value & 0xff)
     return nothing
 end
 
@@ -489,7 +538,7 @@ function _header_block_frames(
     max_frame_size > 0 || throw(ArgumentError("max_frame_size must be > 0"))
     total = length(header_block)
     if total <= max_frame_size
-        f(HeadersFrame(stream_id, end_stream, true, copy(header_block)))
+        f(HeadersFrame(stream_id, end_stream, true, header_block))
         return nothing
     end
     offset = 1
