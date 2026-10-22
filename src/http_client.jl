@@ -667,14 +667,15 @@ function _cache_h1_origin!(client::Client, key::String)::Nothing
     return nothing
 end
 
+# Cookies match against the request path without its query (RFC 6265 §5.1.4).
 function _host_path_from_request(address::String, request::Request)::Tuple{String,String}
     host, _ = HostResolvers.split_host_port(address)
-    target = request.target
-    if isempty(target)
+    path, _ = _split_request_target(request.target)
+    if isempty(path)
         return host, "/"
     end
-    startswith(target, "/") && return host, target
-    return host, "/$target"
+    startswith(path, "/") && return host, path
+    return host, "/$path"
 end
 
 function _normalize_cookies_input(cookies)
