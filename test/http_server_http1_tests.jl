@@ -512,6 +512,21 @@ end
     @test if_match_resp.status == 412
     @test isempty(_read_all_server_bytes(if_match_resp.body))
 
+    # A request head can fold many lines into one long list of entity-tags; it
+    # is scanned in linear time and memory.
+    long_lists = (
+        (HT.Request("GET", "/"; headers = ["If-None-Match" => "," ^ 20_000 * "\"v1\""]), 304),
+        (HT.Request("GET", "/"; headers = ["If-Match" => "\"x\"," ^ 20_000 * "\"v1\""]), 200),
+    )
+    for (req, status) in long_lists
+        @test HT.servecontent(req, payload; etag = "\"v1\"").status == status
+        @test (@allocated HT.servecontent(req, payload; etag = "\"v1\"")) < 1_000_000
+    end
+    # Weak comparison ignores only a leading `W/`, and obs-text is a valid tag byte.
+    for (tag, etag, status) in (("\"aW/b\"", "\"ab\"", 200), ("W/\"ab\"", "\"ab\"", 304), ("\"\xff\"", "\"\xff\"", 304))
+        @test HT.servecontent(HT.Request("GET", "/"; headers = ["If-None-Match" => tag]), payload; etag = etag).status == status
+    end
+
     invalid_range_headers = HT.Headers()
     HT.setheader(invalid_range_headers, "Range", "bytes=20-25")
     invalid_range_req = HT.Request("GET", "/"; headers = invalid_range_headers)
@@ -2051,6 +2066,79 @@ end
     finally
         HT.forceclose(first_server)
         wait(first_server)
+    end
+end
+
+struct _AcceptErrorLogger <: Logging.AbstractLogger
+    messages::Channel{String}
+end
+Logging.min_enabled_level(::_AcceptErrorLogger) = Logging.Error
+Logging.shouldlog(::_AcceptErrorLogger, args...) = true
+Logging.catch_exceptions(::_AcceptErrorLogger) = false
+function Logging.handle_message(logger::_AcceptErrorLogger, level, message, args...; kwargs...)
+    put!(logger.messages, string(message))
+    return nothing
+end
+
+struct _FDLimit
+    cur::Culong
+    max::Culong
+end
+
+@testset "HTTP server keeps accepting after running out of file descriptors" begin
+    if Sys.iswindows()
+        @test_skip true
+    else
+        resource = Cint(Sys.islinux() ? 7 : 8) # RLIMIT_NOFILE
+        saved = Ref(_FDLimit(0, 0))
+        @test ccall(:getrlimit, Cint, (Cint, Ref{_FDLimit}), resource, saved) == 0
+        logger = _AcceptErrorLogger(Channel{String}(Inf))
+        server = Logging.with_logger(() -> HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0), logger)
+        # A server task that stops instead of retrying also wakes the test.
+        errormonitor(Threads.@spawn begin
+            try
+                wait(server)
+            catch
+            end
+            put!(logger.messages, "server stopped")
+        end)
+        port_num = HT.port(server)
+        dummies = IOStream[]
+        client = nothing
+        message = ""
+        try
+            probe = open("/dev/null")
+            raw_fd = fd(probe) # an Int before Julia 1.12, a RawFD after
+            lowest_free = raw_fd isa Integer ? Int(raw_fd) : Int(reinterpret(Int32, raw_fd))
+            close(probe)
+            limit = Ref(_FDLimit(Culong(lowest_free + 16), saved[].max))
+            @test ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, limit) == 0
+            # Take every descriptor below the limit, then free one for the client:
+            # the server's accept of that connection then fails with EMFILE.
+            while true
+                stream = try
+                    open("/dev/null")
+                catch
+                    break
+                end
+                push!(dummies, stream)
+            end
+            close(pop!(dummies))
+            client = NC.connect(NC.loopback_addr(port_num))
+            message = take!(logger.messages)
+        finally
+            foreach(close, dummies)
+            ccall(:setrlimit, Cint, (Cint, Ref{_FDLimit}), resource, saved)
+        end
+        try
+            @test message == "server accept error; retrying"
+            if message == "server accept error; retrying"
+                @test HT.request("GET", "http://127.0.0.1:$(port_num)/"; retry = false).status == 200
+            end
+        finally
+            client === nothing || close(client)
+            HT.forceclose(server)
+        end
     end
 end
 
