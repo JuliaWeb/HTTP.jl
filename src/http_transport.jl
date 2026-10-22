@@ -6,6 +6,7 @@ using Reseau.HostResolvers
 using Reseau.TLS
 using Reseau.IOPoll
 using Reseau.SOCKS
+import Reseau: SocketOps
 
 const _CONN_READER_DEFAULT_BUFFER_BYTES = 16 * 1024
 const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
@@ -333,6 +334,20 @@ end
 
 @inline function _conn_closed(conn::Conn)::Bool
     return @atomic :acquire conn.closed
+end
+
+# Servers may close idle keep-alive connections without a `Keep-Alive` hint
+# (MinIO and many Go servers do so after 30 seconds). Peek one byte without
+# waiting before reusing an idle connection: end-of-stream means the peer closed
+# it, and any byte is data an idle HTTP/1 connection must not have received
+# (for TLS, typically a close_notify alert). Either way it cannot carry a request,
+# and a non-idempotent request sent on it would fail without a safe retry.
+function _idle_conn_reusable(conn::Conn)::Bool
+    _conn_reader_available(conn.reader) == 0 || return false
+    byte = Ref{UInt8}(0)
+    n = GC.@preserve byte SocketOps.recv_from!(
+        conn.tcp.fd.pfd.sysfd, Base.unsafe_convert(Ptr{UInt8}, byte), Csize_t(1), SocketOps.MSG_PEEK)
+    return n < 0 && SocketOps.last_error() == Int32(Base.Libc.EAGAIN)
 end
 
 function _conn_stream(conn::Conn)
@@ -1177,7 +1192,7 @@ function _acquire_conn!(
                 conn = pop!(idle_list::Vector{Conn})
                 @atomic :acquire_release transport.idle_total -= 1
                 isempty(idle_list::Vector{Conn}) && delete!(transport.idle, plan.pool_key)
-                if !_conn_closed(conn::Conn)
+                if !_conn_closed(conn::Conn) && _idle_conn_reusable(conn::Conn)
                     (conn::Conn).reused = true
                     break
                 end
