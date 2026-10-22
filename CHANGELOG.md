@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The client matches and stores cookie paths without the request's query, as
+  RFC 6265 §5.1.4 specifies. A `Path=/a` cookie was not sent to `/a?x=1`, and
+  a cookie set by `/d/e?next=/f/g` got the default path `/d/e?next=/f`
+  instead of `/d`. ([#1448])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1233,3 +1237,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1434]: https://github.com/JuliaWeb/HTTP.jl/issues/1434
 [#1435]: https://github.com/JuliaWeb/HTTP.jl/issues/1435
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
+[#1448]: https://github.com/JuliaWeb/HTTP.jl/issues/1448
