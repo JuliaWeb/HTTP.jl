@@ -88,6 +88,7 @@ import .._is_transport_timeout
 import .._wrap_transport_timeout
 import ..Stream
 import .._clear_deadlines!
+import .._wait_after_accept_error
 import ..@_spawn_interactive
 
 include("http_websocket_pmce.jl")
@@ -1736,6 +1737,7 @@ function serve!(server::Server, listener, ready::Threads.Event)::Server
     _server_shutting_down(server) && throw(ProtocolError("websocket server is shutting down"))
     _mark_ws_server_listening!(server, listener)
     notify(ready)
+    accept_delay_s = 0.0
     while !_server_shutting_down(server)
         conn = try
             if listener isa TLS.Listener
@@ -1746,8 +1748,11 @@ function serve!(server::Server, listener, ready::Threads.Event)::Server
         catch err
             _server_shutting_down(server) && return server
             err isa EOFError && return server
-            rethrow(err)
+            err isa Base.SystemError || rethrow(err)
+            accept_delay_s = _wait_after_accept_error(err, accept_delay_s)
+            continue
         end
+        accept_delay_s = 0.0
         @_spawn_interactive _serve_ws_conn!(server, conn)
     end
     return server
