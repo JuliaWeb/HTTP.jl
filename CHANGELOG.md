@@ -97,6 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- After an error response, or when a stream handler leaves the request body unread,
+  the server reads what the client still sends (up to 500 ms and 1 MiB) before
+  closing the connection, so the close does not reset the connection and lose the
+  response before the client reads it. ([#1494])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -1414,3 +1418,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1478]: https://github.com/JuliaWeb/HTTP.jl/issues/1478
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
+[#1494]: https://github.com/JuliaWeb/HTTP.jl/issues/1494
