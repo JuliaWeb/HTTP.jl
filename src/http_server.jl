@@ -1156,8 +1156,11 @@ function _stream_error_status(stream::Stream, err)::Int
     return status === nothing ? 500 : status::Int
 end
 
+# The record's `target` leaves out the query, which often carries credentials
+# such as tokens and signatures.
 function _log_handler_error(err, backtrace, request::Request, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    @error "server handler error" exception = (err, backtrace) method = request.method target = request.target peer = _conn_remote_addr(conn)
+    target, _ = _split_request_target(request.target)
+    @error "server handler error" exception = (err, backtrace) method = request.method target = target peer = _conn_remote_addr(conn)
     return nothing
 end
 
