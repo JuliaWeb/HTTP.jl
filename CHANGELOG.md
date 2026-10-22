@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `WebSockets.upgrade` records the handshake response on the server stream, so
+  `logging_middleware` reports `101` for an upgrade, including when the handler
+  fails afterwards, and the server never answers the upgraded connection with
+  a second response. ([#1461])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1252,3 +1256,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
+[#1461]: https://github.com/JuliaWeb/HTTP.jl/issues/1461
