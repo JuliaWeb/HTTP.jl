@@ -93,6 +93,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `servecontent`, `servefile` and `fileserver` scan `If-Match` and
+  `If-None-Match` lists in linear time. A long list, such as several header
+  lines joined into one value, cost time and memory quadratic in its length.
+  Weak comparison drops only a leading `W/`, and an entity-tag with a byte
+  above 0x7F no longer produces a 500. ([#1442])
+- `handlertimeout` wakes the waiting request as soon as the handler finishes.
+  It polled for the result every millisecond, which added up to 1 ms to each
+  request whose handler yields and woke the interactive thread 1000 times a
+  second per waiting request. ([#1441])
+- `Form` escapes `"`, CR, and LF in multipart field names and file names as
+  browsers do (`%22`, `%0D`, `%0A`), and a part content type or transfer
+  encoding containing CR or LF throws `ArgumentError`. Such names ended the
+  quoted parameter or the header line and changed the parts the receiver
+  saw. `parse_multipart_form` and `parse_multipart` read the boundary
+  parameter case-insensitively, in any position, and quoted, as .NET's
+  `HttpClient` sends it; they matched only `multipart/...; boundary=X`. ([#1444])
 - URLs are checked against RFC 3986 before a connection is made. A userinfo or
   host with a backslash, a space, or a control character, a host with `%`
   (hosts are not percent-decoded), a bracketed host that is not an IPv6
@@ -1240,4 +1256,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1434]: https://github.com/JuliaWeb/HTTP.jl/issues/1434
 [#1435]: https://github.com/JuliaWeb/HTTP.jl/issues/1435
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
+[#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
+[#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
+[#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1447]: https://github.com/JuliaWeb/HTTP.jl/issues/1447
