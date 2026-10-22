@@ -93,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/1 pool checks an idle TLS connection with `TLS.tryread!` instead of
+  peeking the raw socket, so a `close_notify` TLS has already read and a
+  record without data (a late session ticket) are judged correctly. ([#1489])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -1300,3 +1303,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
+[#1489]: https://github.com/JuliaWeb/HTTP.jl/issues/1489
