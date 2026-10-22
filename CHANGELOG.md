@@ -231,6 +231,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass four times `max_len`, and at least 16 MiB: the `write` throws `IOError`,
   as for a client that disconnected. Before, the server kept every event
   written to such a client. ([#1478])
+- The HTTP/2 server answers `Expect: 100-continue`: `serve!` sends the interim
+  `100` response before it reads the body, and a stream handler sends it on its
+  first body read, as over HTTP/1. A client that waits for it before sending
+  its body, such as Go's, waited for its own timeout on every upload. ([#1488])
 - The HTTP/2 server answers any exception a handler throws with
   `500 Internal Server Error` and logs it as `server handler error`, as the
   HTTP/1 server does. A `ProtocolError` or `ParseError` from a handler got
@@ -1495,6 +1499,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1485]: https://github.com/JuliaWeb/HTTP.jl/issues/1485
 [#1486]: https://github.com/JuliaWeb/HTTP.jl/issues/1486
 [#1487]: https://github.com/JuliaWeb/HTTP.jl/issues/1487
+[#1488]: https://github.com/JuliaWeb/HTTP.jl/issues/1488
 [#1489]: https://github.com/JuliaWeb/HTTP.jl/issues/1489
 [#1491]: https://github.com/JuliaWeb/HTTP.jl/issues/1491
 [#1492]: https://github.com/JuliaWeb/HTTP.jl/issues/1492

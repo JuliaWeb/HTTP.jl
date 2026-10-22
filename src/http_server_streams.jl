@@ -181,7 +181,7 @@ end
 
 function _maybe_write_continue!(stream::Stream)::Nothing
     _require_server_stream(stream)
-    stream.message.proto_major == UInt8(2) && return nothing
+    _server_stream_buffered_h2(stream) && return nothing
     already_sent = @atomic :acquire stream.continue_sent
     already_sent && return nothing
     # An interim response after the final head would land inside its body.
@@ -190,14 +190,18 @@ function _maybe_write_continue!(stream::Stream)::Nothing
     # to consume the request body.
     headercontains(stream.message.headers, "Expect", "100-continue") || return nothing
     _stream_request_body_fully_consumed(stream) && return nothing
-    response = Response(
-        100;
-        proto_major=Int(stream.message.proto_major),
-        proto_minor=Int(stream.message.proto_minor),
-        content_length=0,
-        request=stream.message,
-    )
-    _write_all_response!(stream.tracked.conn, response)
+    if _server_stream_live_h2(stream)
+        _write_h2_stream_header_fields!(stream, HeaderField[HeaderField(":status", "100", false)], false)
+    else
+        response = Response(
+            100;
+            proto_major=Int(stream.message.proto_major),
+            proto_minor=Int(stream.message.proto_minor),
+            content_length=0,
+            request=stream.message,
+        )
+        _write_all_response!(stream.tracked.conn, response)
+    end
     @atomic :release stream.continue_sent = true
     return nothing
 end

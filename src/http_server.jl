@@ -960,12 +960,17 @@ function _buffer_server_request(request::Request, max_body_bytes::Integer; close
            _rebuffered_request(request, BytesBody(body_bytes), Int64(length(body_bytes)))
 end
 
-# `serve!` reads an HTTP/1.1 request body before its handler runs, so it answers
-# `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose Content-Length
-# is over `max_body_bytes` gets 413 from `_buffer_server_request` instead.
+# `serve!` reads a request body before its handler runs, so over HTTP/1.1 and
+# HTTP/2 it answers `Expect: 100-continue` first (RFC 9110 §10.1.1). A body whose
+# Content-Length is over `max_body_bytes` gets 413 from `_buffer_server_request`
+# instead.
+@inline function _continue_before_buffering(request::Request, max_body_bytes::Int64)::Bool
+    _request_expects_continue(request) || return false
+    return !(max_body_bytes > 0 && request.content_length > max_body_bytes)
+end
+
 function _write_continue_before_buffering!(conn::Union{TCP.Conn,TLS.Conn}, request::Request, max_body_bytes::Int64)::Nothing
-    _request_expects_continue(request) || return nothing
-    max_body_bytes > 0 && request.content_length > max_body_bytes && return nothing
+    _continue_before_buffering(request, max_body_bytes) || return nothing
     response = Response(
         100;
         proto_major=Int(request.proto_major),
