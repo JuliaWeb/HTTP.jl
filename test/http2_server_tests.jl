@@ -1708,6 +1708,9 @@ end
     ]
     _, _, _, _, headers = HT._validate_h2_request_headers!(fields)
     @test collect(headers) == ["X-Request-Id" => "abc", "Accept" => "*/*"]
+    # Lowercase names are checked and canonicalized without copies: each
+    # `lowercase` call alone cost seven allocations.
+    @test minimum(@allocated(HT._validate_h2_request_headers!(fields)) for _ in 1:3) < 1024
 end
 
 @testset "HTTP/2 server validates CONNECT request pseudo-headers" begin

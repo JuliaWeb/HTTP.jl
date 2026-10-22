@@ -1917,7 +1917,7 @@ end
 
 
 function _method_upper(method::Union{AbstractString,Symbol})::String
-    return uppercase(String(method))
+    return _fast_uppercase(String(method))
 end
 
 @inline function _basic_auth_header(username::AbstractString, password::AbstractString)::String
