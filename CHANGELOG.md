@@ -93,6 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- A request whose URL path or query holds a control character, such as a tab,
+  fails before a connection is made and is not retried. It opened five
+  connections first, because the `ParseError` raised when the request line was
+  written counts as recoverable; a redirect to such a `Location` did the same.
+  ([#1459])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1252,3 +1257,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
+[#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
