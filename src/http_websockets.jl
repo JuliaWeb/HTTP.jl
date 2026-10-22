@@ -1622,17 +1622,26 @@ function upgrade(
         compress=compress,
         server_secure=conn isa TLS.Conn,
     )
-    _write_ws_response!(conn, response)
-
-    # We have written the handshake response directly to the connection, so take
-    # ownership of it away from the normal HTTP/1 server loop: mark the stream's
-    # read/write sides closed (so the loop's post-handler closewrite/closeread
-    # become no-ops) and request connection close (so the loop does not try to
-    # read another request off what is now a WebSocket).
+    # The handshake response goes straight to the connection, so take it away
+    # from the HTTP/1 server loop first: record the response as the stream's
+    # committed head (so the loop sends no other response, even if this write
+    # fails, and logging reports this status), close the stream's read and
+    # write sides (so the loop's closewrite/closeread are no-ops), and ask for
+    # connection close (so the loop reads no request from what is now a
+    # WebSocket).
+    stream.response = response
+    @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     @atomic :release stream.write_closed = true
     @atomic :release stream.read_closed = true
-    stream.response.close = true
+    try
+        _write_ws_response!(conn, response)
+    catch err
+        stream.io_error = err
+        rethrow()
+    end
+    # Set after the write: `close` would add `Connection: close` to the 101.
+    response.close = true
 
     if response.status != 101
         _close_ws_server_conn!(conn)

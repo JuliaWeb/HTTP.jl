@@ -3167,6 +3167,7 @@ function _build_bare_h2_connection()
         nothing,
         UInt8[],
         0,
+        0,
         Int64(0),
         UInt32(0),
         false,
@@ -3775,5 +3776,93 @@ end
         _wait_task_h2!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+# Read and discard until the peer closes. A server that closes with the
+# client's frames still unread resets the connection, and the client may then
+# lose response bytes it had not read yet.
+function _drain_h2_conn_until_eof!(conn)
+    buf = Vector{UInt8}(undef, 4096)
+    try
+        while readbytes!(conn, buf) > 0
+        end
+    catch
+    end
+    return nothing
+end
+
+@testset "HTTP/2 client treats flow-control violations by the server as errors" begin
+    status_block(enc) = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+    # DATA past the stream's receive window: the stream fails (and is reset)
+    # instead of the read loop blocking until the body is read.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
+        io = IOBuffer()
+        for _ in 1:19
+            HT.write_frame!(io, HT.DataFrame(stream_id, false, fill(UInt8('z'), 16_000)))
+        end
+        HT.write_frame!(io, HT.DataFrame(stream_id, true, UInt8[]))
+        _write_all_h2_tcp!(conn, take!(io))
+        _drain_h2_conn_until_eof!(conn)
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/")
+        @test err isa HT.ProtocolError
+        @test occursin("flow-control window", sprint(showerror, err))
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A WINDOW_UPDATE that takes a window above 2^31-1, for the connection or
+    # for the stream.
+    for stream_level in (false, true)
+        listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+            _write_frame_to_conn!(conn, HT.WindowUpdateFrame(stream_level ? stream_id : UInt32(0), UInt32(0x7fff_ffff)))
+            _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
+            _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("ok"))))
+            _drain_h2_conn_until_eof!(conn)
+        end
+        try
+            err = _h2_scripted_roundtrip_error(address, "/")
+            @test err isa HT.ProtocolError
+            @test occursin("WINDOW_UPDATE overflowed", sprint(showerror, err))
+            _wait_task_h2!(server_task)
+        finally
+            HTTP.@try_ignore NC.close(listener)
+        end
+    end
+end
+
+@testset "HTTP/2 client counts frame headers against the header block limit" begin
+    # Empty CONTINUATION frames never grow the block's bytes, but each one costs
+    # its 9-byte frame header, so a peer cannot keep a block open forever.
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        conn.max_header_block_bytes = 85
+        empty_block!() = begin
+            HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(1), false, false, UInt8[]))
+            for _ in 1:7
+                HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+            end
+        end
+        # Nine frames (81 bytes) fit, and the next HEADERS frame starts a new count.
+        for _ in 1:2
+            empty_block!()
+            HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), true, UInt8[]))
+        end
+        empty_block!()
+        HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+        err = try
+            HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa HT.ProtocolError
+        @test occursin("header block exceeded maximum size", sprint(showerror, err))
+    finally
+        cleanup()
     end
 end

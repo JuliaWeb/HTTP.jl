@@ -72,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
   no limit); a larger body gets 413. Before, the body was read without any
   limit. ([#1472])
+- A request body that `serve!` buffers for its handler grows with the bytes
+  received: the buffer starts at the declared `Content-Length`, capped at
+  64 KiB, and doubles as it fills. A 1 MiB body allocated 3.6 times its size
+  on Julia 1.12 and now allocates about twice its size. ([#1470])
+- HTTP/2 stream body buffers on the client and server compact in place
+  instead of into a new vector, so receiving DATA no longer reallocates the
+  buffer for every frame: a 1 MiB upload allocated 3.2 MiB in the server
+  stream buffer and now allocates about 160 KiB. ([#1486])
+- HTTP/2 frames are serialized into one buffer without copying their
+  payload, a WINDOW_UPDATE pair goes out in one write, and frame headers and
+  WINDOW_UPDATE frames already buffered are parsed in place. A 1 MiB upload
+  made about 2,800 allocations in client and server together and now makes
+  about 1,160. The bytes sent are unchanged. ([#1487])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -101,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HTTP/2 server counts each HEADERS and CONTINUATION frame's 9-byte header
+  against the request header block limit (`2 * max_header_bytes`). Empty
+  CONTINUATION frames added nothing to the block, so a client could keep one
+  header block open across any number of them. ([#1479])
 - `serve!` answers a handler's response that cannot be sent with 500 and logs
   it. Such a response has an unsupported `Transfer-Encoding`, a control
   character in a header value, an invalid header name, reason phrase or
@@ -162,6 +179,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The HPACK decoder rejects index 0 and integers above 2^32 - 1 as decoding
   errors. A header block with either raised `BoundsError` or `ArgumentError`,
   and the HTTP/2 server's connection task died without sending GOAWAY. ([#1475])
+- The HTTP/2 client counts each `HEADERS`/`CONTINUATION` frame's 9-byte
+  header against its header block limit, so a server can no longer hold the
+  connection with endless empty `CONTINUATION` frames. ([#1477])
+- `streamhandler` answers HEAD with the `Content-Length` a GET would get, as
+  `serve!` does, over HTTP/1 and HTTP/2. Before, the header was missing unless
+  the handler set it explicitly. ([#1454])
+- `WebSockets.upgrade` records the handshake response on the server stream, so
+  `logging_middleware` reports `101` for an upgrade, including when the handler
+  fails afterwards, and the server never answers the upgraded connection with
+  a second response. ([#1461])
+- `fileserver` serves a root given with a trailing separator, such as
+  `"public/"` or `"/"`; before, every file request got 500. A NUL in a request
+  path (`%00`) gets 400 instead of a 500 and an error log. ([#1462])
+- The HTTP/1 parser accepts only `HTTP/` DIGIT `.` DIGIT as a version, rejects
+  control bytes other than HTAB in chunk extensions, and rejects a bare LF in
+  lines read from a generic `IO` (as the connection reader already did).
+  Before, forms such as `HTTP/1. 1` or `HTTP/+1.1`, a bare CR in a chunk
+  extension, and a header line containing a bare LF were accepted. ([#1468])
+- An HTTP/2 upload whose stream a `GOAWAY` rejected is retried: when the
+  `GOAWAY` also closed the connection before the body was written, the request
+  failed with `ProtocolError("HTTP/2 connection is closed")`. ([#1483])
+- An `SSEStream` whose client stops reading is closed once its unsent events
+  pass four times `max_len`, and at least 16 MiB: the `write` throws `IOError`,
+  as for a client that disconnected. Before, the server kept every event
+  written to such a client. ([#1478])
+- The HTTP/2 server answers any exception a handler throws with
+  `500 Internal Server Error` and logs it as `server handler error`, as the
+  HTTP/1 server does. A `ProtocolError` or `ParseError` from a handler got
+  `400`, a timeout `408`, and none was logged. A response that cannot be sent,
+  such as one with an invalid header, gets `500` before anything is written
+  instead of a stream reset. Errors reading the request body keep their `4xx`
+  status, a client that resets its stream is not logged, and the server no
+  longer stores the request on the handler's `Response`. ([#1469])
+- An HTTP/2 server with `write_timeout` set no longer fails control-frame
+  writes after an earlier response's write deadline has passed. A WINDOW_UPDATE
+  after a request-body read inherited that expired deadline, so a request with
+  a body on a reused connection got `408` and the connection could close. Every
+  server write now sets its own deadline. ([#1458])
+- The HTTP/2 client treats flow-control violations by the server as errors.
+  DATA past a stream's receive window resets that stream with
+  `FLOW_CONTROL_ERROR`; the read loop blocked until the body was read,
+  stalling every stream on the connection. A `WINDOW_UPDATE` or
+  `SETTINGS_INITIAL_WINDOW_SIZE` change that takes a window above 2^31-1 is a
+  `FLOW_CONTROL_ERROR` instead of being accepted. ([#1464])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1371,19 +1432,33 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1454]: https://github.com/JuliaWeb/HTTP.jl/issues/1454
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1457]: https://github.com/JuliaWeb/HTTP.jl/issues/1457
+[#1458]: https://github.com/JuliaWeb/HTTP.jl/issues/1458
 [#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
+[#1461]: https://github.com/JuliaWeb/HTTP.jl/issues/1461
+[#1462]: https://github.com/JuliaWeb/HTTP.jl/issues/1462
 [#1463]: https://github.com/JuliaWeb/HTTP.jl/issues/1463
+[#1464]: https://github.com/JuliaWeb/HTTP.jl/issues/1464
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465
 [#1467]: https://github.com/JuliaWeb/HTTP.jl/issues/1467
+[#1468]: https://github.com/JuliaWeb/HTTP.jl/issues/1468
+[#1469]: https://github.com/JuliaWeb/HTTP.jl/issues/1469
+[#1470]: https://github.com/JuliaWeb/HTTP.jl/issues/1470
 [#1471]: https://github.com/JuliaWeb/HTTP.jl/issues/1471
 [#1472]: https://github.com/JuliaWeb/HTTP.jl/issues/1472
 [#1473]: https://github.com/JuliaWeb/HTTP.jl/issues/1473
 [#1474]: https://github.com/JuliaWeb/HTTP.jl/issues/1474
 [#1475]: https://github.com/JuliaWeb/HTTP.jl/issues/1475
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
+[#1477]: https://github.com/JuliaWeb/HTTP.jl/issues/1477
+[#1478]: https://github.com/JuliaWeb/HTTP.jl/issues/1478
+[#1479]: https://github.com/JuliaWeb/HTTP.jl/issues/1479
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
+[#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
+[#1486]: https://github.com/JuliaWeb/HTTP.jl/issues/1486
+[#1487]: https://github.com/JuliaWeb/HTTP.jl/issues/1487
 [#1491]: https://github.com/JuliaWeb/HTTP.jl/issues/1491
