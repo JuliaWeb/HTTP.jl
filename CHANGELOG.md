@@ -135,6 +135,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MiB buffer; it now allocates 25 MiB and keeps 10 MiB. ([#1480])
 - The `server handler error` log record's `target` leaves out the query
   string, which often carries tokens or signatures. ([#1473])
+- A stream handler that fails before its response head is sent always gets an
+  error response. The server still sends the error with the handler's headers,
+  but when those headers are what failed, such as a NUL in a value, it now
+  falls back to a new error response instead of sending nothing. ([#1457])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1346,6 +1350,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
+[#1457]: https://github.com/JuliaWeb/HTTP.jl/issues/1457
 [#1459]: https://github.com/JuliaWeb/HTTP.jl/issues/1459
 [#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
 [#1465]: https://github.com/JuliaWeb/HTTP.jl/issues/1465

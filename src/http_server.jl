@@ -1288,13 +1288,13 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                             startwrite(stream)
                             closewrite(stream)
                         end
-                    elseif !(@atomic :acquire stream.head_committed)
-                        # Writing started but the response head was deferred
-                        # (h1 FIXED mode) and never reached the wire: answer
-                        # with a raw error response instead of silently
-                        # dropping the connection (#1303).
+                    end
+                    if !(@atomic :acquire stream.head_committed)
+                        # No head reached the wire: the handler's own headers
+                        # failed the attempt above, or writing had started with
+                        # a deferred fixed-length head (#1303). Answer with a
+                        # new error response.
                         _try_write_server_error!(tracked.conn, request, status)
-                        return nothing
                     end
                     # Return without `closewrite`: the connection closes, and a body
                     # that already started stays unterminated, so the client can tell

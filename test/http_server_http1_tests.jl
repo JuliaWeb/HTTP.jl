@@ -1831,6 +1831,35 @@ end
     end
 end
 
+@testset "HTTP stream handler errors get 500 even when the handler's headers are invalid" begin
+    # The error response keeps the handler's headers, unless they are what
+    # failed: then it is sent without them.
+    logger = Test.TestLogger()
+    server = Logging.with_logger(logger) do
+        HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            if request.target == "/invalid"
+                HT.setheader(stream, "X-Bad" => "a\0b")
+                write(stream, "x")
+            else
+                HT.setheader(stream, "X-Kept" => "1")
+                error("handler failed")
+            end
+        end
+    end
+    try
+        raw = _raw_http_request(HT.port(server), "GET /invalid HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test !occursin("X-Bad", raw)
+        raw = _raw_http_request(HT.port(server), "GET /kept HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test occursin("X-Kept: 1\r\n", raw)
+    finally
+        close(server)
+    end
+    @test count(record -> record.message == "server handler error", logger.logs) == 2
+end
+
 @testset "HTTP stream byte I/O supports generic AbstractStrings and Chars" begin
     # Strings are written via unsafe_write; generic AbstractStrings and Chars
     # fall back to Base's per-byte path, which requires write(io, ::UInt8).
