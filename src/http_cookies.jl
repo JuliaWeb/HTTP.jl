@@ -18,6 +18,7 @@ import ..appendheader
 import ..headers
 import ..setheader
 import .._valid_header_field_name
+import .._fast_lowercase
 
 include("http_public_suffix.jl")
 
@@ -706,7 +707,7 @@ function canonicalhost(host)
         err && return ""
     end
     host[end] == '.' && (host = chop(host))
-    return isascii(host) ? lowercase(host) : ""
+    return isascii(host) ? _fast_lowercase(host) : ""
 end
 
 function hasport(host)

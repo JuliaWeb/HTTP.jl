@@ -1681,7 +1681,7 @@ function _request_headers_for_h2(address::String, request::Request, secure::Bool
     for key in header_keys(request.headers)
         startswith(key, ":") && throw(ProtocolError("HTTP/2 request headers must not include pseudo-header $(repr(key))"))
         _valid_header_field_name(key) || throw(ProtocolError("invalid HTTP/2 header field name: $(repr(key))"))
-        lowered = lowercase(key)
+        lowered = _fast_lowercase(key)
         if lowered == "host" || _is_h2_connection_specific_header(lowered) || lowered == "transfer-encoding"
             continue
         end
@@ -1753,7 +1753,7 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
     for header in headers
         name = header.name
         value = header.value
-        name == lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
+        name == _fast_lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
         normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
         if startswith(name, ':')
@@ -1786,7 +1786,7 @@ function _decode_h2_trailer_headers(headers::Vector{HeaderField})::Headers
     for header in headers
         name = header.name
         value = header.value
-        name == lowercase(name) || throw(ProtocolError("HTTP/2 trailer field names must be lowercase"))
+        name == _fast_lowercase(name) || throw(ProtocolError("HTTP/2 trailer field names must be lowercase"))
         startswith(name, ':') && throw(ProtocolError("HTTP/2 trailers must not include pseudo-headers"))
         _valid_trailer_header_name(name) || throw(ProtocolError("invalid HTTP/2 trailer header $(repr(name))"))
         normalized = _normalize_strict_header_field_value(value)
