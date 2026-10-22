@@ -286,9 +286,7 @@ end
         @test String(_read_all_h2_server(res.body)) == "cdef"
         @test returned_body[] !== nothing
         returned = returned_body[]::HT.BytesBody
-        # the server closes the body after sending the last DATA frame, so the client
-        # can finish reading first
-        @test timedwait(() -> HT.body_closed(returned), 10.0) === :ok
+        @test HT.body_closed(returned)
         @test HT.body_read!(returned, Vector{UInt8}(undef, 1)) == 0
     finally
         close(conn)
