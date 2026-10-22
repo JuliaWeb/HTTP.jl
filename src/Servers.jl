@@ -81,7 +81,10 @@ Base.close(l::Listener) = close(l.server)
 accept(s::Listener{Nothing}) = Sockets.accept(s.server)::TCPSocket
 accept(s::Listener{SSLConfig}) = getsslcontext(Sockets.accept(s.server), s.ssl)
 
-function getsslcontext(tcp, sslconfig)
+# Runs the server side of the TLS handshake on `tcp`; returns `nothing` and closes `tcp` if it
+# fails. With `timeout > 0` (seconds), a handshake that has not finished by then fails too.
+function getsslcontext(tcp, sslconfig, timeout::Real=0)
+    timer = timeout > 0 ? Timer(_ -> @try(Base.IOError, close(tcp)), timeout) : nothing
     try
         ssl = MbedTLS.SSLContext()
         MbedTLS.setup!(ssl, sslconfig)
@@ -91,8 +94,11 @@ function getsslcontext(tcp, sslconfig)
     catch e
         @try Base.IOError close(tcp)
         e isa Base.IOError && return nothing
+        e isa EOFError && return nothing
         e isa MbedTLS.MbedException && return nothing
         rethrow(e)
+    finally
+        timer === nothing || close(timer)
     end
 end
 
@@ -384,24 +390,34 @@ function listenloop(
     while isopen(listener)
         try
             Base.acquire(sem)
-            io = accept(listener)
-            if io === nothing
-                verbose >= 0 && @warn "unable to accept new connection"
-                continue
-            elseif !tcpisvalid(io)
-                verbose >= 0 && @warn "!tcpisvalid: $io"
-                close(io)
-                continue
-            end
-            conn = Connection(io)
-            conn.state = IDLE
-            Base.@lock conns_lock push!(conns, conn)
-            conn.host, conn.port = listener.hostname, listener.hostport
+            tcp = Sockets.accept(listener.server)::TCPSocket
+            # The TLS handshake runs in the connection's own task, bounded by `readtimeout`,
+            # so a client that does not complete it cannot hold up the next accept.
             @async try
-                handle_connection(f, conn, listener, readtimeout, access_log, verbose)
+                io = listener.ssl === nothing ? tcp : getsslcontext(tcp, listener.ssl, readtimeout)
+                if io === nothing
+                    verbose >= 0 && @warn "unable to accept new connection"
+                elseif !tcpisvalid(io)
+                    verbose >= 0 && @warn "!tcpisvalid: $io"
+                    close(io)
+                else
+                    conn = Connection(io)
+                    conn.state = IDLE
+                    Base.@lock conns_lock push!(conns, conn)
+                    conn.host, conn.port = listener.hostname, listener.hostport
+                    try
+                        handle_connection(f, conn, listener, readtimeout, access_log, verbose)
+                    finally
+                        # handle_connection is in charge of closing the underlying io
+                        Base.@lock conns_lock delete!(conns, conn)
+                    end
+                end
+            catch
+                verbose >= 1 && @error begin
+                    msg = current_exceptions_to_string()
+                    "Server on $(listener.hostname):$(listener.hostport) failed to set up a connection. $msg"
+                end
             finally
-                # handle_connection is in charge of closing the underlying io
-                Base.@lock conns_lock delete!(conns, conn)
                 Base.release(sem)
             end
         catch e

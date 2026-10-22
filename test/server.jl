@@ -202,6 +202,26 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
 
         close(server)
     end
+
+    # A connection that never starts its TLS handshake does not hold up other connections,
+    # and with `readtimeout` the server closes it.
+    let host = Sockets.localhost
+        sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
+        server = HTTP.listen!(; listenany=true, sslconfig=sslconfig, readtimeout=2, verbose=-1) do http::HTTP.Stream
+            HTTP.setstatus(http, 200)
+            HTTP.startwrite(http)
+            write(http, "response body\n")
+        end
+        port = HTTP.port(server)
+        silent = connect(host, port)
+        r = HTTP.get("https://$(host):$(port)/"; readtimeout=30, retry=false, require_ssl_verification=false)
+        @test r.status == 200
+        closed_by_server = @async eof(silent)
+        @test timedwait(() -> istaskdone(closed_by_server), 30) === :ok
+        @test istaskdone(closed_by_server) && fetch(closed_by_server)
+        close(silent)
+        close(server)
+    end
 end # @testset
 
 @testset "on_shutdown" begin
