@@ -2049,15 +2049,15 @@ end
 @testset "HTTP/2 server validates outbound header fields before HPACK" begin
     bad_value_headers = HT.Headers()
     HT.setheader(bad_value_headers, "X-Bad", "ok\r\nInjected: yes")
-    @test_throws HT.ProtocolError HT._encode_h2_response_headers!(HT.Encoder(), 200, bad_value_headers)
+    @test_throws HT.ProtocolError HT._h2_response_header_fields(200, bad_value_headers)
 
     bad_name_headers = HT.Headers()
     HT.setheader(bad_name_headers, "Bad Name", "ok")
-    @test_throws HT.ProtocolError HT._encode_h2_response_headers!(HT.Encoder(), 200, bad_name_headers)
+    @test_throws HT.ProtocolError HT._h2_response_header_fields(200, bad_name_headers)
 
     bad_trailers = HT.Headers()
     HT.setheader(bad_trailers, "Content-Length", "2")
-    @test_throws HT.ProtocolError HT._encode_h2_trailer_headers!(HT.Encoder(), bad_trailers)
+    @test_throws HT.ProtocolError HT._h2_trailer_header_fields(bad_trailers)
 end
 
 @testset "HTTP/2 server honors connection-level flow control on responses" begin
@@ -2682,6 +2682,108 @@ end
             @test response.status == status
             @test String(_read_all_h2_server(response.body)) == text
         end
+    finally
+        close(conn)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
+@testset "HTTP/2 server answers handler errors with 500 and logs them" begin
+    # Only a failure reading the request keeps a 4xx status. A handler that
+    # throws a request-style error, or returns or writes a response that cannot
+    # be sent, gets 500 and one log record. A client that resets its stream is
+    # not logged.
+    logger = Test.TestLogger()
+    go = Channel{Nothing}(1)
+    function request_handler(request)
+        request.target == "/timeout" && throw(Reseau.IOPoll.DeadlineExceededError())
+        request.target == "/header" && return HT.Response(200; headers = ["X-A" => "a\0b"], body = "x")
+        request.target == "/status" && return HT.Response(1000; body = "x")
+        request.target == "/upload" && return HT.Response(200, "unreachable")
+        throw(HT.ProtocolError("handler bug"))
+    end
+    function stream_handler(stream)
+        request = HT.startread(stream)
+        if request.target == "/framing"
+            HT.setheader(stream, "Content-Length" => "abc")
+            write(stream, "x")
+        elseif request.target == "/reset"
+            take!(go)
+            write(stream, "too late")
+        else
+            throw(HT.ParseError("handler bug"))
+        end
+    end
+    request_server, stream_server, reset_server = Base.CoreLogging.with_logger(logger) do
+        return (
+            HT.serve!(request_handler, "127.0.0.1", 0; listenany = true, max_body_bytes = 4),
+            HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true),
+            HT.listen!(stream_handler, "127.0.0.1", 0; listenany = true),
+        )
+    end
+    conns = HT.H2Connection[]
+    raw = nothing
+    try
+        request_address = HT.server_addr(request_server)
+        stream_address = HT.server_addr(stream_server)
+        push!(conns, HT.connect_h2!(request_address; secure = false), HT.connect_h2!(stream_address; secure = false))
+        for (conn, address, target) in ((conns[1], request_address, "/protocol"), (conns[1], request_address, "/timeout"),
+                                         (conns[1], request_address, "/header"), (conns[1], request_address, "/status"),
+                                         (conns[2], stream_address, "/parse"), (conns[2], stream_address, "/framing"))
+            request = HT.Request("GET", target; host = address, content_length = 0, proto_major = 2, proto_minor = 0)
+            response = HT.h2_roundtrip!(conn, request)
+            @test response.status == 500
+            _read_all_h2_server(response.body)
+        end
+        # A body over max_body_bytes is a request error: 413 and no log.
+        upload = HT.Request("POST", "/upload"; host = request_address, body = HT.BytesBody(fill(UInt8('u'), 10)), content_length = 10, proto_major = 2, proto_minor = 0)
+        response = HT.h2_roundtrip!(conns[1], upload)
+        @test response.status == 413
+        _read_all_h2_server(response.body)
+        # The client resets the stream before the handler writes.
+        reset_address = HT.server_addr(reset_server)
+        raw, reader = _open_raw_h2_server_conn(reset_address)
+        _write_h2_server_request_headers!(raw::NC.Conn, HT.Encoder(), UInt32(1), reset_address, "/reset")
+        _write_frame_h2_server_raw!(raw::NC.Conn, HT.RSTStreamFrame(UInt32(1), UInt32(0x8)))
+        _write_frame_h2_server_raw!(raw::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        # The ACK means the server has processed the reset.
+        _read_h2_server_frame_until!(raw::NC.Conn, reader, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        put!(go, nothing)
+        tracked = only(HT._server_conns(reset_server))
+        while HT._conn_state(tracked) != HT._ConnState.IDLE
+            yield()
+        end
+    finally
+        foreach(close, conns)
+        raw === nothing || HTTP.@try_ignore NC.close(raw::NC.Conn)
+        # Graceful close returns once every connection, and its logging, is done.
+        close(request_server)
+        close(stream_server)
+        close(reset_server)
+    end
+    records = filter(record -> record.message == "server handler error", logger.logs)
+    @test map(record -> record.kwargs[:target], records) == ["/protocol", "/timeout", "/header", "/status", "/parse", "/framing"]
+    @test all(record -> record.level == Base.CoreLogging.Error, records)
+    @test records[1].kwargs[:exception][1] isa HT.ProtocolError
+    @test records[1].kwargs[:peer] isa Reseau.TCP.SocketAddr
+    @test length(records) == length(logger.logs)
+end
+
+@testset "HTTP/2 server leaves a shared response unchanged" begin
+    shared = HT.Response(200; headers = ["X-Shared" => "1"], body = "0123456789")
+    server = HT.serve!(_ -> shared, "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        for (method, text) in (("HEAD", ""), ("GET", "0123456789"))
+            request = HT.Request(method, "/"; host = address, content_length = 0, proto_major = 2, proto_minor = 0)
+            response = HT.h2_roundtrip!(conn, request)
+            @test response.status == 200
+            @test String(_read_all_h2_server(response.body)) == text
+        end
+        @test shared.request === nothing
+        @test collect(shared.headers) == ["X-Shared" => "1"]
     finally
         close(conn)
         HT.forceclose(server)
