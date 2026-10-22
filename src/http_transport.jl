@@ -1110,10 +1110,9 @@ function _new_conn_tls!(
     catch err
         @try_ignore TCP.close(tcp)
         # Type TLS failures at the site where the phase is known: a TLSError
-        # here arose during connection setup, so surface it as a handshake
-        # failure. TLS failures on established connections reach the public
-        # boundary as `TLSTransportError` instead.
-        err isa TLS.TLSError && throw(TLSHandshakeError(err::TLS.TLSError))
+        # here arose during connection setup. TLS failures on established
+        # connections reach the public boundary as `TLSTransportError` instead.
+        err isa TLS.TLSError && throw(_tls_setup_error(err::TLS.TLSError, tls_handshake_timeout_ns, connect_deadline_ns, host_resolver.deadline_ns))
         rethrow()
     end
 end

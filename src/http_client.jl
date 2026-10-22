@@ -602,13 +602,14 @@ function _acquire_h2_conn!(
                 proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
                 tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
                 try
-                    connect_h2!(
+                    _connect_h2_from_tcp!(
                         tcp,
-                        address;
-                        secure=secure,
-                        tls_config=tls_cfg,
-                        connect_deadline_ns=connect_deadline_ns,
-                        http2_settings=client.http2_settings,
+                        address,
+                        secure,
+                        tls_cfg,
+                        connect_deadline_ns,
+                        client.http2_settings,
+                        connect_host_resolver.deadline_ns,
                     )
                 catch
                     @try_ignore begin
@@ -682,14 +683,15 @@ function _cache_h1_origin!(client::Client, key::String)::Nothing
     return nothing
 end
 
+# Cookies match against the request path without its query (RFC 6265 §5.1.4).
 function _host_path_from_request(address::String, request::Request)::Tuple{String,String}
     host, _ = HostResolvers.split_host_port(address)
-    target = request.target
-    if isempty(target)
+    path, _ = _split_request_target(request.target)
+    if isempty(path)
         return host, "/"
     end
-    startswith(target, "/") && return host, target
-    return host, "/$target"
+    startswith(path, "/") && return host, path
+    return host, "/$path"
 end
 
 function _normalize_cookies_input(cookies)
@@ -2345,7 +2347,9 @@ Redirects:
   `HEAD` and `QUERY` are kept. A 303 always uses `GET`, and 307 and 308 keep the
   method.
 - `forwardheaders = true`: send the request's headers again when following a
-  redirect. Credentials are dropped when the redirect goes to another origin.
+  redirect. `Authorization`, `Cookie`, and `Proxy-Authorization` are dropped when
+  the redirect goes to another origin; other headers, such as `X-Api-Key`, are
+  sent there too.
 
 Retries (see the client guide for the default rules):
 - `retry = true`: retry failed attempts. An idempotent request that fails on a
