@@ -85,6 +85,15 @@ end
     @test_throws W.WebSocketProtocolError W._process_incoming_data!(header_limited, UInt8[0x81, 0x85])
     @test isempty(header_limited.codec.decoder.payload_buf)
 
+    # The mask bit is checked in the frame header (RFC 6455 §5.1): a server
+    # rejects an unmasked frame, and a client a masked one, before delivering it.
+    server_side = W.WebSocket(IOBuffer(), () -> nothing; is_client = false)
+    @test_throws W.WebSocketProtocolError W._process_incoming_data!(server_side, UInt8[0x81, 0x02, UInt8('h'), UInt8('i')])
+    @test !isready(server_side)
+    client_side = W.WebSocket(IOBuffer(), () -> nothing; is_client = true)
+    @test_throws W.WebSocketProtocolError W._process_incoming_data!(client_side, UInt8[0x81, 0x82, 0x00, 0x00, 0x00, 0x00, UInt8('h'), UInt8('i')])
+    @test !isready(client_side)
+
     too_large = _websocket_error_after_frames([
         _ws_frame(W.WsOpcode.TEXT, "toolong"),
     ]; maxframesize = 3)
