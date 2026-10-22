@@ -161,6 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The HTTP/2 client counts each `HEADERS`/`CONTINUATION` frame's 9-byte
   header against its header block limit, so a server can no longer hold the
   connection with endless empty `CONTINUATION` frames. ([#1477])
+- `streamhandler` answers HEAD with the `Content-Length` a GET would get, as
+  `serve!` does, over HTTP/1 and HTTP/2. Before, the header was missing unless
+  the handler set it explicitly. ([#1454])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1370,6 +1373,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1454]: https://github.com/JuliaWeb/HTTP.jl/issues/1454
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
 [#1457]: https://github.com/JuliaWeb/HTTP.jl/issues/1457

@@ -82,6 +82,18 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
     return nothing
 end
 
+# Only the body is suppressed: a HEAD response sends the Content-Length a GET
+# would get (RFC 9110 §9.3.2), as `serve!` does, and a 304 keeps an explicitly
+# provided one. 1xx and 204 responses send none.
+function _suppressed_body_content_length!(headers::Headers, response::Response)::Nothing
+    if _body_allowed_for_status(response.status)
+        response.content_length >= 0 && setheader(headers, "Content-Length", string(response.content_length))
+    else
+        _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
+    end
+    return nothing
+end
+
 function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Vector{UInt8}}=nothing)::Nothing
     response = stream.response::Response
     headers = copy(response.headers)
@@ -91,9 +103,7 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
     stream.write_mode = mode
     if _server_stream_live_h2(stream)
         if mode == _ServerStreamWriteMode.NONE
-            # Only the body is suppressed: HEAD and 304 responses keep an
-            # explicitly provided Content-Length describing the representation.
-            _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
+            _suppressed_body_content_length!(headers, response)
         elseif response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
         end
@@ -119,9 +129,7 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
         return nothing
     end
     if mode == _ServerStreamWriteMode.NONE
-        # Only the body is suppressed: HEAD and 304 responses keep an
-        # explicitly provided Content-Length describing the representation.
-        _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
+        _suppressed_body_content_length!(headers, response)
         removeheader(headers, "Transfer-Encoding")
     elseif mode == _ServerStreamWriteMode.FIXED
         # Content-Length frames the body; a Transfer-Encoding would contradict it.
