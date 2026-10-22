@@ -527,6 +527,8 @@ function _status_text(status::Integer)::String
 end
 
 @inline function _response_reason_phrase(response::Response)::String
+    # The status line carries a three-digit status code (RFC 9112 §4).
+    100 <= response.status <= 999 || throw(ProtocolError("invalid HTTP response status code: $(response.status)"))
     reason = isempty(response.reason) ? _status_text(response.status) : response.reason
     _string_contains_ctl_byte(reason) && throw(ProtocolError("invalid HTTP response reason phrase: $(repr(reason))"))
     return reason
@@ -863,6 +865,16 @@ write_response!(io::IO, response::Response, request::Union{Nothing,Request}) =
 # abstractly typed request into a non-inlined call dispatches at runtime,
 # which `juliac --trim` rejects.
 function _write_response!(io::IO, response::Response, response_to_head::Bool)
+    head, use_chunked, trailer_values, allows_body = _response_head(response, response_to_head)
+    write(io, head)
+    allows_body && _write_response_body!(io, response, use_chunked, trailer_values)
+    return nothing
+end
+
+# The response head as bytes, whether the body is chunked, the trailers to send
+# after it, and whether a body follows the head. Throws, before anything is
+# written, for a response that cannot be sent.
+function _response_head(response::Response, response_to_head::Bool)::Tuple{Vector{UInt8},Bool,Headers,Bool}
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
@@ -898,17 +910,18 @@ function _write_response!(io::IO, response::Response, response_to_head::Bool)
     _normalize_outgoing_headers!(headers)
     # `allows_body` already rules out HEAD.
     allows_body && _check_response_body_unsent(response, nothing)
-    # Buffer the entire response head (status line + all header lines + blank
-    # CRLF) into a single IOBuffer and write it to the transport in one
-    # syscall. The transport's `write` does not buffer internally, so emitting
-    # the head field-by-field via `print` translates to a write syscall per
-    # argument (~20 per typical response).
+    # Build the entire head (status line, header lines, blank CRLF) in one
+    # buffer so that it reaches the transport in one write. The transport's
+    # `write` does not buffer internally, so printing the head field by field
+    # costs a write syscall per argument (~20 per typical response).
     head_buf = IOBuffer()
     _append_status_line!(head_buf, response)
     _append_headers!(head_buf, headers)
     print(head_buf, "\r\n")
-    write(io, take!(head_buf))
-    allows_body || return nothing
+    return take!(head_buf), use_chunked, trailer_values, allows_body
+end
+
+function _write_response_body!(io::IO, response::Response, use_chunked::Bool, trailer_values::Headers)::Nothing
     if use_chunked
         _write_chunked_body!(io, response.body, trailer_values)
         return nothing
