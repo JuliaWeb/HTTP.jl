@@ -93,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- The HPACK decoder rejects index 0 and integers above 2^32 - 1 as decoding
+  errors. A header block with either raised `BoundsError` or `ArgumentError`,
+  and the HTTP/2 server's connection task died without sending GOAWAY. ([#1475])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1269,3 +1272,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1475]: https://github.com/JuliaWeb/HTTP.jl/issues/1475
