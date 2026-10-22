@@ -1505,3 +1505,16 @@ end
     end
     end
 end
+
+@testset "HTTP ProxyFromEnvironment warns about a proxy URL it cannot parse" begin
+    # A backslash must be percent-encoded (`CORP%5Cjdoe`); the warning leaves
+    # out the credentials. The lowercase name is cleared first because Windows
+    # environment variables are case-insensitive.
+    withenv("http_proxy" => nothing, "HTTP_PROXY" => "http://CORP\\jdoe:pw@proxy.local:8080") do
+        config = @test_logs (:warn, r"^Ignoring the HTTP_PROXY environment variable: ArgumentError: invalid character '\\\\' in URL userinfo$") HT.ProxyFromEnvironment()
+        @test config.http === nothing
+    end
+    withenv("http_proxy" => nothing, "HTTP_PROXY" => "http://CORP%5Cjdoe:pw@proxy.local:8080") do
+        @test HT.ProxyFromEnvironment().http.authorization == HT._userinfo_basic_authorization("CORP%5Cjdoe:pw")
+    end
+end
