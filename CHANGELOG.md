@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `serve!` answers a handler's response that cannot be sent with 500 and logs
+  it. Such a response has an unsupported `Transfer-Encoding`, a control
+  character in a header value, an invalid header name, reason phrase or
+  trailer, or a status code outside 100-999. Before, the connection closed with
+  no response and nothing logged. A response body that fails after the head is
+  sent is now logged as a handler error, and the body is left unfinished; before,
+  it ended the connection task silently. ([#1451])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1244,3 +1251,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
+[#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
