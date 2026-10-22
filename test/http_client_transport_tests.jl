@@ -678,6 +678,39 @@ end
     end
 end
 
+@testset "HTTP client transport bounds interim 1xx responses by max_header_bytes" begin
+    hint = "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n"  # 61 bytes
+    for (count, ok) in ((16, true), (17, false))
+        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        address = ND.join_host_port("127.0.0.1", Int((NC.addr(listener)::NC.SocketAddrV4).port))
+        server_task = errormonitor(Threads.@spawn begin
+            conn = NC.accept(listener)
+            try
+                HT.read_request(HT._ConnReader(conn))
+                HTTP.@try_ignore _write_all_tcp!(conn, collect(codeunits(repeat(hint, count) * "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")))
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+            return nothing
+        end)
+        transport = HT.Transport(max_header_bytes = 1000, max_line_bytes = 1000)
+        try
+            req = HT.Request("GET", "/hints"; host = address, body = HT.EmptyBody(), content_length = 0)
+            if ok
+                res = HT.roundtrip!(transport, address, req)
+                @test res.status == 200
+                @test String(_read_all_transport_body_bytes(res.body)) == "ok"
+            else
+                @test_throws "informational responses exceed configured max_header_bytes" HT.roundtrip!(transport, address, req)
+            end
+            _wait_task!(server_task)
+        finally
+            close(transport)
+            HTTP.@try_ignore NC.close(listener)
+        end
+    end
+end
+
 @testset "HTTP client transport waits for 100-continue before sending body" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
