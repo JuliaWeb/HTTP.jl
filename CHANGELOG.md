@@ -158,6 +158,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RFC 6265 §5.1.4 specifies. A `Path=/a` cookie was not sent to `/a?x=1`, and
   a cookie set by `/d/e?next=/f/g` got the default path `/d/e?next=/f`
   instead of `/d`. ([#1448])
+- An HTTP/1 upload that the server answers early and then closes, such as a
+  `413` sent after the request head, returns the server's response. The
+  client closed the connection when the upload's write failed, so it usually
+  raised a broken-pipe, connection-reset, or `TLSTransportError` instead. A
+  `write_idle_timeout` during an upload raises `TimeoutError` (it raised
+  `NetClosingError`, or `TLSTransportError` over https) and is not retried,
+  like a read timeout. ([#1449])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1305,6 +1312,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
 [#1448]: https://github.com/JuliaWeb/HTTP.jl/issues/1448
+[#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
