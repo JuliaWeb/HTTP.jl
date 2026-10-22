@@ -87,36 +87,34 @@ function _parse_http_date(value::AbstractString)::Union{Nothing,DateTime}
     return Cookies._parse_http_gmt_datetime(stripped)
 end
 
-@inline function _servecontent_etag_body_start(value::AbstractString)::Int
-    return startswith(value, "W/") ? 3 : 1
-end
-
-function _scan_http_etag(value::AbstractString)::Tuple{String,String}
-    s = String(strip(String(value)))
-    isempty(s) && return "", ""
-    start = _servecontent_etag_body_start(s)
-    start > lastindex(s) && return "", ""
-    s[start] == '"' || return "", ""
-    i = nextind(s, start)
-    while i <= lastindex(s)
-        c = s[i]
-        if c == '"'
-            remain_start = nextind(s, i)
-            remain = remain_start > lastindex(s) ? "" : String(SubString(s, remain_start, lastindex(s)))
-            return String(SubString(s, firstindex(s), i)), remain
+# Split the entity-tag at the start of `value` (RFC 9110 §8.8.3), after any
+# whitespace, from the rest of `value`. Both are views into `value`, so scanning
+# a list of tags stays linear in its length. An invalid tag gives an empty tag.
+function _scan_http_etag(value::Union{String,SubString{String}})::Tuple{SubString{String},SubString{String}}
+    s = strip(value)
+    bytes = codeunits(s)
+    n = length(bytes)
+    start = n >= 2 && bytes[1] == UInt8('W') && bytes[2] == UInt8('/') ? 3 : 1
+    if start <= n && bytes[start] == UInt8('"')
+        for i in (start+1):n
+            b = bytes[i]
+            # `i` is the byte index of an ASCII quote, so both views start on a character.
+            b == UInt8('"') && return SubString(s, 1, i), SubString(s, i + 1, lastindex(s))
+            # etagc = %x21 / %x23-7E / obs-text
+            (b == 0x21 || 0x23 <= b <= 0x7e || b >= 0x80) || break
         end
-        (c == '!' || ('#' <= c <= '~') || UInt32(c) >= 0x80) || return "", ""
-        i = nextind(s, i)
     end
-    return "", ""
+    return SubString(s, 1, 0), SubString(s, 1, 0)
 end
 
-@inline function _etag_strong_match(a::String, b::String)::Bool
+@inline function _etag_strong_match(a::AbstractString, b::AbstractString)::Bool
     return !isempty(a) && a == b && !startswith(a, "W/")
 end
 
-@inline function _etag_weak_match(a::String, b::String)::Bool
-    return !isempty(a) && !isempty(b) && replace(a, "W/" => ""; count=1) == replace(b, "W/" => ""; count=1)
+@inline _etag_opaque(tag::AbstractString) = startswith(tag, "W/") ? SubString(tag, 3) : SubString(tag)
+
+@inline function _etag_weak_match(a::AbstractString, b::AbstractString)::Bool
+    return !isempty(a) && !isempty(b) && _etag_opaque(a) == _etag_opaque(b)
 end
 
 function _header_etag(headers::Headers)::String
@@ -125,19 +123,19 @@ function _header_etag(headers::Headers)::String
     etag, remain = _scan_http_etag(raw)
     isempty(etag) && return ""
     isempty(strip(remain)) || return ""
-    return etag
+    return String(etag)
 end
 
 function _if_match_satisfied(request::Request, headers::Headers)::Union{Nothing,Bool}
     raw = header(request.headers, "If-Match", "")
     isempty(raw) && return nothing
     etag = _header_etag(headers)
-    buf = raw
+    buf = SubString(raw)
     while true
         buf = strip(buf)
         isempty(buf) && break
         if first(buf) == ','
-            buf = String(SubString(buf, nextind(buf, firstindex(buf)), lastindex(buf)))
+            buf = SubString(buf, 2)
             continue
         end
         if first(buf) == '*'
@@ -163,12 +161,12 @@ function _if_none_match_satisfied(request::Request, headers::Headers)::Union{Not
     raw = header(request.headers, "If-None-Match", "")
     isempty(raw) && return nothing
     etag = _header_etag(headers)
-    buf = raw
+    buf = SubString(raw)
     while true
         buf = strip(buf)
         isempty(buf) && break
         if first(buf) == ','
-            buf = String(SubString(buf, nextind(buf, firstindex(buf)), lastindex(buf)))
+            buf = SubString(buf, 2)
             continue
         end
         if first(buf) == '*'
