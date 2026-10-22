@@ -540,17 +540,26 @@ function (middleware::_HandlerTimeoutMiddleware)(req::Request)
     derived_ctx = _timeout_child_context(get_request_context(req), middleware.timeout_ns)
     timed_req = _request_with_context(req, derived_ctx)
     result = Channel{Tuple{Bool,Any}}(1)
+    now_ns = Int64(time_ns())
+    deadline_ns = middleware.timeout_ns > typemax(Int64) - now_ns ? typemax(Int64) : now_ns + middleware.timeout_ns
+    # Wait on a poller timer that fires at the deadline; the handler task
+    # re-arms it for now when it finishes. The superseded deadline entry stays
+    # in the poller's timer heap until the deadline passes.
+    timer = IOPoll.TimerState(deadline_ns, Int64(0))
+    armed = IOPoll.schedule_timer!(timer, deadline_ns)
     @_spawn_interactive begin
         try
             put!(result, (true, middleware.handler(timed_req)))
         catch err
             put!(result, (false, err))
         end
+        # Re-arming the timer for now wakes the waiting task early.
+        armed && IOPoll.schedule_timer!(timer, Int64(time_ns()))
         return nothing
     end
-    timeout_s = middleware.timeout_ns / 1.0e9
-    status = IOPoll.timedwait(() -> isready(result), timeout_s; pollint=0.001)
-    if status == :ok
+    # An unarmed timer means the poller has stopped, so nothing would wake us.
+    armed ? IOPoll.waittimer(timer) : wait(result)
+    if isready(result)
         success, value = take!(result)
         success && return value
         throw(value)
