@@ -5,6 +5,8 @@ function _server_stream_allows_body(stream::Stream)::Bool
     return true
 end
 
+@inline _is_http10(message::Union{Request,Response})::Bool = message.proto_major == UInt8(1) && message.proto_minor == UInt8(0)
+
 function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
     # Framing is chosen late so explicit response headers win, while unread
     # request bodies still force connection close independently of write mode.
@@ -15,11 +17,14 @@ function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
                _ServerStreamWriteMode.FIXED :
                _ServerStreamWriteMode.IDENTITY
     end
-    headercontains(stream.response.headers, "Transfer-Encoding", "chunked") && return _ServerStreamWriteMode.CHUNKED
+    # HTTP/1.0 has no chunked framing (RFC 9112 §6.1): an HTTP/1.0 request, or a
+    # response the handler made HTTP/1.0, is sent close-delimited instead.
+    http10 = _is_http10(stream.message) || _is_http10(stream.response::Response)
+    !http10 && headercontains(stream.response.headers, "Transfer-Encoding", "chunked") && return _ServerStreamWriteMode.CHUNKED
     if hasheader(stream.response.headers, "Content-Length") || stream.response.content_length >= 0
         return _ServerStreamWriteMode.FIXED
     end
-    if stream.response.proto_major == UInt8(1) && stream.response.proto_minor == UInt8(0)
+    if http10
         stream.response.close = true
         return _ServerStreamWriteMode.IDENTITY
     end
@@ -43,15 +48,21 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
     end
     if _server_stream_live_h2(stream)
         deadline_ns = _server_write_deadline_ns(stream.server::Server)
-        _write_data_frames_h2_server!(
-            stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-            stream.h2_write_lock::ReentrantLock,
-            stream.h2_send_state::_H2SendWindowState,
-            stream.h2_stream_id,
-            data;
-            end_stream=false,
-            write_deadline_ns=deadline_ns,
-        )
+        try
+            _write_data_frames_h2_server!(
+                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+                stream.h2_write_lock::ReentrantLock,
+                stream.h2_send_state::_H2SendWindowState,
+                stream.h2_stream_id,
+                data;
+                end_stream=false,
+                write_deadline_ns=deadline_ns,
+            )
+        catch err
+            # The client reset the stream or the connection failed.
+            stream.io_error = err
+            rethrow()
+        end
         return nothing
     end
     try
@@ -77,6 +88,38 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
     return nothing
 end
 
+# Only the body is suppressed: a HEAD response sends the Content-Length a GET
+# would get (RFC 9110 §9.3.2), as `serve!` does, and a 304 keeps an explicitly
+# provided one. 1xx and 204 responses send none.
+function _suppressed_body_content_length!(headers::Headers, response::Response)::Nothing
+    if _body_allowed_for_status(response.status)
+        response.content_length >= 0 && setheader(headers, "Content-Length", string(response.content_length))
+    else
+        _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
+    end
+    return nothing
+end
+
+# Writes a header block on a live HTTP/2 server stream. A failed write comes from
+# the client or the connection; a field the peer's limit refuses is the handler's.
+function _write_h2_stream_header_fields!(stream::Stream, header_fields::Vector{HeaderField}, end_stream::Bool)::Nothing
+    try
+        _write_h2_header_fields!(
+            stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+            stream.h2_write_lock::ReentrantLock,
+            stream.h2_send_state::_H2SendWindowState,
+            stream.h2_stream_id,
+            header_fields,
+            end_stream,
+            _server_write_deadline_ns(stream.server::Server),
+        )
+    catch err
+        _is_h2_transport_error(err) && (stream.io_error = err)
+        rethrow()
+    end
+    return nothing
+end
+
 function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Vector{UInt8}}=nothing)::Nothing
     response = stream.response::Response
     headers = copy(response.headers)
@@ -86,9 +129,7 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
     stream.write_mode = mode
     if _server_stream_live_h2(stream)
         if mode == _ServerStreamWriteMode.NONE
-            # Only the body is suppressed: HEAD and 304 responses keep an
-            # explicitly provided Content-Length describing the representation.
-            _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
+            _suppressed_body_content_length!(headers, response)
         elseif response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
         end
@@ -99,26 +140,17 @@ function _write_server_stream_head!(stream::Stream, body_bytes::Union{Nothing,Ve
         removeheader(headers, "Upgrade")
         removeheader(headers, "Trailer")
         end_stream = mode == _ServerStreamWriteMode.NONE && isempty(response.trailers)
-        _write_h2_response_headers!(
-            stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-            stream.h2_write_lock::ReentrantLock,
-            stream.h2_send_state::_H2SendWindowState,
-            stream.h2_stream_id,
-            response.status,
-            headers,
-            end_stream,
-            _server_write_deadline_ns(stream.server::Server),
-        )
+        _write_h2_stream_header_fields!(stream, _h2_response_header_fields(response.status, headers), end_stream)
         @atomic :release stream.head_committed = true
         @atomic :release stream.response_started = true
         return nothing
     end
     if mode == _ServerStreamWriteMode.NONE
-        # Only the body is suppressed: HEAD and 304 responses keep an
-        # explicitly provided Content-Length describing the representation.
-        _content_length_allowed_for_status(response.status) || removeheader(headers, "Content-Length")
+        _suppressed_body_content_length!(headers, response)
         removeheader(headers, "Transfer-Encoding")
     elseif mode == _ServerStreamWriteMode.FIXED
+        # Content-Length frames the body; a Transfer-Encoding would contradict it.
+        removeheader(headers, "Transfer-Encoding")
         if response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
         end
@@ -199,16 +231,22 @@ function _server_readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Int
     return n
 end
 
-function _server_read(stream::Stream)::Vector{UInt8}
+# Read the rest of the request body. With a `max_body_bytes` limit (`0` for
+# none), a body over it fails with the 413 error that `serve!` uses: a declared
+# length before anything is read or `100 Continue` is sent, a chunked body as
+# soon as it grows past the limit.
+function _server_read(stream::Stream, max_body_bytes::Int64=Int64(0))::Vector{UInt8}
     _require_server_stream(stream)
     out = UInt8[]
     buf = Vector{UInt8}(undef, 16 * 1024)
     try
+        _check_server_body_size!(stream.request_body_content_length, max_body_bytes)
         _maybe_write_continue!(stream)
         while true
             n = _stream_request_body_read!(stream, buf)
             n == 0 && break
             append!(out, @view(buf[1:n]))
+            _check_server_body_size!(Int64(length(out)), max_body_bytes)
         end
     catch err
         stream.io_error = err
@@ -407,21 +445,19 @@ function _server_closewrite(stream::Stream)::Nothing
             throw(ProtocolError("response body bytes did not match Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         if !isempty(stream.response.trailers)
-            _write_h2_trailers!(
-                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-                stream.h2_write_lock::ReentrantLock,
-                stream.h2_send_state::_H2SendWindowState,
-                stream.h2_stream_id,
-                stream.response.trailers,
-                _server_write_deadline_ns(stream.server::Server),
-            )
+            _write_h2_stream_header_fields!(stream, _h2_trailer_header_fields(stream.response.trailers), true)
         elseif !stream.ignore_writes && stream.write_mode != _ServerStreamWriteMode.NONE
-            _write_frame_h2_server_threadsafe!(
-                stream.h2_write_lock::ReentrantLock,
-                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-                DataFrame(stream.h2_stream_id, true, UInt8[]),
-                _server_write_deadline_ns(stream.server::Server),
-            )
+            try
+                _write_frame_h2_server_threadsafe!(
+                    stream.h2_write_lock::ReentrantLock,
+                    stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+                    DataFrame(stream.h2_stream_id, true, UInt8[]),
+                    _server_write_deadline_ns(stream.server::Server),
+                )
+            catch err
+                _is_h2_transport_error(err) && (stream.io_error = err)
+                rethrow()
+            end
         end
         @atomic :release stream.write_closed = true
         return nothing
@@ -552,11 +588,12 @@ end
 
 struct _StreamHandlerAdapter{F}
     handler::F
+    max_body_bytes::Int64
 end
 
-function _buffered_stream_request(stream::Stream)::Request
+function _buffered_stream_request(stream::Stream, max_body_bytes::Int64)::Request
     request = startread(stream)
-    body_bytes = read(stream)
+    body_bytes = _server_read(stream, max_body_bytes)
     body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
     return Request(
         request.method,
@@ -574,7 +611,7 @@ function _buffered_stream_request(stream::Stream)::Request
 end
 
 function (adapter::_StreamHandlerAdapter)(stream::Stream)
-    req = _buffered_stream_request(stream)
+    req = _buffered_stream_request(stream, adapter.max_body_bytes)
     resp = adapter.handler(req)
     resp isa Response || throw(ProtocolError("streamhandler request handler must return HTTP.Response"))
     response = resp::Response
@@ -601,12 +638,15 @@ function (adapter::_StreamHandlerAdapter)(stream::Stream)
 end
 
 """
-    streamhandler(request_handler) -> stream handler
+    streamhandler(request_handler; max_body_bytes=64 MiB) -> stream handler
 
 Return a stream handler, for `listen!`, that reads each request into memory,
-calls `request_handler(req)`, and writes the response it returns. A response
-body that is not in memory, such as a file from `fileserver`, is streamed.
+calls `request_handler(req)`, and writes the response it returns. A request
+body larger than `max_body_bytes` gets `413 Content Too Large`, as with
+[`serve!`](@ref); `0` means no limit. A response body that is not in memory,
+such as a file from `fileserver`, is streamed.
 """
-function streamhandler(handler)
-    return _StreamHandlerAdapter(handler)
+function streamhandler(handler; max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES)
+    max_body_bytes >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
+    return _StreamHandlerAdapter(handler, Int64(max_body_bytes))
 end
