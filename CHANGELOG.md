@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `WebSockets.listen!` logs an error that its handler or `check_origin`
+  callback throws (as `websocket server error`); before, the error was lost,
+  and the client only saw close status 1011. A malformed handshake request
+  gets 400 instead of a closed connection. ([#1482])
 - `servecontent`, `servefile` and `fileserver` scan `If-Match` and
   `If-None-Match` lists in linear time. A long list, such as several header
   lines joined into one value, cost time and memory quadratic in its length.
@@ -1278,3 +1282,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
 [#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1482]: https://github.com/JuliaWeb/HTTP.jl/issues/1482
