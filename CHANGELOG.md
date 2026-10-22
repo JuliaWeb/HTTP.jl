@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h2` through ALPN. ([#1385])
 
 ### Changed
+- Header names, hosts, and methods change case without copies: ASCII text
+  is converted byte by byte and a string already in the wanted case is kept,
+  instead of building each result through an `IOBuffer` (seven allocations
+  per call). An in-process HTTP/2 GET makes about 269 allocations instead of
+  449. Results are unchanged. ([#1493])
 - `streamhandler` limits the request body it reads into memory to
   `max_body_bytes`, a new keyword with the `serve!` default of 64 MiB (`0` for
   no limit); a larger body gets 413. Before, the body was read without any
@@ -1386,3 +1391,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1476]: https://github.com/JuliaWeb/HTTP.jl/issues/1476
 [#1477]: https://github.com/JuliaWeb/HTTP.jl/issues/1477
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
+[#1493]: https://github.com/JuliaWeb/HTTP.jl/issues/1493
