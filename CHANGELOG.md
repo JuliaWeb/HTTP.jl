@@ -124,6 +124,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- With `idle_timeout` set, the HTTP/2 server closes a connection that has had
+  no open streams for that long. A connection that had served a request never
+  idle-closed, and frames such as PING restarted the timer, so a client that
+  sent them kept an idle connection open. The idle period now starts when the
+  last stream goes. ([#1496])
 - The HTTP/2 server counts each HEADERS and CONTINUATION frame's 9-byte header
   against the request header block limit (`2 * max_header_bytes`). Empty
   CONTINUATION frames added nothing to the block, so a client could keep one
@@ -1506,3 +1511,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1493]: https://github.com/JuliaWeb/HTTP.jl/issues/1493
 [#1494]: https://github.com/JuliaWeb/HTTP.jl/issues/1494
 [#1495]: https://github.com/JuliaWeb/HTTP.jl/issues/1495
+[#1496]: https://github.com/JuliaWeb/HTTP.jl/issues/1496
