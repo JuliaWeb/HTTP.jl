@@ -3166,6 +3166,7 @@ function _build_bare_h2_connection()
         nothing,
         UInt8[],
         0,
+        0,
         Int64(0),
         UInt32(0),
         false,
@@ -3736,4 +3737,36 @@ end
         HTTP.@try_ignore NC.close(listener)
     end
     _wait_task_h2!(server_task)
+end
+
+@testset "HTTP/2 client counts frame headers against the header block limit" begin
+    # Empty CONTINUATION frames never grow the block's bytes, but each one costs
+    # its 9-byte frame header, so a peer cannot keep a block open forever.
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        conn.max_header_block_bytes = 85
+        empty_block!() = begin
+            HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(1), false, false, UInt8[]))
+            for _ in 1:7
+                HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+            end
+        end
+        # Nine frames (81 bytes) fit, and the next HEADERS frame starts a new count.
+        for _ in 1:2
+            empty_block!()
+            HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), true, UInt8[]))
+        end
+        empty_block!()
+        HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+        err = try
+            HT._process_incoming_frame!(conn, HT.ContinuationFrame(UInt32(1), false, UInt8[]))
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa HT.ProtocolError
+        @test occursin("header block exceeded maximum size", sprint(showerror, err))
+    finally
+        cleanup()
+    end
 end
