@@ -410,8 +410,14 @@ function _send_h2_server_window_updates!(
     @atomic send_state.conn_recv_window += nbytes
     deadline_ns = _h2_write_deadline_ns(send_state)
     try
-        _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), increment), deadline_ns)
-        stream_level && _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(stream_id, increment), deadline_ns)
+        bytes = _window_update_frames(stream_id, increment, stream_level)
+        lock(write_lock)
+        try
+            _set_write_deadline!(conn, deadline_ns)
+            _write_all_h2_server!(conn, bytes)
+        finally
+            unlock(write_lock)
+        end
     catch err
         if err isa EOFError || err isa IOPoll.NetClosingError || err isa SystemError
             return nothing
@@ -770,10 +776,9 @@ end
 # deadline, `0` for none: the deadline outlives the write, and another task's
 # expired deadline would fail this one.
 function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))::Nothing
-    io = IOBuffer()
-    write_frame!(io, frame)
+    bytes = _frame_bytes(frame)
     _set_write_deadline!(conn, write_deadline_ns)
-    _write_all_h2_server!(conn, take!(io))
+    _write_all_h2_server!(conn, bytes)
     return nothing
 end
 

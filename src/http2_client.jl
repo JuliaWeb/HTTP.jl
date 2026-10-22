@@ -264,17 +264,21 @@ function _set_h2_write_deadline!(conn::H2Connection, deadline_ns::Int64)::Nothin
 end
 
 function _write_frame_h2!(conn::H2Connection, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))
-    io = IOBuffer()
-    write_frame!(io, frame)
+    _write_frame_bytes_h2!(conn, _frame_bytes(frame), write_deadline_ns)
+    return nothing
+end
+
+function _write_frame_bytes_h2!(conn::H2Connection, bytes::Vector{UInt8}, write_deadline_ns::Int64)
     _set_h2_write_deadline!(conn, write_deadline_ns)
-    _write_all_h2!(conn, take!(io))
+    _write_all_h2!(conn, bytes)
     return nothing
 end
 
 function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))
+    bytes = _frame_bytes(frame)
     lock(conn.write_lock)
     try
-        _write_frame_h2!(conn, frame, write_deadline_ns)
+        _write_frame_bytes_h2!(conn, bytes, write_deadline_ns)
     finally
         unlock(conn.write_lock)
     end
@@ -1080,8 +1084,13 @@ function _send_window_updates!(conn::H2Connection, stream_id::UInt32, nbytes::In
     nbytes <= 0 && return nothing
     increment = UInt32(nbytes)
     try
-        _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(UInt32(0), increment))
-        stream_level && _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(stream_id, increment))
+        bytes = _window_update_frames(stream_id, increment, stream_level)
+        lock(conn.write_lock)
+        try
+            _write_frame_bytes_h2!(conn, bytes, Int64(0))
+        finally
+            unlock(conn.write_lock)
+        end
     catch err
         if err isa EOFError || err isa IOPoll.NetClosingError || err isa SystemError
             return nothing

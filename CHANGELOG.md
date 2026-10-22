@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of into a new vector, so receiving DATA no longer reallocates the
   buffer for every frame: a 1 MiB upload allocated 3.2 MiB in the server
   stream buffer and now allocates about 160 KiB. ([#1486])
+- HTTP/2 frames are serialized into one buffer without copying their
+  payload, a WINDOW_UPDATE pair goes out in one write, and frame headers and
+  WINDOW_UPDATE frames already buffered are parsed in place. A 1 MiB upload
+  made about 2,800 allocations in client and server together and now makes
+  about 1,160. The bytes sent are unchanged. ([#1487])
 - `HTTP.Headers` keeps each header name as the caller spelled it and matches
   names case-insensitively, as HTTP.jl 1.x did. HTTP.jl 2.0 through 2.7
   rewrote every name into `Content-Type` form on insertion, so a request header
@@ -1451,3 +1456,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1480]: https://github.com/JuliaWeb/HTTP.jl/issues/1480
 [#1483]: https://github.com/JuliaWeb/HTTP.jl/issues/1483
 [#1486]: https://github.com/JuliaWeb/HTTP.jl/issues/1486
+[#1487]: https://github.com/JuliaWeb/HTTP.jl/issues/1487
