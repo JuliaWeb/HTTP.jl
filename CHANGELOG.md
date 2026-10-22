@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for an unsendable response was stored with the handler's response, which
   widened it to abstract `Response` and made the response write a dynamic
   call. ([#1500])
+- `parse_multipart` compares the message's multipart subtype as a string. It
+  made a `Symbol` of it, and Symbols are never freed, so each distinct subtype
+  a client sent stayed in memory. ([#1501])
 
 ## [v2.12.0] - 2026-10-22
 
@@ -1540,3 +1543,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1496]: https://github.com/JuliaWeb/HTTP.jl/issues/1496
 [#1498]: https://github.com/JuliaWeb/HTTP.jl/issues/1498
 [#1500]: https://github.com/JuliaWeb/HTTP.jl/issues/1500
+[#1501]: https://github.com/JuliaWeb/HTTP.jl/issues/1501
