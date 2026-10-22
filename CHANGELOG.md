@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- A server listening with `sslconfig` runs each connection's TLS handshake in that connection's
+  task, with `readtimeout` (when set) as its time limit, instead of in the accept loop, where an
+  unfinished handshake kept every later connection waiting. ([#1481])
 
 ## [v1.11.0] - 2025-12-20
 ### Added
@@ -703,3 +707,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1119]: https://github.com/JuliaWeb/HTTP.jl/issues/1119
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
+[#1481]: https://github.com/JuliaWeb/HTTP.jl/issues/1481
