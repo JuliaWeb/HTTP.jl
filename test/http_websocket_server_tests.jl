@@ -156,6 +156,26 @@ end
     end
 end
 
+@testset "HTTP.WebSockets server closes a connection whose unread messages pass the cap" begin
+    # The handler never receives, so the client's messages queue up until they
+    # pass four times maxframesize (4 KiB here); the server then closes with 1008.
+    release = Base.Event()
+    server = W.listen!("127.0.0.1", 0; maxframesize = 1024) do ws
+        wait(release)
+    end
+    try
+        ws = W.open("ws://$(W.server_addr(server))/")
+        for _ in 1:5
+            W.send(ws, zeros(UInt8, 1024))
+        end
+        close(ws)
+        @test ws.closebody.code == 1008
+    finally
+        notify(release)
+        close(server)
+    end
+end
+
 @testset "HTTP.WebSockets server logs handler errors and answers bad handshakes with 400" begin
     logger = Test.TestLogger()
     server = Logging.with_logger(logger) do
@@ -215,6 +235,38 @@ end
     @test length(records) == 2
     @test any(record -> record.kwargs[:exception][1] isa ErrorException, records)
     @test any(record -> record.kwargs[:exception][1] isa HT.ProtocolError, records)
+end
+
+@testset "HTTP.WebSockets server timeouts bound the handshake and idle reads" begin
+    # A 1 ns timeout has passed before any byte arrives.
+    handshake_server = W.listen!(ws -> nothing, "127.0.0.1", 0; read_header_timeout_ns = 1)
+    try
+        sock = NC.connect(ND.HostResolver(), "tcp", W.server_addr(handshake_server))
+        try
+            @test isempty(read(sock)) # closed without waiting for a handshake
+        finally
+            NC.close(sock)
+        end
+    finally
+        close(handshake_server)
+    end
+    outcome = Channel{Any}(1)
+    idle_server = W.listen!("127.0.0.1", 0; idle_timeout_ns = 1) do ws
+        put!(outcome, try
+            W.receive(ws)
+        catch err
+            err
+        end)
+    end
+    try
+        ws = W.open("ws://$(W.server_addr(idle_server))/")
+        err = take!(outcome)
+        @test err isa W.WebSocketError && err.message.reason == "websocket read idle timeout"
+        close(ws)
+    finally
+        close(idle_server)
+    end
+    @test_throws ArgumentError W.listen!(ws -> nothing, "127.0.0.1", 0; idle_timeout = 1, idle_timeout_ns = 1)
 end
 
 @testset "HTTP.WebSockets server listen! over wss" begin

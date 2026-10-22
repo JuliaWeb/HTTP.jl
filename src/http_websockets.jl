@@ -85,11 +85,12 @@ import ..body_close!
 import ..read_request
 import ..write_response!
 import ..write_request!
+import .._wrap_client_transport_error
 import .._is_peer_close_error
 import .._is_transport_timeout
-import .._wrap_transport_timeout
 import ..Stream
 import .._clear_deadlines!
+import .._resolve_server_timeout_ns
 import .._wait_after_accept_error
 import ..@_spawn_interactive
 
@@ -173,6 +174,9 @@ mutable struct WebSocket{S,C}
     fragment_compressed::Bool
     closebody::Union{Nothing,CloseFrameBody}
     read_idle_timeout_ns::Int64
+    # Bytes of received messages queued in `readchannel` and not yet taken by
+    # `receive`; see `_enqueue_message!`.
+    @atomic queued_bytes::Int
 end
 
 function WebSocket(
@@ -211,6 +215,7 @@ function WebSocket(
         false,
         nothing,
         Int64(read_idle_timeout_ns),
+        0,
     )
     return ws
 end
@@ -278,8 +283,18 @@ function _close_channel!(ws::WebSocket)::Nothing
     return nothing
 end
 
+# Received messages wait in `readchannel` until `receive` takes them. A peer that
+# sends faster than the handler receives, or to a handler that never receives,
+# would grow that queue without bound, so the connection is closed with status
+# 1008 once the unread messages pass four times `maxframesize` bytes.
+struct _WebSocketQueueFullError <: Exception end
+
+@inline _ws_message_bytes(msg)::Int = msg isa String ? sizeof(msg::String) : length(msg::Vector{UInt8})
+
 function _enqueue_message!(ws::WebSocket, msg)::Nothing
     if isopen(ws.readchannel)
+        queued = @atomic ws.queued_bytes += _ws_message_bytes(msg)
+        queued > 4 * ws.maxframesize && throw(_WebSocketQueueFullError())
         @try_ignore begin
             put!(ws.readchannel, msg)
         end
@@ -494,6 +509,8 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             CloseFrameBody(1009, "message too large")
         elseif err isa WebSocketProtocolError
             CloseFrameBody(1002, "websocket protocol error")
+        elseif err isa _WebSocketQueueFullError
+            CloseFrameBody(1008, "too many unread messages")
         else
             CloseFrameBody(1006, "")
         end
@@ -665,11 +682,17 @@ Text messages are returned as `String`; binary messages are returned as
 function receive(ws::WebSocket)
     if ws.readclosed || !isopen(ws.readchannel)
         if isready(ws.readchannel)
-            return take!(ws.readchannel)
+            return _take_message!(ws)
         end
         throw(WebSocketError(ws.closebody === nothing ? CloseFrameBody(1006, "") : ws.closebody::CloseFrameBody))
     end
-    return take!(ws.readchannel)
+    return _take_message!(ws)
+end
+
+function _take_message!(ws::WebSocket)
+    msg = take!(ws.readchannel)
+    @atomic ws.queued_bytes -= _ws_message_bytes(msg)
+    return msg
 end
 
 """
@@ -1045,7 +1068,9 @@ connection with status 1000 when `f` returns, and returns the value of `f`.
 - `headers`, `query`, `subprotocols`: the handshake's headers, query
   parameters, and offered subprotocols.
 - `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
-  frame, and the most frames in one message.
+  frame, and the most frames in one message. Messages that have arrived but
+  not been received may hold up to four times `maxframesize` bytes; past that
+  the connection is closed with status 1008.
 - `compress = false`: offer permessage-deflate compression
   ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)), used when the server
   accepts it.
@@ -1106,8 +1131,9 @@ function open(
             kwargs...,
         )
     catch err
-        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "websocket handshake"))
-        rethrow()
+        # Raise the HTTP error types `request` raises, such as `ConnectError`.
+        wrapped = _wrap_client_transport_error(err, "websocket handshake")
+        wrapped === err ? rethrow() : throw(wrapped)
     end
     return ws
 end
@@ -1242,6 +1268,9 @@ mutable struct Server{F}
     maxfragmentation::Int
     read_buffer_bytes::Int
     compress::Bool
+    # Limits on reading the handshake request and on a session's silence; 0 is none.
+    read_header_timeout_ns::Int64
+    idle_timeout_ns::Int64
     lock::ReentrantLock
     listener::Union{Nothing,TCP.Listener,TLS.Listener}
     serve_task::Union{Nothing,Task}
@@ -1264,10 +1293,14 @@ function Server(;
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     compress::Bool=false,
+    read_header_timeout_ns::Integer=0,
+    idle_timeout_ns::Integer=0,
 ) where {F}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
     maxfragmentation > 0 || throw(ArgumentError("maxfragmentation must be > 0"))
     read_buffer_bytes > 0 || throw(ArgumentError("read_buffer_bytes must be > 0"))
+    read_header_timeout_ns >= 0 || throw(ArgumentError("read_header_timeout_ns must be >= 0"))
+    idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     return Server(
         String(network),
         String(address),
@@ -1279,6 +1312,8 @@ function Server(;
         Int(maxfragmentation),
         Int(read_buffer_bytes),
         compress,
+        Int64(read_header_timeout_ns),
+        Int64(idle_timeout_ns),
         ReentrantLock(),
         nothing,
         nothing,
@@ -1590,17 +1625,26 @@ function upgrade(
         compress=compress,
         server_secure=conn isa TLS.Conn,
     )
-    _write_ws_response!(conn, response)
-
-    # We have written the handshake response directly to the connection, so take
-    # ownership of it away from the normal HTTP/1 server loop: mark the stream's
-    # read/write sides closed (so the loop's post-handler closewrite/closeread
-    # become no-ops) and request connection close (so the loop does not try to
-    # read another request off what is now a WebSocket).
+    # The handshake response goes straight to the connection, so take it away
+    # from the HTTP/1 server loop first: record the response as the stream's
+    # committed head (so the loop sends no other response, even if this write
+    # fails, and logging reports this status), close the stream's read and
+    # write sides (so the loop's closewrite/closeread are no-ops), and ask for
+    # connection close (so the loop reads no request from what is now a
+    # WebSocket).
+    stream.response = response
+    @atomic :release stream.head_committed = true
     @atomic :release stream.response_started = true
     @atomic :release stream.write_closed = true
     @atomic :release stream.read_closed = true
-    stream.response.close = true
+    try
+        _write_ws_response!(conn, response)
+    catch err
+        stream.io_error = err
+        rethrow()
+    end
+    # Set after the write: `close` would add `Connection: close` to the 101.
+    response.close = true
 
     if response.status != 101
         _close_ws_server_conn!(conn)
@@ -1664,6 +1708,7 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
         subprotocol=header(response.headers, "Sec-WebSocket-Protocol"),
         maxframesize=server.maxframesize,
         maxfragmentation=server.maxfragmentation,
+        read_idle_timeout_ns=server.idle_timeout_ns,
         is_client=false,
         pmce=_server_pmce_context(request, server.compress),
     )
@@ -1702,6 +1747,8 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
     task = current_task()
     _track_conn!(server, conn, task)
     try
+        server.read_header_timeout_ns > 0 &&
+            _ws_arm_read_deadline!(conn, _ws_read_deadline_ns(server.read_header_timeout_ns))
         request = try
             read_request(_ConnReader(conn))
         catch err
@@ -1710,6 +1757,7 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
             @try_ignore _write_ws_response!(conn, Response(400, EmptyBody(); content_length=0, close=true))
             return nothing
         end
+        server.read_header_timeout_ns > 0 && _ws_arm_read_deadline!(conn, Int64(0))
         response = _upgrade_response(request, server)
         _write_ws_response!(conn, response)
         response.status == 101 || return nothing
@@ -1870,7 +1918,15 @@ address.
   ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)) from clients that offer
   it.
 - `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
-  frame, and the most frames in one message.
+  frame, and the most frames in one message. Messages that have arrived but
+  not been received may hold up to four times `maxframesize` bytes; past that
+  the connection is closed with status 1008.
+- `read_header_timeout`, `read_timeout`, `idle_timeout`: timeouts in seconds,
+  all off by default, as for `HTTP.serve!`; each also has a nanosecond form
+  ending in `_ns`. `read_header_timeout` limits the handshake, from accepting
+  the connection to the end of the upgrade request, and `idle_timeout` closes
+  a connection on which nothing arrives for that long. Both fall back to
+  `read_timeout` when they are `0`.
 
 WebSocket server tasks use Julia's `:interactive` thread pool. Start Julia with
 at least one interactive thread, such as `--threads=4,1`, to isolate server work
@@ -1889,8 +1945,17 @@ function listen!(
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     listenany::Bool=false,
     compress::Bool=false,
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    idle_timeout=nothing,
+    read_timeout_ns::Integer=Int64(0),
+    read_header_timeout_ns::Integer=Int64(0),
+    idle_timeout_ns::Integer=Int64(0),
 )::Server
     bind_port = listenany ? 0 : Int(port)
+    read_ns = _resolve_server_timeout_ns("read_timeout_ns", read_timeout_ns, "read_timeout", read_timeout)
+    header_ns = _resolve_server_timeout_ns("read_header_timeout_ns", read_header_timeout_ns, "read_header_timeout", read_header_timeout)
+    idle_ns = _resolve_server_timeout_ns("idle_timeout_ns", idle_timeout_ns, "idle_timeout", idle_timeout)
     server = Server(
         network="tcp",
         address=HostResolvers.join_host_port(host, bind_port),
@@ -1902,6 +1967,8 @@ function listen!(
         maxfragmentation=maxfragmentation,
         read_buffer_bytes=read_buffer_bytes,
         compress=compress,
+        read_header_timeout_ns=header_ns > 0 ? header_ns : read_ns,
+        idle_timeout_ns=idle_ns > 0 ? idle_ns : read_ns,
     )
     ready = Threads.Event(true)
     server.serve_task = @_spawn_interactive begin
