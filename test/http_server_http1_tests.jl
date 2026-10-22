@@ -1779,6 +1779,27 @@ end
     end
 end
 
+@testset "HTTP stream handler whose own response head is invalid gets a new 500" begin
+    # The error response does not reuse the handler's headers, which may be
+    # what failed.
+    logger = Test.TestLogger()
+    server = Logging.with_logger(logger) do
+        HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            HT.setheader(stream, "X-Bad" => "a\0b")
+            write(stream, "x")
+        end
+    end
+    try
+        raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        @test startswith(raw, "HTTP/1.1 500 Internal Server Error\r\n")
+        @test !occursin("X-Bad", raw)
+    finally
+        close(server)
+    end
+    @test any(record -> record.message == "server handler error", logger.logs)
+end
+
 @testset "HTTP stream byte I/O supports generic AbstractStrings and Chars" begin
     # Strings are written via unsafe_write; generic AbstractStrings and Chars
     # fall back to Base's per-byte path, which requires write(io, ::UInt8).
