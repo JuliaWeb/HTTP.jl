@@ -3738,3 +3738,42 @@ end
     end
     _wait_task_h2!(server_task)
 end
+
+@testset "HTTP/2 client handles GOAWAY with an error code like NO_ERROR" begin
+    # The peer covers this stream in its GOAWAY, then still answers it.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        _write_frame_to_conn!(conn, HT.GoAwayFrame(stream_id, UInt32(0xb), UInt8[]))   # ENHANCE_YOUR_CALM
+        block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, block))
+        _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("still answered"))))
+    end
+    try
+        h2_conn = HT.connect_h2!(address; secure = false)
+        try
+            request = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0)
+            response = HT.h2_roundtrip!(h2_conn, request)
+            @test response.status == 200
+            @test String(_read_all_h2_body(response.body)) == "still answered"
+        finally
+            close(h2_conn)
+        end
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A stream above `last_stream_id` was not processed: it fails with the
+    # retryable H2GoAwayError, whatever the error code.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        _write_frame_to_conn!(conn, HT.GoAwayFrame(UInt32(0), UInt32(0xb), UInt8[]))
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/")
+        @test err isa HT.H2GoAwayError
+        @test occursin("ENHANCE_YOUR_CALM", sprint(showerror, err))
+        @test HT.isrecoverable(err)
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end

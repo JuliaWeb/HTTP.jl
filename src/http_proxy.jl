@@ -50,6 +50,14 @@ struct _ProxyTarget
     pool_identity::Union{Nothing,UUID}
 end
 
+# `url` holds no credentials; printed configs, transports, and clients show only it.
+function Base.show(io::IO, target::_ProxyTarget)
+    print(io, "HTTP._ProxyTarget(", repr(target.url))
+    (target.authorization === nothing && target.username === nothing) || print(io, ", with credentials")
+    print(io, ")")
+    return nothing
+end
+
 """
     ProxyConfig(url; no_proxy=nothing)
     ProxyConfig(; http=nothing, https=nothing, all=nothing, no_proxy=nothing, env=false)
@@ -312,7 +320,7 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
     value = String(value)
     parsed = _parse_http_url(_proxy_url_as_http_url(value))
     hostport = _text_range_string(getfield(parsed, :source), getfield(parsed, :authority_range))
-    isempty(hostport) && throw(ArgumentError("proxy URL missing host: $value"))
+    isempty(hostport) && throw(ArgumentError("proxy URL missing host: $(_url_for_message(value))"))
 
     host = hostport
     port_text = ""
@@ -334,7 +342,7 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
             throw(ArgumentError("invalid proxy URL authority: $hostport"))
         end
     end
-    isempty(host) && throw(ArgumentError("proxy URL missing host: $value"))
+    isempty(host) && throw(ArgumentError("proxy URL missing host: $(_url_for_message(value))"))
     port = if isempty(port_text)
         _proxy_default_port(scheme)
     else
@@ -400,7 +408,9 @@ function _env_proxy(names::Vararg{String})::Union{Nothing,_ProxyTarget}
         isempty(strip(value)) && continue
         try
             return _parse_proxy_target(value)
-        catch
+        catch err
+            # The message leaves out the URL's credentials.
+            err isa ArgumentError && @warn "Ignoring the $name environment variable: $(sprint(showerror, err))" maxlog=1 _id=Symbol("HTTP_env_proxy_", name)
             return nothing
         end
     end
