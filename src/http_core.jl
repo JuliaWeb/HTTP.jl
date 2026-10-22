@@ -1131,6 +1131,8 @@ end
         break
     end
     hi < lo && return ""
+    # Most values have nothing to trim; return a String as is.
+    s isa String && lo == firstindex(s) && hi == lastindex(s) && return s
     return String(SubString(s, lo, hi))
 end
 
