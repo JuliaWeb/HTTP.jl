@@ -93,6 +93,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `serve!` answers a handler's response that cannot be sent with 500 and logs
+  it. Such a response has an unsupported `Transfer-Encoding`, a control
+  character in a header value, an invalid header name, reason phrase or
+  trailer, or a status code outside 100-999. Before, the connection closed with
+  no response and nothing logged. A response body that fails after the head is
+  sent is now logged as a handler error, and the body is left unfinished; before,
+  it ended the connection task silently. ([#1451])
+- The HTTP/2 client handles a `GOAWAY` with an error code, such as
+  `ENHANCE_YOUR_CALM`, like one with `NO_ERROR`: streams above
+  `last_stream_id` fail with the retryable `H2GoAwayError` and the others keep
+  their responses. It failed every stream on the connection. ([#1460])
+- `WebSockets.open` raises the error types `HTTP.request` raises, such as
+  `ConnectError` for a refused connection, instead of Reseau exceptions such
+  as `Reseau.HostResolvers.OpError`. ([#1456])
 - A TLS handshake that runs into the connect or request deadline raises
   `TimeoutError` with operation `tls_handshake`, retried like a connect
   timeout, or `request` when the request deadline came first. It raised
@@ -113,6 +127,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saw. `parse_multipart_form` and `parse_multipart` read the boundary
   parameter case-insensitively, in any position, and quoted, as .NET's
   `HttpClient` sends it; they matched only `multipart/...; boundary=X`. ([#1444])
+- The HTTP and WebSocket servers keep accepting connections after an OS error
+  from `accept`, such as running out of file descriptors (`EMFILE`). The error
+  is logged and accept is retried after a wait that grows from 5 ms to 1 s.
+  Previously the accept loop ended, with nothing logged, and the server
+  stopped accepting connections for good. ([#1443])
+- A WebSocket server rejects an unmasked frame, and a client a masked one, as
+  soon as it reads the frame header (RFC 6455 §5.1). Previously the frame was
+  delivered to the handler first and the connection was closed after it.
+  ([#1445])
+- `serve!` sends `100 Continue` before it reads a request body when the
+  request has `Expect: 100-continue`. Previously it never did, so such a client
+  waited for its own timeout (1 s for HTTP.jl and curl) before sending the
+  body. A body whose `Content-Length` is over `max_body_bytes` still gets 413
+  without the interim response. ([#1446])
+- The HTTP/2 server returns flow-control credit for every request byte it
+  drops: DATA padding, request bytes a handler leaves unread, and DATA for a
+  reset stream. That credit was lost, so a connection's receive window shrank
+  until uploads on it stalled. A handler that answered before the request body
+  ended left its stream counted against `max_concurrent_streams`, so later
+  streams were refused and `close(server)` waited forever; the stream is now
+  removed once its handler finishes. DATA beyond the advertised connection
+  window is a connection error instead of being buffered. ([#1452])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1255,5 +1291,12 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
 [#1441]: https://github.com/JuliaWeb/HTTP.jl/issues/1441
 [#1442]: https://github.com/JuliaWeb/HTTP.jl/issues/1442
+[#1443]: https://github.com/JuliaWeb/HTTP.jl/issues/1443
 [#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
+[#1445]: https://github.com/JuliaWeb/HTTP.jl/issues/1445
+[#1446]: https://github.com/JuliaWeb/HTTP.jl/issues/1446
+[#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
+[#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
+[#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
+[#1460]: https://github.com/JuliaWeb/HTTP.jl/issues/1460
