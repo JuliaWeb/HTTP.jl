@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the handler finishes. ([#1384])
 
 ### Fixed
+- `Form` escapes `"`, CR, and LF in multipart field names and file names as
+  browsers do (`%22`, `%0D`, `%0A`), and a part content type or transfer
+  encoding containing CR or LF throws `ArgumentError`. Such names ended the
+  quoted parameter or the header line and changed the parts the receiver
+  saw. `parse_multipart_form` and `parse_multipart` read the boundary
+  parameter case-insensitively, in any position, and quoted, as .NET's
+  `HttpClient` sends it; they matched only `multipart/...; boundary=X`. ([#1444])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
@@ -1233,3 +1240,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1434]: https://github.com/JuliaWeb/HTTP.jl/issues/1434
 [#1435]: https://github.com/JuliaWeb/HTTP.jl/issues/1435
 [#1436]: https://github.com/JuliaWeb/HTTP.jl/issues/1436
+[#1444]: https://github.com/JuliaWeb/HTTP.jl/issues/1444
