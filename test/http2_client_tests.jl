@@ -3803,7 +3803,8 @@ end
             HT.write_frame!(io, HT.DataFrame(stream_id, false, fill(UInt8('z'), 16_000)))
         end
         HT.write_frame!(io, HT.DataFrame(stream_id, true, UInt8[]))
-        _write_all_h2_tcp!(conn, take!(io))
+        # The client may close as soon as it sees the overrun, so this write can fail.
+        HTTP.@try_ignore _write_all_h2_tcp!(conn, take!(io))
         _drain_h2_conn_until_eof!(conn)
     end
     try
@@ -3819,9 +3820,13 @@ end
     # for the stream.
     for stream_level in (false, true)
         listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
-            _write_frame_to_conn!(conn, HT.WindowUpdateFrame(stream_level ? stream_id : UInt32(0), UInt32(0x7fff_ffff)))
-            _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
-            _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("ok"))))
+            io = IOBuffer()
+            HT.write_frame!(io, HT.WindowUpdateFrame(stream_level ? stream_id : UInt32(0), UInt32(0x7fff_ffff)))
+            HT.write_frame!(io, HT.HeadersFrame(stream_id, false, true, status_block(enc)))
+            HT.write_frame!(io, HT.DataFrame(stream_id, true, collect(codeunits("ok"))))
+            # One write, before the client can react; the client closes as soon as it
+            # sees the overflow, so a later write could fail.
+            HTTP.@try_ignore _write_all_h2_tcp!(conn, take!(io))
             _drain_h2_conn_until_eof!(conn)
         end
         try
