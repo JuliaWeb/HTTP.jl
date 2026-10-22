@@ -212,6 +212,36 @@ end
     end
 end
 
+@testset "HTTP server SSE stream closes when the client stops reading" begin
+    # The client never reads, so events wait in the stream until they pass the
+    # cap (16 MiB here); the next write closes the stream and throws IOError.
+    outcome = Channel{Any}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return HT.sse_stream(200; max_len = 1024) do stream
+            event = HT.SSEEvent("x" ^ 1000)
+            result = :all_written
+            try
+                for _ in 1:50_000 # ~50 MB: more than the cap plus socket buffers
+                    write(stream, event)
+                end
+            catch err
+                result = err
+            end
+            put!(outcome, result)
+        end
+    end
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: x\r\n\r\n")))
+        @test take!(outcome) isa Base.IOError
+    finally
+        NC.close(sock)
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+end
+
 @testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
     # Serialize an event offline by writing it into an SSEStream and reading the
     # framed bytes back out, so we can assert on the exact wire output.
