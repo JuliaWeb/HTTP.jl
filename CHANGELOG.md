@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.12.1] - 2026-10-22
+
 ### Fixed
 - An HTTP/2 server compiled with `juliac --trim=safe` compiles again when its
   handler returns three response body types, as Servo's does. The 500 response
@@ -1202,7 +1204,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...HEAD
+[v2.12.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...v2.12.1
 [v2.12.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.11.2...v2.12.0
 [v2.11.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.0.0...v2.11.2
 [v2.0.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v1.11.0...v2.0.0
