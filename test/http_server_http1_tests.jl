@@ -1077,6 +1077,29 @@ end
     end
 end
 
+@testset "HTTP streamhandler refuses a request body over max_body_bytes" begin
+    called = Channel{Int}(4)
+    handler = HT.streamhandler(; max_body_bytes = 4) do request
+        put!(called, length(request.body))
+        return HT.Response(200, "ok")
+    end
+    server = HT.listen!(handler, "127.0.0.1", 0; listenany = true)
+    try
+        fixed = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello")
+        @test startswith(fixed, "HTTP/1.1 413 Content Too Large\r\n")
+        chunked = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhey\r\n2\r\n!!\r\n0\r\n\r\n")
+        @test startswith(chunked, "HTTP/1.1 413 Content Too Large\r\n")
+        within = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nhell")
+        @test startswith(within, "HTTP/1.1 200 OK\r\n")
+        @test take!(called) == 4
+        @test !isready(called)
+    finally
+        _run_test_operation(() -> HT.forceclose(server))
+        _run_test_operation(() -> wait(server))
+    end
+    @test_throws ArgumentError HT.streamhandler(identity; max_body_bytes = -1)
+end
+
 @testset "HTTP streamhandler closes an unsent streaming body for HEAD, 204, and 304" begin
     # An SSE body without a producer never reaches EOF, so reading it to discard
     # it would hold the handler (and graceful close) forever. The body must be
