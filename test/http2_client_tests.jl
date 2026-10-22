@@ -2986,7 +2986,7 @@ end
         @test settings isa HT.SettingsFrame
         @test !(settings::HT.SettingsFrame).ack
         @test (settings::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1_048_576)]
+            Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0), UInt16(0x4) => UInt32(1_048_576)]
         wu = frames[2]
         @test wu isa HT.WindowUpdateFrame
         @test (wu::HT.WindowUpdateFrame).stream_id == UInt32(0)
@@ -3030,10 +3030,11 @@ end
         @test length(frames) == 2
         settings = frames[1]
         @test settings isa HT.SettingsFrame
-        # With default windows the client advertises an empty SETTINGS payload and
-        # sends no connection-level WINDOW_UPDATE: the frame after SETTINGS is the
+        # With default windows the client's SETTINGS only turns push off
+        # (SETTINGS_ENABLE_PUSH = 0, which defaults to on), and it sends no
+        # connection-level WINDOW_UPDATE: the frame after SETTINGS is the
         # client's SETTINGS ACK, never a WindowUpdateFrame.
-        @test isempty((settings::HT.SettingsFrame).settings)
+        @test (settings::HT.SettingsFrame).settings == Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0)]
         @test !(frames[2] isa HT.WindowUpdateFrame)
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
@@ -3074,7 +3075,7 @@ end
         # entry is emitted whenever it differs from the protocol default, not only when
         # it exceeds it.
         @test (settings::HT.SettingsFrame).settings ==
-            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(16_384)]
+            Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(0), UInt16(0x4) => UInt32(16_384)]
         # A window below the default cap keeps the default per-stream buffer cap.
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
@@ -3736,4 +3737,43 @@ end
         HTTP.@try_ignore NC.close(listener)
     end
     _wait_task_h2!(server_task)
+end
+
+@testset "HTTP/2 client handles GOAWAY with an error code like NO_ERROR" begin
+    # The peer covers this stream in its GOAWAY, then still answers it.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        _write_frame_to_conn!(conn, HT.GoAwayFrame(stream_id, UInt32(0xb), UInt8[]))   # ENHANCE_YOUR_CALM
+        block = HT.encode_header_block(enc, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+        _write_frame_to_conn!(conn, HT.HeadersFrame(stream_id, false, true, block))
+        _write_frame_to_conn!(conn, HT.DataFrame(stream_id, true, collect(codeunits("still answered"))))
+    end
+    try
+        h2_conn = HT.connect_h2!(address; secure = false)
+        try
+            request = HT.Request("GET", "/"; host = address, body = HT.EmptyBody(), content_length = 0)
+            response = HT.h2_roundtrip!(h2_conn, request)
+            @test response.status == 200
+            @test String(_read_all_h2_body(response.body)) == "still answered"
+        finally
+            close(h2_conn)
+        end
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A stream above `last_stream_id` was not processed: it fails with the
+    # retryable H2GoAwayError, whatever the error code.
+    listener, address, server_task = _h2_serve_scripted_response() do conn, stream_id, enc
+        _write_frame_to_conn!(conn, HT.GoAwayFrame(UInt32(0), UInt32(0xb), UInt8[]))
+    end
+    try
+        err = _h2_scripted_roundtrip_error(address, "/")
+        @test err isa HT.H2GoAwayError
+        @test occursin("ENHANCE_YOUR_CALM", sprint(showerror, err))
+        @test HT.isrecoverable(err)
+        _wait_task_h2!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
 end
