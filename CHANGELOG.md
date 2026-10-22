@@ -114,8 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (hosts are not percent-decoded), a bracketed host that is not an IPv6
   address, or a `URI` whose path does not start with `/` raises
   `ArgumentError`; a redirect to such a location raises `ProtocolError`.
-  Special characters in URL credentials must be percent-encoded. `URI` schemes
-  match case-insensitively, and URL parse errors leave out the userinfo. ([#1447])
+  Special characters in URL credentials must be percent-encoded, such as a
+  Windows `DOMAIN\user` name as `DOMAIN%5Cuser`; a proxy environment variable
+  that does not parse is skipped with a warning. `URI` schemes match
+  case-insensitively, and URL parse errors leave out the userinfo. ([#1447])
 - The HTTP/1 connection pool no longer hands out an idle connection the
   server has already closed. Servers such as MinIO and many Go services close
   idle keep-alive connections without a `Keep-Alive` hint; the pool now peeks
