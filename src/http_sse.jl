@@ -175,9 +175,11 @@ function write(stream::SSEStream, event::SSEEvent)::Int
         bytes = take!(buf)
         length(bytes) <= stream.max_len || throw(ArgumentError("serialized SSE event exceeds max_len"))
         # A client that stops reading must not make the server keep every event.
-        # The floor keeps a burst of small events from tripping a small max_len.
+        # The floor keeps a burst of small events from tripping a small max_len;
+        # a max_len too large for `4 * max_len` to fit an `Int` means no cap.
         waiting = bytesavailable(stream.buffer)
-        if waiting + length(bytes) > max(4 * stream.max_len, _DEFAULT_SSE_STREAM_MAX_LEN)
+        cap = stream.max_len > typemax(Int) ÷ 4 ? typemax(Int) : 4 * stream.max_len
+        if waiting + length(bytes) > max(cap, _DEFAULT_SSE_STREAM_MAX_LEN)
             close(stream)
             throw(Base.IOError("SSE client is not reading: $(waiting) bytes of events are waiting", 0))
         end

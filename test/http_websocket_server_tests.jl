@@ -176,6 +176,24 @@ end
     end
 end
 
+@testset "HTTP.WebSockets maxframesize = typemax(Int) leaves the unread cap off" begin
+    # Four times typemax(Int) does not fit an Int; the cap must not wrap negative
+    # and close every connection on its first message (#1508).
+    server = W.listen!("127.0.0.1", 0; maxframesize = typemax(Int)) do ws
+        for msg in ws
+            W.send(ws, msg)
+        end
+    end
+    try
+        W.open("ws://$(W.server_addr(server))/"; maxframesize = typemax(Int)) do ws
+            W.send(ws, "hello")
+            @test W.receive(ws) == "hello"
+        end
+    finally
+        close(server)
+    end
+end
+
 @testset "HTTP.WebSockets server logs handler errors and answers bad handshakes with 400" begin
     logger = Test.TestLogger()
     server = Logging.with_logger(logger) do
