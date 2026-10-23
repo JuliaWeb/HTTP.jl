@@ -242,6 +242,14 @@ end
     end
 end
 
+@testset "HTTP server SSE max_len = typemax(Int) leaves the unread cap off" begin
+    # Four times typemax(Int) does not fit an Int; the cap must not wrap and
+    # fall back to the 16 MiB floor.
+    stream = HT.SSEStream(; max_len = typemax(Int))
+    @test write(stream, HT.SSEEvent("x" ^ (17 * 1024 * 1024))) > 17 * 1024 * 1024
+    close(stream)
+end
+
 @testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
     # Serialize an event offline by writing it into an SSEStream and reading the
     # framed bytes back out, so we can assert on the exact wire output.

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A WebSocket with `maxframesize = typemax(Int)` (as Bonito.jl and WGLMakie
+  use) no longer closes with status 1008 "too many unread messages" on its
+  first incoming message. The unread-message cap, four times `maxframesize`,
+  overflowed to a negative number; a `maxframesize` that large now leaves the
+  cap off. `SSEStream(; max_len = typemax(Int))` had the same overflow and
+  capped unread events at 16 MiB. ([#1508])
+
 ## [v2.12.1] - 2026-10-22
 
 ### Fixed
@@ -1547,3 +1555,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1498]: https://github.com/JuliaWeb/HTTP.jl/issues/1498
 [#1500]: https://github.com/JuliaWeb/HTTP.jl/issues/1500
 [#1501]: https://github.com/JuliaWeb/HTTP.jl/issues/1501
+[#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508

@@ -286,7 +286,9 @@ end
 # Received messages wait in `readchannel` until `receive` takes them. A peer that
 # sends faster than the handler receives, or to a handler that never receives,
 # would grow that queue without bound, so the connection is closed with status
-# 1008 once the unread messages pass four times `maxframesize` bytes.
+# 1008 once the unread messages pass four times `maxframesize` bytes. A
+# `maxframesize` too large for that product to fit an `Int` (such as
+# `typemax(Int)`) leaves the queue uncapped.
 struct _WebSocketQueueFullError <: Exception end
 
 @inline _ws_message_bytes(msg)::Int = msg isa String ? sizeof(msg::String) : length(msg::Vector{UInt8})
@@ -294,7 +296,8 @@ struct _WebSocketQueueFullError <: Exception end
 function _enqueue_message!(ws::WebSocket, msg)::Nothing
     if isopen(ws.readchannel)
         queued = @atomic ws.queued_bytes += _ws_message_bytes(msg)
-        queued > 4 * ws.maxframesize && throw(_WebSocketQueueFullError())
+        cap = ws.maxframesize > typemax(Int) ÷ 4 ? typemax(Int) : 4 * ws.maxframesize
+        queued > cap && throw(_WebSocketQueueFullError())
         @try_ignore begin
             put!(ws.readchannel, msg)
         end
