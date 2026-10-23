@@ -1,6 +1,7 @@
 # HTTP client transport, connection pooling, and low-level HTTP/1 roundtrip APIs.
 
 using CodecZlib
+import TranscodingStreams
 using Reseau.TCP
 using Reseau.HostResolvers
 using Reseau.TLS

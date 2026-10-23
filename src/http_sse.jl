@@ -658,11 +658,8 @@ function _consume_incoming_sse!(
     max_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
 )::Nothing
     raw_stream = Base.BufferStream()
-    reader = if _should_decompress_response(incoming.head.headers, decompress)
-        CodecZlib.GzipDecompressorStream(raw_stream)
-    else
-        raw_stream
-    end
+    encoding = _response_content_encoding(incoming.head.headers, decompress)
+    reader = encoding === nothing ? raw_stream : _decompressor_stream(raw_stream, encoding)
     cancelled = Ref(false)
     producer = Threads.@spawn begin
         try
