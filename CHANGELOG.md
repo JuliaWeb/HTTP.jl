@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Responses with `Content-Encoding: deflate` whose body is raw DEFLATE data,
+  as servers built on .NET's `DeflateStream` send, now decode instead of
+  failing with `ZlibError("incorrect header check")`. HTTP.jl 2.x asks for
+  `deflate` where 1.x asked only for `gzip`, so such servers started sending
+  it. The zlib form RFC 9110 specifies still decodes, and server-sent event
+  streams now decode `deflate` the same way. ([#1511])
+
 ## [v2.12.2] - 2026-10-23
 
 ### Fixed
@@ -1559,3 +1567,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1500]: https://github.com/JuliaWeb/HTTP.jl/issues/1500
 [#1501]: https://github.com/JuliaWeb/HTTP.jl/issues/1501
 [#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508
+[#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
