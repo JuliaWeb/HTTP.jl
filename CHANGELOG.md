@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.12.2] - 2026-10-23
+
 ### Fixed
 - A WebSocket with `maxframesize = typemax(Int)` (as Bonito.jl and WGLMakie
   use) no longer closes with status 1008 "too many unread messages" on its
@@ -1212,7 +1214,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.2...HEAD
+[v2.12.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...v2.12.2
 [v2.12.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...v2.12.1
 [v2.12.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.11.2...v2.12.0
 [v2.11.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.0.0...v2.11.2
