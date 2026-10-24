@@ -2099,6 +2099,38 @@ end
     end
 end
 
+@testset "HTTP client decodes raw DEFLATE sent as Content-Encoding: deflate" begin
+    # .NET's DeflateStream (used by Windows/IIS-hosted APIs) sends raw DEFLATE
+    # without the zlib wrapper RFC 9110 calls for.
+    text = "data: raw-deflate\n\n"
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        codec = req.target == "/zlib" ? HTTP.CodecZlib.ZlibCompressor : HTTP.CodecZlib.DeflateCompressor
+        headers = ["Content-Encoding" => "deflate", "Content-Type" => "text/event-stream"]
+        return HT.Response(200; headers = headers, body = transcode(codec, collect(codeunits(text))))
+    end
+    base_url = "http://127.0.0.1:$(HT.port(server))"
+    try
+        for protocol in (:h1, :h2)
+            @test String(HT.get("$(base_url)/raw"; protocol).body) == text
+            @test String(HT.get("$(base_url)/zlib"; protocol).body) == text
+            sink = IOBuffer()
+            HT.get("$(base_url)/raw"; protocol, response_stream = sink)
+            @test String(take!(sink)) == text
+            streamed = Ref("")
+            HT.open("GET", "$(base_url)/raw"; protocol) do stream
+                HT.startread(stream)
+                streamed[] = String(read(stream))
+            end
+            @test streamed[] == text
+            events = String[]
+            HT.get("$(base_url)/raw"; protocol, sse_callback = event -> push!(events, event.data))
+            @test events == ["raw-deflate"]
+        end
+    finally
+        close(server)
+    end
+end
+
 @testset "HTTP byte-buffer response_stream sinks only receive 2xx bodies" begin
     error_body = repeat("<Error>NoSuchKey</Error>", 4)
     huge = repeat("x", HT._MAX_NON_2XX_BODY_BYTES + 1)
