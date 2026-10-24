@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.12.3] - 2026-10-23
+
 ### Fixed
 - Responses with `Content-Encoding: deflate` whose body is raw DEFLATE data,
   as servers built on .NET's `DeflateStream` send, now decode instead of
@@ -1222,7 +1224,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.2...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.3...HEAD
+[v2.12.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.2...v2.12.3
 [v2.12.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...v2.12.2
 [v2.12.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...v2.12.1
 [v2.12.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.11.2...v2.12.0
