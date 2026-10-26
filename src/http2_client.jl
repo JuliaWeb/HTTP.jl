@@ -1797,12 +1797,12 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
             saw_regular && throw(ProtocolError("HTTP/2 pseudo-headers must precede regular headers"))
             if name == ":status"
                 status === nothing || throw(ProtocolError("duplicate HTTP/2 :status pseudo-header"))
-                parsed_status = try
-                    parse(Int, normalized)
-                catch
+                # Three digits (RFC 9110 Section 15), so no sign, space, or
+                # out-of-range value parses; the raw value, as surrounding
+                # whitespace is not allowed either.
+                (ncodeunits(value) == 3 && all(c -> '0' <= c <= '9', value) && value[1] != '0') ||
                     throw(ProtocolError("malformed HTTP/2 :status pseudo-header"))
-                end
-                status = parsed_status
+                status = parse(Int, value)
             else
                 throw(ProtocolError("unsupported HTTP/2 response pseudo-header $(repr(name))"))
             end
@@ -1810,7 +1810,10 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
         end
         saw_regular = true
         _valid_header_field_name(name) || throw(ProtocolError("invalid HTTP/2 header field name: $(repr(name))"))
-        if _is_h2_connection_specific_header(name) || name == "transfer-encoding" || name == "te"
+        # TE is allowed only as "trailers" (RFC 9113 Section 8.2.2, RFC 9114
+        # Section 4.2).
+        if _is_h2_connection_specific_header(name) || name == "transfer-encoding" ||
+           (name == "te" && _ascii_lowercase_string(_trim_http_ows(normalized)) != "trailers")
             throw(ProtocolError("forbidden HTTP/2 response header $(repr(name))"))
         end
         push!(out, canonical_header_key(name) => normalized)

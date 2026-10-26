@@ -44,6 +44,12 @@ function _retryable_request_error(err::Exception)::Bool
         # GOAWAY (stream_id > last_stream_id), was not processed by the server.
         current isa H2StreamResetError && return (current::H2StreamResetError).error_code == _H2_REFUSED_STREAM
         current isa H2GoAwayError && return true
+        # RFC 9114 Sections 4.1.1 and 5.2: the HTTP/3 counterparts.
+        current isa H3StreamResetError && return (current::H3StreamResetError).code == _H3_REQUEST_REJECTED
+        current isa H3GoAwayError && return true
+        # A QUIC connection that closed under the request, the HTTP/3 form of
+        # a reset or closed TCP connection.
+        current isa QUIC.ConnectionError && return true
         current isa EOFError && return true
         current isa SystemError && return true
         current isa ParseError && return true
@@ -95,15 +101,15 @@ _retryable_request_error(err::RequestRetryError)::Bool = _retryable_request_erro
 
 Return `true` when `err` is a transient failure that the client's default retry
 rules retry: a connection that was reset or closed early, a socket error, a
-malformed response, a connect or TLS handshake timeout, or an HTTP/2 stream the
-server refused. An expired deadline and other errors return `false`. `err` may
+malformed response, a connect or TLS handshake timeout, or an HTTP/2 or HTTP/3
+request the server refused or will not process after GOAWAY. An expired deadline and other errors return `false`. `err` may
 also be the [`RequestRetryError`](@ref) that a `retry_if` function receives.
 """
 isrecoverable(err::Exception)::Bool = _retryable_request_error(err)
 
 # RFC 9113 §8.7: requests on streams reset with REFUSED_STREAM or rejected by
 # GOAWAY are guaranteed unprocessed, hence safe to retry regardless of method
-# idempotency. The replayable-body gate in `_should_retry_request_attempt`
+# idempotency; so are HTTP/3 requests rejected the same ways. The replayable-body gate in `_should_retry_request_attempt`
 # still applies.
 function _h2_guaranteed_unprocessed(err)::Bool
     current = err
@@ -113,7 +119,8 @@ function _h2_guaranteed_unprocessed(err)::Bool
             continue
         end
         current isa H2StreamResetError && return (current::H2StreamResetError).error_code == _H2_REFUSED_STREAM
-        return current isa H2GoAwayError
+        current isa H2GoAwayError && return true
+        return _h3_guaranteed_unprocessed(current)
     end
 end
 

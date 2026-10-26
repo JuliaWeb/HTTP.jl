@@ -4,9 +4,9 @@ CurrentModule = HTTP
 
 # Protocols Guide
 
-This page covers WebSockets and HTTP/2. HTTP/2 needs no separate API: the
-client and server functions from the other guides use it when both sides
-support it.
+This page covers WebSockets, HTTP/2, and HTTP/3. HTTP/2 and HTTP/3 need no
+separate API: the client and server functions from the other guides use them
+when both sides support them.
 
 ## WebSockets
 
@@ -130,3 +130,29 @@ end
 ```
 
 Both windows default to 65,535 bytes.
+
+## HTTP/3
+
+The client can send requests over HTTP/3, which runs on QUIC over UDP instead
+of TCP. It is off by default. With `prefer_http3 = true`, a client uses HTTP/3
+for an `https://` origin once one of the origin's responses has advertised it
+in an `Alt-Svc` header, as most large sites do; the first request to an origin
+still goes over TCP. `protocol = :h3` on a single request uses HTTP/3 without
+waiting for an advertisement:
+
+```julia
+client = HTTP.Client(prefer_http3 = true)
+HTTP.get(client, "https://cloudflare-quic.com")         # HTTP/2; learns of HTTP/3
+resp = HTTP.get(client, "https://cloudflare-quic.com")  # HTTP/3
+resp.version                                            # v"3.0.0"
+close(client)
+
+HTTP.get("https://www.google.com"; protocol = :h3)
+```
+
+When a QUIC connection to an advertised origin cannot be made, for example
+because a firewall drops UDP, the request goes over TCP instead and the client
+leaves that origin's HTTP/3 alternative alone for 5 minutes. HTTP/3 is never
+used through a proxy. The client takes its TLS settings from the transport's
+`tls_config`, negotiating `h3` with ALPN. HTTP.jl servers do not speak HTTP/3
+yet.
