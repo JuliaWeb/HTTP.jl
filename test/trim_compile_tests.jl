@@ -199,6 +199,7 @@ end
             ("http_trim_client_h2_wire.jl", "http_trim_client_h2_wire"),
             ("http_trim_client_h2_tcp_roundtrip.jl", "http_trim_client_h2_tcp_roundtrip"),
             ("http_trim_client_h2_roundtrip.jl", "http_trim_client_h2_roundtrip"),
+            ("http_trim_client_h3_roundtrip.jl", "http_trim_client_h3_roundtrip"),
             ("http_trim_client_server.jl", "http_trim_client_server"),
             ("http_trim_cookies.jl", "http_trim_cookies"),
             ("http_trim_sse.jl", "http_trim_sse"),

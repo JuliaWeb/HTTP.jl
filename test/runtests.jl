@@ -88,6 +88,12 @@ test_files = [
     "http2_client_tests.jl",
     "http2_refused_stream_retry_tests.jl",
     "http2_server_tests.jl",
+    "qpack_tests.jl",
+    "http3_frame_tests.jl",
+    "http_alt_svc_tests.jl",
+    "http3_client_tests.jl",
+    "http3_go_tests.jl",
+    "http3_integration_tests.jl",
     "http_integration_tests.jl",
     "http_tls_distrust_tests.jl",
     "http_parity_tests.jl",
@@ -97,6 +103,10 @@ test_files = [
 
 for test_file in test_files
     _run_test_file(test_file)
+end
+
+if get(ENV, "HTTP_RUN_LIVE_HTTP3", "") == "1"
+    _run_test_file("http3_live_tests.jl")
 end
 
 if get(ENV, "HTTP_RUN_WEBSOCKET_AUTOBAHN", "") == "1"

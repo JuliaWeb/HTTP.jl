@@ -1,8 +1,9 @@
 """
     HTTP
 
-An HTTP client and server library for HTTP/1.1 and HTTP/2, with WebSockets and
-server-sent events. Reseau provides the TCP, DNS, and TLS layers.
+An HTTP client and server library for HTTP/1.1 and HTTP/2, with an opt-in
+HTTP/3 client, WebSockets, and server-sent events. Reseau provides the TCP,
+DNS, TLS, and QUIC layers.
 
 - `request`, and `get`, `post`, `put`, `patch`, `delete`, `head`, `options`,
   and `query`, send a request and return the response.
@@ -40,8 +41,12 @@ include("http_core.jl")
 include("http_client_timeouts.jl")
 include("http1.jl")
 include("hpack.jl")
+include("qpack.jl")
+include("http3.jl")
 include("http2.jl")
 include("http2_client.jl")
+include("http3_client.jl")
+include("http_alt_svc.jl")
 include("http_sniff.jl")
 include("http_forms.jl")
 include("http_cookies.jl")

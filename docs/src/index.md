@@ -5,9 +5,10 @@ CurrentModule = HTTP
 # HTTP.jl
 
 HTTP.jl is an HTTP client and server library for Julia. It speaks HTTP/1.1 and
-HTTP/2, streams request and response bodies, and supports WebSockets and
-server-sent events. [Reseau](https://github.com/JuliaServices/Reseau.jl)
-provides the TCP, DNS, and TLS layers.
+HTTP/2, and its client can opt in to HTTP/3. It streams request and response
+bodies, and supports WebSockets and server-sent events.
+[Reseau](https://github.com/JuliaServices/Reseau.jl) provides the TCP, DNS,
+TLS, and QUIC layers.
 
 ## Quick Start
 
@@ -34,7 +35,7 @@ returns the one it chose.
   clients, request bodies, retries, and timeouts.
 - The [Server guide](guides/server.md) covers request and stream handlers,
   routing, static files, server-sent events, and server timeouts.
-- The [Protocols guide](guides/protocols.md) covers WebSockets and HTTP/2.
+- The [Protocols guide](guides/protocols.md) covers WebSockets, HTTP/2, and HTTP/3.
 - The [Migration guide](guides/migration-1x.md) explains how to update code
   written for HTTP.jl 1.x.
 - The [API reference](api/reference.md) lists every public name with its

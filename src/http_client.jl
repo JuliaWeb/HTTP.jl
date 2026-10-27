@@ -8,10 +8,20 @@
 const _RESPONSE_COPY_BUFFER_BYTES = 64 * 1024
 const _RESPONSE_SMALL_COPY_BUFFER_BYTES = 8 * 1024
 
+# Every response `_do_incoming!` can produce. Inference widens a merge of more
+# than three types to the abstract `_IncomingResponse`, so variables holding
+# one declare this union and calls on them split over it.
+const _AnyIncomingResponse = Union{
+    _IncomingResponse{H1Body},
+    _IncomingResponse{H2Body},
+    _IncomingResponse{H3Body},
+    _IncomingResponse{EmptyBody},
+}
+
 """
     Client(; transport=Transport(proxy=ProxyFromEnvironment()), cookiejar=CookieJar(),
            max_redirects=10, check_redirect=nothing, prefer_http2=true,
-           http2_settings=HTTP2Settings(), default_headers=[], default_query=nothing,
+           prefer_http3=false, http2_settings=HTTP2Settings(), default_headers=[], default_query=nothing,
            default_basicauth=nothing, connect_timeout=0, request_timeout=0,
            response_header_timeout=0, read_idle_timeout=0, write_idle_timeout=0,
            local_addr=nothing)
@@ -33,6 +43,11 @@ throws `ArgumentError`.
   speak only HTTP/1.1, the client remembers that until
   [`close_idle_connections!`](@ref). `protocol = :h2` on a call always tries
   HTTP/2.
+- `prefer_http3`: use HTTP/3 over QUIC for `https://` origins that advertise it
+  in an `Alt-Svc` response header, once the client has seen one. When a QUIC
+  connection cannot be made the request goes over TCP, and the origin's
+  HTTP/3 alternative is left unused for 5 minutes. HTTP/3 is never used
+  through a proxy. `protocol = :h3` on a call always uses HTTP/3.
 - `http2_settings`: the [`HTTP2Settings`](@ref) for HTTP/2 connections.
 - `default_headers`: headers added to each request that does not set them.
 - `default_query`: query parameters added to each URL; the call's `query`
@@ -61,6 +76,13 @@ mutable struct Client{CR}
     # `_use_h2` must not serialize behind those dials.
     h1_origins_lock::ReentrantLock
     h1_origins::Set{String}
+    prefer_http3::Bool
+    # One HTTP/3 connection per origin, and the origins' Alt-Svc alternatives.
+    h3_lock::ReentrantLock
+    h3_conns::Dict{String,H3Connection}
+    # One lock per origin, held while dialing it.
+    h3_dials::Dict{String,ReentrantLock}
+    alt_svc::_AltSvcCache
     default_headers::Headers
     default_query::Union{Nothing,Vector{Pair{String,String}}}
     default_basicauth::Any
@@ -84,7 +106,9 @@ Fields:
 - `url`: absolute request URL for the attempt
 - `attempt`: 1-based request attempt number
 - `redirect_count`: number of redirects already followed before this attempt
-- `protocol`: `:h1` or `:h2` for the selected wire protocol
+- `protocol`: `:h1`, `:h2`, or `:h3` for the selected wire protocol. A request
+  whose QUIC connection cannot be made after `:h3` was selected goes over TCP
+  without another event.
 """
 struct RequestEvent <: ClientEvent
     request::Request
@@ -364,6 +388,7 @@ function Client(;
     cookiejar::Union{Nothing,CookieJar}=CookieJar(),
     max_redirects::Integer=10,
     prefer_http2::Bool=true,
+    prefer_http3::Bool=false,
     http2_settings::HTTP2Settings=HTTP2Settings(),
     default_headers=Pair{String,String}[],
     default_query=nothing,
@@ -396,6 +421,11 @@ function Client(;
         Dict{String,Vector{H2Connection}}(),
         ReentrantLock(),
         Set{String}(),
+        prefer_http3,
+        ReentrantLock(),
+        Dict{String,H3Connection}(),
+        Dict{String,ReentrantLock}(),
+        _AltSvcCache(),
         _normalize_headers_input(default_headers),
         _normalize_default_query(default_query),
         default_basicauth,
@@ -413,6 +443,7 @@ function Base.show(io::IO, client::Client)
     print(io, "HTTP.Client(", isopen(client) ? "open" : "closed",
         ", max_redirects=", client.max_redirects,
         ", prefer_http2=", client.prefer_http2,
+        ", prefer_http3=", client.prefer_http3,
         ", cookiejar=", client.cookiejar === nothing ? "nothing" : "CookieJar",
         ", default_headers=", length(client.default_headers),
         ", default_query=", client.default_query === nothing ? 0 : length(client.default_query::Vector{Pair{String,String}}),
@@ -486,6 +517,15 @@ function Base.close(client::Client)
         empty!(client.h2_conns)
     finally
         unlock(client.h2_lock)
+    end
+    lock(client.h3_lock)
+    try
+        for (_, conn) in client.h3_conns
+            @try_ignore close(conn)
+        end
+        empty!(client.h3_conns)
+    finally
+        unlock(client.h3_lock)
     end
     return nothing
 end
@@ -651,7 +691,8 @@ end
 function _use_h2(client::Client, plan::_ProxyPlan, secure::Bool, protocol::Symbol)::Bool
     protocol == :h1 && return false
     protocol == :h2 && return true
-    protocol == :auto || throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
+    protocol == :h3 && return false
+    protocol == :auto || throw(ArgumentError("protocol must be :auto, :h1, :h2, or :h3"))
     secure || return false
     client.prefer_http2 || return false
     # If the user pinned the transport's ALPN list to a non-empty set that does
@@ -680,6 +721,96 @@ function _cache_h1_origin!(client::Client, key::String)::Nothing
     finally
         unlock(client.h1_origins_lock)
     end
+    return nothing
+end
+
+# How long a QUIC handshake may take before an `:auto` request falls back to
+# TCP, when no connect timeout is shorter.
+const _H3_FALLBACK_CONNECT_TIMEOUT_NS = Int64(10_000_000_000)
+
+# Where this attempt opens HTTP/3: the origin's Alt-Svc alternative when the
+# client prefers HTTP/3, the origin itself for `protocol = :h3`, or `nothing`
+# to use TCP.
+function _h3_target(client::Client, plan::_ProxyPlan, secure::Bool, protocol::Symbol, address::String)::Union{Nothing,String}
+    if protocol == :h3
+        secure || throw(ArgumentError("protocol = :h3 requires an https:// URL"))
+        plan.mode == _ProxyPlanMode.DIRECT || throw(ArgumentError("HTTP/3 cannot be used through a proxy"))
+        return address
+    end
+    protocol == :auto || return nothing
+    (secure && client.prefer_http3 && plan.mode == _ProxyPlanMode.DIRECT) || return nothing
+    return _alt_svc_lookup(client.alt_svc, address, Int64(time_ns()))
+end
+
+# The pooled HTTP/3 connection to the origin `address`, if it can take a
+# request, removing it from the pool otherwise.
+function _pooled_h3_conn(client::Client, address::String)::Union{Nothing,H3Connection}
+    retired = nothing
+    lock(client.h3_lock)
+    try
+        existing = get(client.h3_conns, address, nothing)
+        existing === nothing && return nothing
+        conn = existing::H3Connection
+        if _h3_conn_available(conn) && isopen(conn) &&
+           !_h3_conn_idle_expired(conn, client.transport.idle_timeout_ns, Int64(time_ns()))
+            return conn
+        end
+        delete!(client.h3_conns, address)
+        retired = conn
+    finally
+        unlock(client.h3_lock)
+    end
+    # Requests still in progress on it finish first.
+    _h3_retire!(retired::H3Connection)
+    return nothing
+end
+
+# The pooled HTTP/3 connection to the origin `address`, or a new one to
+# `connect_address`. Dialing holds a lock for that origin only, so
+# concurrent first requests to it share one connection while other origins
+# are not held up.
+function _acquire_h3_conn!(
+    client::Client,
+    address::String,
+    connect_address::String,
+    request::Request,
+    server_name::String,
+    fallback::Bool,
+)::H3Connection
+    conn = _pooled_h3_conn(client, address)
+    conn === nothing || return conn::H3Connection
+    base = client.transport.host_resolver
+    host_resolver = _request_connect_host_resolver(base, request)
+    deadline_ns = _request_connect_phase_deadline_ns(base, request)
+    fallback && (deadline_ns = _min_nonzero_ns(deadline_ns, _phase_deadline_ns(_H3_FALLBACK_CONNECT_TIMEOUT_NS, Int64(0))))
+    lock(client.h3_lock)
+    dial_lock = try
+        get!(ReentrantLock, client.h3_dials, address)
+    finally
+        unlock(client.h3_lock)
+    end
+    lock(dial_lock)
+    try
+        # Another task may have dialed while this one waited.
+        conn = _pooled_h3_conn(client, address)
+        conn === nothing || return conn::H3Connection
+        fresh = _connect_h3!(address, connect_address, host_resolver, client.transport.tls_config, server_name, deadline_ns)
+        lock(client.h3_lock)
+        try
+            client.h3_conns[address] = fresh
+        finally
+            unlock(client.h3_lock)
+        end
+        return fresh
+    finally
+        unlock(dial_lock)
+    end
+end
+
+function _record_alt_svc!(client::Client, address::String, response_headers::Headers)::Nothing
+    values = headers(response_headers, "Alt-Svc")
+    isempty(values) && return nothing
+    _alt_svc_record!(client.alt_svc, address, collect(String, values), Int64(time_ns()))
     return nothing
 end
 
@@ -826,9 +957,9 @@ Send `request` with redirect handling and return the final low-level
 This method preserves streaming bodies, so callers are responsible for draining
 or closing `response.rawbody` or the wrapped public body derived from it.
 
-`protocol` accepts `:auto`, `:h1`, or `:h2`. In `:auto` mode the client may try
-HTTP/2 first for secure requests and fall back to HTTP/1 when negotiation says
-that h2 is unavailable.
+`protocol` accepts `:auto`, `:h1`, `:h2`, or `:h3`. In `:auto` mode the client
+may use HTTP/3 for an origin that advertised it, try HTTP/2 first for secure
+requests, and fall back to HTTP/1 when negotiation says that h2 is unavailable.
 """
 function _do_incoming!(
     trace,
@@ -844,7 +975,7 @@ function _do_incoming!(
     cookies::Union{Bool,Vector{Cookie}}=true,
     cookiejar::Union{Nothing,CookieJar}=client.cookiejar;
     copyrequest::Bool=true,
-)
+)::_AnyIncomingResponse
     current_address = String(address)
     initial_address = current_address
     current_secure = secure
@@ -864,21 +995,23 @@ function _do_incoming!(
     retry_custom_wanted = false
     for redirect_count in 0:redirect_policy.max_redirects
         while true
-            send_request, request_url, proxy_plan, use_h2, host, path = try
+            send_request, request_url, proxy_plan, use_h2, h3_target, host, path = try
                 # A request line that cannot be sent fails here, before a
                 # connection is made, and is not retried.
                 _validate_request_start_line!(current_request.method, current_request.target)
                 next_request = _copy_request_for_send(current_request, retry_attempt == 1)
                 next_url = _request_url(current_secure, current_address, current_request.target)
                 next_proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
-                next_use_h2 = next_proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
+                next_h3_target = _h3_target(client, next_proxy_plan, current_secure, protocol, current_address)
+                next_use_h2 = next_h3_target === nothing && next_proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
                     _use_h2(client, next_proxy_plan, current_secure, protocol)
-                _emit_trace(trace, RequestEvent(next_request, next_url, retry_attempt, redirect_count, next_use_h2 ? :h2 : :h1))
+                next_protocol = next_h3_target !== nothing ? :h3 : next_use_h2 ? :h2 : :h1
+                _emit_trace(trace, RequestEvent(next_request, next_url, retry_attempt, redirect_count, next_protocol))
                 next_host, next_path = _host_path_from_request(current_address, current_request)
                 manual_cookies = cookies === false ? Cookie[] : Cookies.readcookies(next_request.headers, "")
                 cookie_value = _cookie_header(cookiejar, cookies, current_secure, next_host, next_path, manual_cookies)
                 cookie_value === nothing || setheader(next_request.headers, "Cookie", cookie_value)
-                (next_request, next_url, next_proxy_plan, next_use_h2, next_host, next_path)
+                (next_request, next_url, next_proxy_plan, next_use_h2, next_h3_target, next_host, next_path)
             catch
                 if retry_token !== nothing
                     @try_ignore _settle_request_retry_token!(retry_token::RetryToken, 0)
@@ -887,8 +1020,27 @@ function _do_incoming!(
                 end
                 rethrow()
             end
+            local response::_AnyIncomingResponse
             response = try
-                if use_h2
+                incoming = nothing
+                if h3_target !== nothing
+                    incoming = try
+                        h3_conn = _acquire_h3_conn!(client, current_address, h3_target::String, send_request,
+                            current_server_name, protocol == :auto)
+                        _h3_roundtrip_incoming!(h3_conn, send_request)
+                    catch err
+                        # A QUIC connection that cannot be made falls back to
+                        # TCP; the request was not sent.
+                        (protocol == :auto && err isa ConnectError) || rethrow()
+                        _alt_svc_mark_broken!(client.alt_svc, current_address, Int64(time_ns()))
+                        use_h2 = proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
+                            _use_h2(client, proxy_plan, current_secure, protocol)
+                        nothing
+                    end
+                end
+                if incoming !== nothing
+                    incoming
+                elseif use_h2
                     # A failed request leaves its pooled connection to the other
                     # requests on it; a failed connection is already closed and
                     # leaves the pool on the next acquire.
@@ -967,6 +1119,7 @@ function _do_incoming!(
                     redirect_count,
                 )
                 _store_set_cookies!(cookiejar, cookies, current_secure, host, path, response.head.headers)
+                current_secure && client.prefer_http3 && _record_alt_svc!(client, current_address, response.head.headers)
                 status_response = _retry_policy_response(response, current_request)
                 _emit_trace(trace, ResponseHeadEvent(status_response, request_url, retry_attempt, redirect_count))
 
@@ -1191,8 +1344,24 @@ function do!(
                 effective_cookiejar,
             )
             return _streaming_response(incoming::Union{_IncomingResponse{H1Body},_IncomingResponse{H2Body}})
+        elseif protocol === :h3
+            incoming = _do_incoming!(
+                nothing,
+                client,
+                address,
+                request,
+                secure,
+                server_name,
+                :h3,
+                policy,
+                nothing,
+                proxy_config,
+                normalized_cookies,
+                effective_cookiejar,
+            )
+            return _streaming_response(incoming)
         end
-        throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
+        throw(ArgumentError("protocol must be :auto, :h1, :h2, or :h3"))
     catch err
         if !(err isa CanceledError)
             req_ctx = get_request_context(request)
@@ -1363,6 +1532,20 @@ function close_idle_connections!(client::Client)
             close(conn)
         end
     end
+    h3_to_close = H3Connection[]
+    lock(client.h3_lock)
+    try
+        for key in collect(keys(client.h3_conns))
+            conn = client.h3_conns[key]
+            if _h3_conn_quiet(conn)
+                push!(h3_to_close, conn)
+                pop!(client.h3_conns, key, nothing)
+            end
+        end
+    finally
+        unlock(client.h3_lock)
+    end
+    foreach(conn -> @try_ignore(close(conn)), h3_to_close)
     return nothing
 end
 
@@ -2474,7 +2657,7 @@ Connections:
   `HTTP.COOKIEJAR` for calls without a client.
 - `require_ssl_verification = true`: `false` skips certificate checks, for
   testing only. Cannot be combined with `client`.
-- `protocol = :auto`: `:h1` or `:h2` to force HTTP/1.1 or HTTP/2.
+- `protocol = :auto`: `:h1`, `:h2`, or `:h3` to force HTTP/1.1, HTTP/2, or HTTP/3.
 
 Debugging:
 - `verbose`: `1` (or `true`) prints a line for each attempt, response, retry,
