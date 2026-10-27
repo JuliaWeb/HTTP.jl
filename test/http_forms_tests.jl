@@ -464,3 +464,45 @@ end
     @test_throws ErrorException HT.parse_multipart_form(request; max_parts = 2)
     @test length(HT.parse_multipart_form(request; max_parts = 3)) == 3
 end
+
+@testset "multipart boundary scan lets another thread's collection run" begin
+    # The scan allocates nothing. On a second thread it scans a vector that reads
+    # as filler until the scanning thread sees a finished collection, then as the
+    # closing delimiter. Without a safepoint in the scan, the collection the main
+    # thread requests waits until the scan gives up at `limit`.
+    probe = raw"""
+        using HTTP
+        mutable struct GCWatchBytes <: AbstractVector{UInt8}
+            const limit::Int
+            @atomic started::Bool
+            pauses::Int
+            stop::Int
+            by_gc::Bool
+        end
+        GCWatchBytes(limit) = GCWatchBytes(limit, false, 0, 0, false)
+        Base.size(v::GCWatchBytes) = (v.limit + 64,)
+        const TAIL = codeunits("\r\n--b--\r\n")
+        function Base.getindex(v::GCWatchBytes, i::Int)
+            if !(@atomic v.started)
+                v.pauses = Base.gc_num().pause
+                @atomic v.started = true
+            end
+            if v.stop == 0 && (i >= v.limit || ((i & 0xfff) == 0 && Base.gc_num().pause > v.pauses))
+                v.by_gc = i < v.limit
+                v.stop = i + 3
+            end
+            k = v.stop == 0 ? 0 : i - v.stop + 3
+            return 1 <= k <= length(TAIL) ? TAIL[k] : UInt8('x')
+        end
+        scan(v) = HTTP.find_multipart_boundary(v, collect(codeunits("b")))
+        fetch(Threads.@spawn scan(GCWatchBytes(1 << 16)))  # compile before the real run
+        v = GCWatchBytes(1 << 31)
+        t = Threads.@spawn scan(v)
+        while !(@atomic v.started) end
+        GC.gc(false)
+        found = fetch(t)
+        print(v.by_gc && found[1] ? "OK" : "the collection waited for the whole scan")
+    """
+    cmd = `$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) --threads=2 -e $probe`
+    @test readchomp(cmd) == "OK"
+end
