@@ -1015,20 +1015,23 @@ end
     return false
 end
 
+# HTTP/1 request bodies on the server read from the connection's `_ConnReader`.
+# Naming that type keeps each `body_read!` statically dispatched, which
+# `juliac --trim=safe` requires; the bare body types leave the reader abstract.
 @inline function _stream_request_body_read!(stream::Stream, dst::Vector{UInt8})::Int
     body = stream.request_body
     body isa EmptyBody && return 0
     if body isa _H2ServerBody
         return body_read!(body::_H2ServerBody, dst)
     end
-    if body isa FixedLengthBody
-        return body_read!(body::FixedLengthBody, dst)
+    if body isa FixedLengthBody{_ConnReader}
+        return body_read!(body::FixedLengthBody{_ConnReader}, dst)
     end
-    if body isa ChunkedBody
-        return body_read!(body::ChunkedBody, dst)
+    if body isa ChunkedBody{_ConnReader}
+        return body_read!(body::ChunkedBody{_ConnReader}, dst)
     end
-    if body isa EOFBody
-        return body_read!(body::EOFBody, dst)
+    if body isa EOFBody{_ConnReader}
+        return body_read!(body::EOFBody{_ConnReader}, dst)
     end
     throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end

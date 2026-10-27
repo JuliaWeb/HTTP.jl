@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another thread requested waited for the whole scan, about 50 ms for a
   64 MiB upload, with every other thread stopped. The scans now reach a GC
   safepoint every 64 KiB. ([#1506])
+- A `listen!` stream handler that reads the request body (`readbytes!`,
+  `read`) now compiles under `juliac --trim=safe`. Reading an HTTP/1
+  request body was a dynamic call, so a trimmed server could not build. ([#1512])
 
 ## [v2.12.3] - 2026-10-23
 
@@ -1587,3 +1590,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1506]: https://github.com/JuliaWeb/HTTP.jl/issues/1506
 [#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508
 [#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
+[#1512]: https://github.com/JuliaWeb/HTTP.jl/issues/1512
