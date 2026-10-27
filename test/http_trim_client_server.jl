@@ -42,8 +42,46 @@ function run_http_trim_client_server()::Nothing
     return nothing
 end
 
+# A `listen!` stream handler reads the request body itself; each HTTP/1 body
+# framing must stay statically dispatched.
+function run_http_trim_stream_body_reads()::Nothing
+    server = nothing
+    try
+        server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            buf = Vector{UInt8}(undef, 64)
+            n = readbytes!(stream, buf, 64)
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            write(stream, view(buf, 1:n))
+            return nothing
+        end
+        port = HT.port(server)
+        for (framing, body) in (
+            ("Content-Length: 5\r\n", "hello"),
+            ("Transfer-Encoding: chunked\r\n", "5\r\nhello\r\n0\r\n\r\n"),
+        )
+            response = trim_raw_http_exchange(port,
+                "POST /echo HTTP/1.1\r\n" *
+                "Host: 127.0.0.1:$(port)\r\n" *
+                framing *
+                "Connection: close\r\n" *
+                "\r\n" *
+                body,
+            )
+            startswith(response, "HTTP/1.1 200 OK\r\n") || error("expected 200 response, got $(repr(response))")
+            occursin("hello", response) || error("request body not echoed: $(repr(response))")
+        end
+    finally
+        server === nothing || close(server::HT.Server)
+    end
+    return nothing
+end
+
 function @main(args::Vector{String})::Cint
     _ = args
+    # Before the client/server run, which shuts the Reseau runtime down.
+    run_http_trim_stream_body_reads()
     run_http_trim_client_server()
     return 0
 end

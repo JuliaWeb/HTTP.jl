@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removes the limit. Without a limit a 50 MB body of tiny parts allocated
   820 MB while parsing. ([#1453])
 
+### Fixed
+- A `listen!` stream handler that reads the request body (`readbytes!`,
+  `read`) now compiles under `juliac --trim=safe`. Reading an HTTP/1
+  request body was a dynamic call, so a trimmed server could not build. ([#1512])
+
 ## [v2.12.3] - 2026-10-23
 
 ### Fixed
@@ -1579,3 +1584,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1501]: https://github.com/JuliaWeb/HTTP.jl/issues/1501
 [#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508
 [#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
+[#1512]: https://github.com/JuliaWeb/HTTP.jl/issues/1512
