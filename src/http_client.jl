@@ -1174,7 +1174,9 @@ function do!(
                 normalized_cookies,
                 effective_cookiejar,
             )
-            return _streaming_response(incoming::_IncomingResponse{H2Body})
+            # An HTTP/2 response whose stream already ended when its head was
+            # read (204, HEAD, an empty body) has an `EmptyBody`.
+            return _streaming_response(incoming::Union{_IncomingResponse{H2Body},_IncomingResponse{EmptyBody}})
         elseif protocol === :auto
             incoming = _do_incoming!(
                 nothing,
@@ -1190,7 +1192,7 @@ function do!(
                 normalized_cookies,
                 effective_cookiejar,
             )
-            return _streaming_response(incoming::Union{_IncomingResponse{H1Body},_IncomingResponse{H2Body}})
+            return _streaming_response(incoming::Union{_IncomingResponse{H1Body},_IncomingResponse{H2Body},_IncomingResponse{EmptyBody}})
         end
         throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
     catch err

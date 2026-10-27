@@ -3879,3 +3879,36 @@ end
     end
     @test_throws HT.ProtocolError HT._decode_h2_trailer_headers(HT.HeaderField[HT.HeaderField("x-a\xffb", "v", false)])
 end
+
+@testset "do! returns HTTP/2 responses whose stream ended with the head" begin
+    listener = Reseau.TLS.listen(
+        "tcp",
+        "127.0.0.1:0",
+        Reseau.TLS.Config(
+            verify_peer = false,
+            cert_file = joinpath(@__DIR__, "resources", "unittests.crt"),
+            key_file = joinpath(@__DIR__, "resources", "unittests.key"),
+            alpn_protocols = ["h2"],
+        );
+        backlog = 8,
+    )
+    server = HT.serve!(req -> HT.Response(204), listener; allow_h2c = false)
+    client = HT.Client(
+        transport = HT.Transport(
+            tls_config = Reseau.TLS.Config(verify_peer = false, server_name = "localhost", alpn_protocols = ["h2"]),
+        ),
+    )
+    try
+        for protocol in (:h2, :auto)
+            response = HT.get!(client, HT.server_addr(server), "/"; secure = true, protocol = protocol)
+            @test response.status == 204
+            @test response.proto_major == 2
+            @test HT.body_read!(response.body, Vector{UInt8}(undef, 8)) == 0
+            HT.body_close!(response.body)
+        end
+    finally
+        close(client)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
