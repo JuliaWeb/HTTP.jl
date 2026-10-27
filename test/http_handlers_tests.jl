@@ -648,6 +648,30 @@ end
     end
 end
 
+@testset "HTTP router serves server-sent event streams" begin
+    # Strict trim builds must accept an event stream as a response body too.
+    router = HT.Router()
+    HT.register!(router, "GET", "/events", function (_)
+        response = HT.Response(200, HT.SSEStream())
+        stream = HT.sse_stream(response)
+        write(stream, HT.SSEEvent("ready"; event = "status"))
+        close(stream)
+        return response
+    end)
+    server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
+    try
+        for protocol in (:h1, :h2)
+            response = HT.get("http://$(HT.server_addr(server))/events"; protocol = protocol, retry = false)
+            @test response.status == 200
+            @test HT.header(response, "Content-Type") == "text/event-stream"
+            @test String(_read_all_handler_bytes(response.body)) == "event: status\ndata: ready\n\n"
+        end
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 @testset "Access log status matches non-Exception handler failures" begin
     for stream in (false, true), protocol in (:h1, :h2)
         logger = Test.TestLogger()

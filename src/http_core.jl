@@ -1993,6 +1993,9 @@ const _TRIM_STRICT_BODIES = @load_preference("trim_strict_bodies", false)::Bool
     elseif response isa Response{BytesBody{Base.CodeUnits{UInt8, String}}}
         # Response(status, ::String) stores the body as codeunits
         return f(response)
+    elseif response isa Response{SSEStream}
+        # A server-sent event stream the handler keeps writing to after it returns
+        return f(response)
     else
         _TRIM_STRICT_BODIES && throw(ArgumentError("unhandled response body type in strict trim mode"))
         return f(response)

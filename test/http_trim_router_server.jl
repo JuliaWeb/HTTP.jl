@@ -15,6 +15,13 @@ function run_http_trim_router_server()::Nothing
     HT.register!(router, "POST", "/echo/*", request -> trim_text_response(String(request.body)))
     HT.register!(router, "GET", "/bytes/**", _ -> HT.Response(200; body=UInt8[0x6f, 0x6b]))
     HT.register!(router, "GET", "/empty", _ -> HT.Response(204))
+    HT.register!(router, "GET", "/events", function (_)
+        response = HT.Response(200, HT.SSEStream())
+        stream = HT.sse_stream(response)
+        write(stream, HT.SSEEvent("ready"; event = "status"))
+        close(stream)
+        return response
+    end)
     GC.gc()
     server = HT.serve!(router, "127.0.0.1", 0; listenany=true)
     try
@@ -33,6 +40,9 @@ function run_http_trim_router_server()::Nothing
             endswith(response, "\r\n\r\n$expected") || error("unexpected body: $response")
             status == 200 && !occursin("X-Routed: yes", response) && error("middleware did not run")
         end
+        events = trim_raw_http_exchange(port, "GET /events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        startswith(events, "HTTP/1.1 200 ") || error("unexpected event stream response: $events")
+        occursin("event: status\ndata: ready\n", events) || error("event stream body missing: $events")
     finally
         close(server)
         trim_close_http_server(server)
