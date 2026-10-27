@@ -11,18 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HTTP.Handlers.static_dispatch(middleware)`, router middleware that calls
   each route's handler through a function pointer compiled for it, so a router
   compiles under `juliac --trim=safe`. A plain router calls handlers through
-  dynamic dispatch, which a trimmed executable cannot do.
+  dynamic dispatch, which a trimmed executable cannot do. ([#1516])
 
 ### Fixed
 - `register!` compiles for each handler type. It received the handler as a
   plain `Function`, so building the route and applying the router's middleware
   were dynamically dispatched, and `juliac --trim=safe` rejected every route
-  registration.
+  registration. ([#1516])
 - Registering routes is faster: the route trie code is compiled once instead
   of once for each handler type. In one application, registering 371 routes
-  took 2.6 s instead of 17.5 s.
+  took 2.6 s instead of 17.5 s. ([#1516])
 - `getroute` and `getparams` return the documented `String` and
-  `Dict{String,String}` types instead of `Any`.
+  `Dict{String,String}` types instead of `Any`. ([#1516])
 
 ## [v2.12.3] - 2026-10-23
 
@@ -1588,3 +1588,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1501]: https://github.com/JuliaWeb/HTTP.jl/issues/1501
 [#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508
 [#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
+[#1516]: https://github.com/JuliaWeb/HTTP.jl/issues/1516
