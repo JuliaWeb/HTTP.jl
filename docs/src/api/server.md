@@ -34,9 +34,9 @@ HTTP.peeraddr
 
 ## Routing and Middleware
 
-The router and middleware live in `HTTP.Handlers`. Except for `handlertimeout`
-and `logging_middleware`, the names below are also available from `HTTP`
-directly, as in `HTTP.Router` and `HTTP.register!`.
+The router and middleware live in `HTTP.Handlers`. Except for `handlertimeout`,
+`logging_middleware` and `static_dispatch`, the names below are also available
+from `HTTP` directly, as in `HTTP.Router` and `HTTP.register!`.
 
 ```@docs
 HTTP.Handlers.Handler
@@ -50,6 +50,7 @@ HTTP.Handlers.getparam
 HTTP.Handlers.getcookies
 HTTP.Handlers.handlertimeout
 HTTP.Handlers.logging_middleware
+HTTP.Handlers.static_dispatch
 ```
 
 ## Server-Sent Events

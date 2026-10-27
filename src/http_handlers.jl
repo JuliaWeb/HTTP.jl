@@ -19,6 +19,7 @@ import ..Response
 import ..Stream
 import ..Cookies
 import ..BytesBody
+import ..EmptyBody
 import ..Headers
 import ..setstatus
 import ..setheader
@@ -117,7 +118,9 @@ function find(y, itr; by=identity, eq=(==))
     return nothing
 end
 
-function insert!(node::Node, leaf, segments, i)
+# `@nospecialize`: the trie code is the same for every handler type, so it is
+# compiled once rather than for each route's handler.
+function insert!(node::Node, @nospecialize(leaf::Leaf), segments, i)
     if i > length(segments)
         j = find(leaf.method, node.methods; by=x -> x.method, eq=(x, y) -> x == "*" || x == y)
         if j === nothing
@@ -256,19 +259,122 @@ end
 """
 function register! end
 
-function register!(r::Router, method, path, handler)
-    segments = map(segment, split(path, '/'; keepempty=false))
-    if r.middleware !== nothing
-        handler = r.middleware(handler)
-    end
-    insert!(r.routes, Leaf(method, Tuple{Int,String}[], path, handler), segments, 1)
+# `handler::F` makes Julia compile `register!` for each handler type. Julia does
+# not otherwise specialize on a function it only passes along, and the
+# middleware and `Leaf` calls below would be dynamically dispatched.
+function register!(r::Router, method, path, handler::F) where {F}
+    wrapped = r.middleware === nothing ? handler : r.middleware(handler)
+    _insert_route!(r.routes, Leaf(method, Tuple{Int,String}[], path, wrapped))
     return nothing
 end
 
-register!(r::Router, path, handler) = register!(r, "*", path, handler)
+function _insert_route!(routes::Node, @nospecialize(leaf::Leaf))
+    segments = Union{String,Variable}[segment(part) for part in split(leaf.path, '/'; keepempty=false)]
+    insert!(routes, leaf, segments, 1)
+    return nothing
+end
 
-register!(handler, r::Router, method, path) = register!(r, method, path, handler)
-register!(handler, r::Router, path) = register!(r, "*", path, handler)
+register!(r::Router, path, handler::F) where {F} = register!(r, "*", path, handler)
+
+register!(handler::F, r::Router, method, path) where {F} = register!(r, method, path, handler)
+register!(handler::F, r::Router, path) where {F} = register!(r, "*", path, handler)
+
+"""
+    HTTP.Handlers.static_dispatch(middleware=nothing)
+
+Router middleware for natively compiled servers (`juliac --trim=safe`). Pass it
+as the third argument of [`Router`](@ref). It wraps each handler with
+`middleware`, when given, and then compiles a direct call to the wrapped handler
+for each request type that [`serve!`](@ref) passes to handlers. A plain router
+calls its handlers through dynamic dispatch, which a trimmed executable cannot do.
+
+```julia
+router = HTTP.Router(HTTP.Handlers.default404, HTTP.Handlers.default405,
+    HTTP.Handlers.static_dispatch(auth_middleware))
+```
+
+Registering a route compiles its handler for both request body types, so
+startup takes longer than with a plain router, which compiles a handler on its
+first request. The router keeps a function pointer for each handler, and
+pointers do not survive precompilation: register routes at run time, not at the
+top level of a package. Such a router serves `serve!` requests only, not
+`listen!` streams. Other request types, such as a `Request` built in a test, go
+through ordinary dispatch.
+"""
+static_dispatch(middleware=nothing) = _StaticDispatch(middleware)
+
+struct _StaticDispatch{M}
+    middleware::M
+end
+
+(s::_StaticDispatch)(handler::F) where {F} = _HandlerFn(s.middleware === nothing ? handler : s.middleware(handler))
+
+# One request crossing the function-pointer call below. Its fields are concrete
+# for each request type, so the pointer's signature has no `Any` argument.
+mutable struct _HandlerCall{R}
+    request::R
+    response::Any
+end
+
+struct _CallHandler{R} <: Function end
+
+function (::_CallHandler{R})(handler::H, callptr::Ptr{Cvoid}) where {R,H}
+    call = unsafe_pointer_to_objref(callptr)::_HandlerCall{R}
+    call.response = handler(call.request)
+    return nothing
+end
+
+@generated function _handler_fptr(::Type{H}, ::Type{R}) where {H,R}
+    return quote
+        @cfunction($(_CallHandler{R}()), Cvoid, (Ref{$H}, Ptr{Cvoid}))
+    end
+end
+
+# A handler behind compiled function pointers, one for each request type that
+# `serve!` passes to handlers. The trim verifier accepts a `ccall` through
+# these pointers, while a call to a handler of unknown type is dynamic dispatch.
+struct _HandlerFn
+    handler::Any
+    root::Any              # Base.RefValue holding the handler; the pointer below points into it
+    root_address::Ptr{Cvoid}
+    handler_ptr::Ptr{Cvoid}
+    empty_ptr::Ptr{Cvoid}  # for Request{EmptyBody}
+    bytes_ptr::Ptr{Cvoid}  # for Request{BytesBody{Vector{UInt8}}}
+end
+
+function _HandlerFn(handler::H) where {H}
+    root = Base.cconvert(Ref{H}, handler)
+    return _HandlerFn(
+        handler,
+        root,
+        pointer_from_objref(root),
+        Ptr{Cvoid}(Base.unsafe_convert(Ref{H}, root)),
+        _handler_fptr(H, Request{EmptyBody}),
+        _handler_fptr(H, Request{BytesBody{Vector{UInt8}}}),
+    )
+end
+
+function _call_handler_fn(h::_HandlerFn, fptr::Ptr{Cvoid}, req::R) where {R}
+    # A handler stored in a precompiled image comes back at a new address, with
+    # function pointers from the process that built the image.
+    pointer_from_objref(h.root) == h.root_address ||
+        throw(ArgumentError("route registered during precompilation; register static_dispatch routes at run time"))
+    call = _HandlerCall{R}(req, nothing)
+    GC.@preserve h call begin
+        ccall(fptr, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}), h.handler_ptr, pointer_from_objref(call))
+    end
+    return call.response
+end
+
+(h::_HandlerFn)(req::Request{EmptyBody}) = _call_handler_fn(h, h.empty_ptr, req)
+(h::_HandlerFn)(req::Request{BytesBody{Vector{UInt8}}}) = _call_handler_fn(h, h.bytes_ptr, req)
+(h::_HandlerFn)(req) = h.handler(req)
+# `serve!` also compiles its stream-handler path, so a stream must not reach
+# ordinary dispatch here.
+(::_HandlerFn)(::Stream) = throw(ArgumentError("a static_dispatch router handles serve! requests, not listen! streams"))
+
+_route_handler(::Router, handler) = handler
+_route_handler(::Router{T,S,<:_StaticDispatch}, handler) where {T,S} = handler::_HandlerFn
 
 const Params = Dict{String,String}
 
@@ -319,7 +425,7 @@ function (r::Router)(stream::Stream)
     end
     req.context[:route] = route
     isempty(params) || (req.context[:params] = params)
-    return handler(stream)
+    return _route_handler(r, handler)(stream)
 end
 
 function (r::Router)(req::Request)
@@ -331,7 +437,7 @@ function (r::Router)(req::Request)
     end
     req.context[:route] = route
     isempty(params) || (req.context[:params] = params)
-    return handler(req)
+    return _route_handler(r, handler)(req)
 end
 
 """
@@ -340,7 +446,7 @@ end
 Return the registered path, such as `"/users/{id}"`, of the route that matched
 `req`, or `nothing`.
 """
-getroute(req) = get(req.context, :route, nothing)
+getroute(req) = get(req.context, :route, nothing)::Union{Nothing,String}
 
 """
     HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
@@ -348,7 +454,7 @@ getroute(req) = get(req.context, :route, nothing)
 Return the path variables of the route that matched `req`, or `nothing` when no
 route matched or it has no variables.
 """
-getparams(req) = get(req.context, :params, nothing)
+getparams(req) = get(req.context, :params, nothing)::Union{Nothing,Params}
 
 """
     HTTP.getparam(req, name, default=nothing)
@@ -607,11 +713,11 @@ Return the cookies in the `Cookie` header of `req`.
 """
 getcookies(req) = get(() -> Cookies.cookies(req), req.context, :cookies)
 
-# `handlertimeout` and `logging_middleware` are documented public API but not
-# exported; mark them public on Julia versions that support the mechanism (the
-# source stays parseable on 1.10).
+# `handlertimeout`, `logging_middleware` and `static_dispatch` are documented
+# public API but not exported; mark them public on Julia versions that support
+# the mechanism (the source stays parseable on 1.10).
 @static if Base.VERSION >= v"1.11.0-DEV.469"
-    Core.eval(@__MODULE__, Expr(:public, :handlertimeout, :logging_middleware))
+    Core.eval(@__MODULE__, Expr(:public, :handlertimeout, :logging_middleware, :static_dispatch))
 end
 
 end
