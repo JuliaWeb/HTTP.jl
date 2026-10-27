@@ -1215,10 +1215,13 @@ function _write_response_body_h2_server!(
             end
             first = bytes_body.next_index
             last = length(bytes_body.data)
+            # Consume and close before writing (closing only sets a flag; `data` stays valid),
+            # so the body is already closed when the peer sees END_STREAM.
+            bytes_body.next_index = last + 1
+            body_close!(bytes_body)
             if first <= last
                 data = first == 1 ? bytes_body.data : @view(bytes_body.data[first:last])
                 _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, data; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
-                bytes_body.next_index = last + 1
             elseif end_stream
                 _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
             end

@@ -175,9 +175,11 @@ function write(stream::SSEStream, event::SSEEvent)::Int
         bytes = take!(buf)
         length(bytes) <= stream.max_len || throw(ArgumentError("serialized SSE event exceeds max_len"))
         # A client that stops reading must not make the server keep every event.
-        # The floor keeps a burst of small events from tripping a small max_len.
+        # The floor keeps a burst of small events from tripping a small max_len;
+        # a max_len too large for `4 * max_len` to fit an `Int` means no cap.
         waiting = bytesavailable(stream.buffer)
-        if waiting + length(bytes) > max(4 * stream.max_len, _DEFAULT_SSE_STREAM_MAX_LEN)
+        cap = stream.max_len > typemax(Int) ÷ 4 ? typemax(Int) : 4 * stream.max_len
+        if waiting + length(bytes) > max(cap, _DEFAULT_SSE_STREAM_MAX_LEN)
             close(stream)
             throw(Base.IOError("SSE client is not reading: $(waiting) bytes of events are waiting", 0))
         end
@@ -656,11 +658,8 @@ function _consume_incoming_sse!(
     max_event_bytes::Integer=_DEFAULT_SSE_CLIENT_MAX_EVENT_BYTES,
 )::Nothing
     raw_stream = Base.BufferStream()
-    reader = if _should_decompress_response(incoming.head.headers, decompress)
-        CodecZlib.GzipDecompressorStream(raw_stream)
-    else
-        raw_stream
-    end
+    encoding = _response_content_encoding(incoming.head.headers, decompress)
+    reader = encoding === nothing ? raw_stream : _decompressor_stream(raw_stream, encoding)
     cancelled = Ref(false)
     producer = Threads.@spawn begin
         try

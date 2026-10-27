@@ -1738,15 +1738,55 @@ function Base.showerror(io::IO, err::DecompressionLimitError)
     return nothing
 end
 
+# Decodes `Content-Encoding: deflate`. RFC 9110 defines it as a zlib stream
+# (RFC 1950), but some servers, such as ones using .NET's `DeflateStream`, send
+# raw DEFLATE data (RFC 1951). Like browsers and curl, accept both. The first
+# byte of a zlib stream always has 8 in its low nibble; a raw stream would need
+# nonzero padding bits in its first block header to match, which encoders never
+# write. The decoder is picked on the first input, so nothing is read early.
+mutable struct _DeflateDecompressor <: TranscodingStreams.Codec
+    codec::Union{Nothing,CodecZlib.ZlibDecompressor,CodecZlib.DeflateDecompressor}
+end
+
+function TranscodingStreams.startproc(codec::_DeflateDecompressor, mode::Symbol, error::TranscodingStreams.Error)::Symbol
+    inner = codec.codec
+    return inner === nothing ? :ok : TranscodingStreams.startproc(inner, mode, error)
+end
+
+function TranscodingStreams.process(
+    codec::_DeflateDecompressor,
+    input::TranscodingStreams.Memory,
+    output::TranscodingStreams.Memory,
+    error::TranscodingStreams.Error,
+)
+    inner = codec.codec
+    if inner === nothing
+        # An empty body has no first byte; it keeps the zlib decoder's handling.
+        raw = input.size > 0 && (unsafe_load(input.ptr) & 0x0f) != 0x08
+        inner = raw ? CodecZlib.DeflateDecompressor() : CodecZlib.ZlibDecompressor()
+        codec.codec = inner
+        code = TranscodingStreams.startproc(inner, :read, error)
+        code === :ok || return 0, 0, code
+    end
+    return TranscodingStreams.process(inner, input, output, error)
+end
+
+function TranscodingStreams.finalize(codec::_DeflateDecompressor)::Nothing
+    inner = codec.codec
+    inner === nothing || TranscodingStreams.finalize(inner)
+    return nothing
+end
+
+function _decompressor_stream(io::IO, encoding::Symbol)
+    encoding === :gzip && return CodecZlib.GzipDecompressorStream(io)
+    return TranscodingStreams.TranscodingStream(_DeflateDecompressor(nothing), io)
+end
+
 function _response_body_reader(incoming::_IncomingResponse, decompress::Union{Nothing,Bool})::Tuple{IO,Union{Nothing,Task}}
     raw_stream = _BodyIO(incoming.rawbody)
     encoding = _response_content_encoding(incoming.head.headers, decompress)
-    if encoding == :gzip
-        return CodecZlib.GzipDecompressorStream(raw_stream), nothing
-    elseif encoding == :deflate
-        return CodecZlib.ZlibDecompressorStream(raw_stream), nothing
-    end
-    return raw_stream, nothing
+    encoding === nothing && return raw_stream, nothing
+    return _decompressor_stream(raw_stream, encoding), nothing
 end
 
 function _with_response_reader(f::F, incoming::_IncomingResponse, decompress::Union{Nothing,Bool}) where {F}

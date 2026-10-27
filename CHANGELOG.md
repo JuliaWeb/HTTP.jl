@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.12.3] - 2026-10-23
+
+### Fixed
+- Responses with `Content-Encoding: deflate` whose body is raw DEFLATE data,
+  as servers built on .NET's `DeflateStream` send, now decode instead of
+  failing with `ZlibError("incorrect header check")`. HTTP.jl 2.x asks for
+  `deflate` where 1.x asked only for `gzip`, so such servers started sending
+  it. The zlib form RFC 9110 specifies still decodes, and server-sent event
+  streams now decode `deflate` the same way. ([#1511])
+
+## [v2.12.2] - 2026-10-23
+
+### Fixed
+- A WebSocket with `maxframesize = typemax(Int)` (as Bonito.jl and WGLMakie
+  use) no longer closes with status 1008 "too many unread messages" on its
+  first incoming message. The unread-message cap, four times `maxframesize`,
+  overflowed to a negative number; a `maxframesize` that large now leaves the
+  cap off. `SSEStream(; max_len = typemax(Int))` had the same overflow and
+  capped unread events at 16 MiB. ([#1508])
+
 ## [v2.12.1] - 2026-10-22
 
 ### Fixed
@@ -1236,7 +1256,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.3...HEAD
+[v2.12.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.2...v2.12.3
+[v2.12.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...v2.12.2
 [v2.12.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...v2.12.1
 [v2.12.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.11.2...v2.12.0
 [v2.11.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.0.0...v2.11.2
@@ -1580,3 +1602,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1498]: https://github.com/JuliaWeb/HTTP.jl/issues/1498
 [#1500]: https://github.com/JuliaWeb/HTTP.jl/issues/1500
 [#1501]: https://github.com/JuliaWeb/HTTP.jl/issues/1501
+[#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508
+[#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
