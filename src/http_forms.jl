@@ -275,30 +275,40 @@ function _byte_buffers_eq(a::AbstractVector{UInt8}, i::Int, j::Int, b)::Bool
     return true
 end
 
+# Bytes the multipart scans read between GC safepoints. The scans allocate
+# nothing, so they reach no safepoint on their own, and a collection another
+# thread requests would wait for the whole scan of a large body.
+const _MULTIPART_SCAN_WINDOW = 1 << 16
+
 function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundary_delimiter::AbstractVector{UInt8}; start::Int=1)
     i = start
     end_index = i + length(boundary_delimiter) + 1
     while end_index <= length(bytes)
-        if bytes[i] == _DASH_BYTE && bytes[i+1] == _DASH_BYTE && _byte_buffers_eq(bytes, i + 2, end_index, boundary_delimiter)
-            if i > 1
-                (i == 2 || bytes[i-2] != _CR_BYTE || bytes[i-1] != _LF_BYTE) && error("boundary delimiter found, but it was not the start of a line")
-                i -= 2
+        window_end = min(length(bytes), end_index + _MULTIPART_SCAN_WINDOW)
+        while end_index <= window_end
+            if bytes[i] == _DASH_BYTE && bytes[i+1] == _DASH_BYTE && _byte_buffers_eq(bytes, i + 2, end_index, boundary_delimiter)
+                if i > 1
+                    (i == 2 || bytes[i-2] != _CR_BYTE || bytes[i-1] != _LF_BYTE) && error("boundary delimiter found, but it was not the start of a line")
+                    i -= 2
+                end
+                end_index < length(bytes) - 1 || error("boundary delimiter found, but did not end with new line")
+                terminating = bytes[end_index+1] == _DASH_BYTE && bytes[end_index+2] == _DASH_BYTE
+                terminating && (end_index += 2)
+                while end_index < length(bytes) && (bytes[end_index+1] in (_HTAB_BYTE, _SPACE_BYTE))
+                    end_index += 1
+                    (end_index & (_MULTIPART_SCAN_WINDOW - 1)) == 0 && GC.safepoint()
+                end
+                newline_end = end_index < length(bytes) - 1 &&
+                              bytes[end_index+1] == _CR_BYTE &&
+                              bytes[end_index+2] == _LF_BYTE
+                newline_end || error("boundary delimiter found, but did not end with new line")
+                end_index += 2
+                return terminating, i, end_index
             end
-            end_index < length(bytes) - 1 || error("boundary delimiter found, but did not end with new line")
-            terminating = bytes[end_index+1] == _DASH_BYTE && bytes[end_index+2] == _DASH_BYTE
-            terminating && (end_index += 2)
-            while end_index < length(bytes) && (bytes[end_index+1] in (_HTAB_BYTE, _SPACE_BYTE))
-                end_index += 1
-            end
-            newline_end = end_index < length(bytes) - 1 &&
-                          bytes[end_index+1] == _CR_BYTE &&
-                          bytes[end_index+2] == _LF_BYTE
-            newline_end || error("boundary delimiter found, but did not end with new line")
-            end_index += 2
-            return terminating, i, end_index
+            i += 1
+            end_index += 1
         end
-        i += 1
-        end_index += 1
+        GC.safepoint()
     end
     error("boundary delimiter not found")
 end
@@ -325,9 +335,13 @@ function find_header_boundary(bytes::AbstractVector{UInt8})
     i = 1
     end_index = length(_CRLFCRLF)
     while i <= l
-        _byte_buffers_eq(bytes, i, end_index, _CRLFCRLF) && return 1, end_index
-        i += 1
-        end_index += 1
+        window_end = min(l, i + _MULTIPART_SCAN_WINDOW)
+        while i <= window_end
+            _byte_buffers_eq(bytes, i, end_index, _CRLFCRLF) && return 1, end_index
+            i += 1
+            end_index += 1
+        end
+        GC.safepoint()
     end
     error("no delimiter found separating header from multipart body")
 end
