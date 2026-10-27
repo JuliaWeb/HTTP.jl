@@ -19,6 +19,7 @@ import ..TLS
 import ..IOPoll
 import ..Conn as TransportConn
 import ..BytesBody
+import ..AbstractBody
 import ..EmptyBody
 import ..ParseError
 import ..ProtocolError
@@ -51,7 +52,8 @@ import .._proxy_config_for_request
 import .._proxy_plan
 import .._ProxyPlanMode
 import .._ProxyTarget
-import .._read_incoming_response
+import .._public_response_from_parts
+import .._read_response_common
 import .._redirect_policy
 import .._redirect_referer
 import .._request_deadline_ns
@@ -70,7 +72,6 @@ import .._resolve_redirect_target
 import .._should_copy_sensitive_headers_on_redirect
 import .._store_set_cookies!
 import .._strip_sensitive_redirect_headers!
-import .._streaming_response
 import .._apply_conn_deadline!
 import .._clear_conn_deadline!
 import .._new_conn!
@@ -88,6 +89,7 @@ import ..body_close!
 import ..read_request
 import ..write_response!
 import ..write_request!
+import .._write_request_head!
 import .._wrap_client_transport_error
 import .._is_peer_close_error
 import .._is_transport_timeout
@@ -225,9 +227,30 @@ end
 
 struct _ClientHandshake
     conn::Union{Nothing,TransportConn}
-    response::Response
+    response::Response{EmptyBody}
     buffered::Vector{UInt8}
     request::Request
+end
+
+# Builds the handshake response for `_read_response_common`. The handshake reads only
+# the status and headers, so whatever body the response framing produced is closed
+# here and replaced with an empty one: the response has one type for every framing.
+function _handshake_response_from_parts(
+    status::Int,
+    reason::String,
+    headers::Headers,
+    trailers::Headers,
+    body::AbstractBody,
+    content_length::Int64,
+    proto_major::UInt8,
+    proto_minor::UInt8,
+    close::Bool,
+    request::Union{Nothing,Request},
+)::Response{EmptyBody}
+    @try_ignore body_close!(body)
+    return _public_response_from_parts(
+        status, reason, headers, trailers, EmptyBody(), content_length, proto_major, proto_minor, close, request,
+    )
 end
 
 isbinary(x) = x isa AbstractVector{UInt8}
@@ -348,10 +371,10 @@ end
 # loop, so this cannot deadlock with concurrent senders.
 function _process_incoming_data!(
     ws::WebSocket,
-    on_frame::Function,
+    on_frame::F, # `::F`, so the callback this only passes along keeps its type
     data::AbstractVector{UInt8},
     datalen::Int=lastindex(data),
-)::Nothing
+)::Nothing where {F<:Function}
     @lock ws.sendlock begin
         ws_on_incoming_data!(on_frame, ws.codec, data, datalen)
         _flush_ws_output_locked!(ws)
@@ -554,16 +577,19 @@ end
 # start the read task.
 function _finish_client_websocket(
     stream,
-    close_transport!,
+    # `::C`: Julia does not specialize on a function that is only passed along.
+    close_transport!::C,
     request::Request,
     response::Response,
-    negotiated::Union{Nothing,String};
+    negotiated::Union{Nothing,String},
+    # Positional, not a keyword: a keyword call with a `Union`-typed value builds its
+    # `NamedTuple` type at run time, which `juliac --trim` cannot resolve.
+    pmce::Union{Nothing,PMCEContext}=nothing;
     maxframesize::Integer,
     maxfragmentation::Integer,
     read_idle_timeout_ns::Integer=0,
     buffered::Vector{UInt8}=UInt8[],
-    pmce::Union{Nothing,PMCEContext}=nothing,
-)::WebSocket
+) where {C}
     ws = WebSocket(
         stream,
         close_transport!;
@@ -582,6 +608,13 @@ function _finish_client_websocket(
     _start_read_task!(ws)
     return ws
 end
+
+# A pooled connection's stream is a TCP or a TLS connection. Reading it here, inside a
+# method specialized on the subprotocol and compression types, keeps each call's
+# argument unions small enough for inference to split.
+_finish_client_websocket(conn::TransportConn, close_transport!::C, request::Request, response::Response,
+    negotiated::Union{Nothing,String}, pmce::Union{Nothing,PMCEContext}; kw...) where {C} =
+    _finish_client_websocket(_conn_stream(conn), close_transport!, request, response, negotiated, pmce; kw...)
 
 """
     send(ws, message) -> Int
@@ -871,25 +904,22 @@ function _websocket_roundtrip!(
         seekstart(request_io)
         wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(secure, address, request.target) : nothing
         proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
-        write_request!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_auth)
+        # The handshake request has no body, so its head is the whole request.
+        _write_request_head!(request_io, request, wire_target, proxy_auth)
         stream = _conn_stream(conn)
         nbytes = request_io.size
         _set_conn_write_deadline!(conn, _request_write_deadline_ns(request))
         wrote = write(stream, request_io.data, nbytes)
         wrote == nbytes || throw(ProtocolError("transport short write"))
         _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
-        response = _read_incoming_response(conn.reader, request)
-        @try_ignore begin
-            body_close!(response.rawbody)
-        end
-        buffered = response.head.status == 101 ? _take_conn_reader_buffer!(conn.reader) : UInt8[]
-        public_response = _streaming_response(response)
-        if response.head.status != 101
+        response = _read_response_common(_handshake_response_from_parts, conn.reader, request)
+        if response.status != 101
             _close_conn!(conn)
-            return _ClientHandshake(nothing, public_response, UInt8[], request)
+            return _ClientHandshake(nothing, response, UInt8[], request)
         end
+        buffered = _take_conn_reader_buffer!(conn.reader)
         _clear_conn_deadline!(conn)
-        return _ClientHandshake(conn, public_response, buffered, request)
+        return _ClientHandshake(conn, response, buffered, request)
     catch
         _close_conn!(conn)
         rethrow()
@@ -1002,16 +1032,16 @@ function _open_client_websocket(
                 # Replaying `buffered` can fail on a bad frame from the server.
                 return try
                     _finish_client_websocket(
-                        _conn_stream(conn),
+                        conn::TransportConn,
                         close_transport!,
                         send_request,
                         response,
-                        negotiated;
+                        negotiated,
+                        pmce_ctx;
                         maxframesize=maxframesize,
                         maxfragmentation=maxfragmentation,
                         read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
                         buffered=attempt.buffered,
-                        pmce=pmce_ctx,
                     )
                 catch
                     _close_conn!(conn::TransportConn)
@@ -1203,9 +1233,7 @@ function _open_client_websocket_io(
     write_request!(request_buf, request)
     write(io, take!(request_buf))
 
-    incoming = _read_incoming_response(io, request)
-    @try_ignore body_close!(incoming.rawbody)
-    response = _streaming_response(incoming)
+    response = _read_response_common(_handshake_response_from_parts, io, request)
     negotiated = _validate_websocket_upgrade!(response, expected_accept, subprotocols)
 
     # No-op `close_transport!`: the caller retains ownership of `io`.

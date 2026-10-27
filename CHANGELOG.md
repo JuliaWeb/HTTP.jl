@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `juliac --trim=safe`. The adapter's handler, request body, and response
   types were dynamic, and `peeraddr` returned the abstract `SocketAddr`; it
   now returns `Reseau.TCP.SocketAddrV4` or `SocketAddrV6`. ([#1522])
+- `HTTP.WebSockets.open` now compiles under `juliac --trim=safe`. The
+  handshake response had one of four body types, the handshake request was
+  written with a keyword call whose values had `Union` types, and callbacks
+  that were only passed along were not specialized. ([#1522])
 
 ## [v2.14.0] - 2026-10-30
 
