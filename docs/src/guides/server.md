@@ -261,6 +261,41 @@ The middleware also wraps stream handlers; their records add the client's
 `peer` address. Every record is in the `:access` log group, so it is easy to
 filter or route with a package such as LoggingExtras.jl.
 
+### Routers in native executables
+
+`juliac --trim=safe` rejects dynamic dispatch, and a router calls handlers of
+many types, so by default it calls each one through dynamic dispatch. Wrap the
+router's middleware in `HTTP.Handlers.static_dispatch` to call each handler
+through a function pointer compiled for it instead:
+
+```julia
+router = HTTP.Router(
+    HTTP.Handlers.default404,
+    HTTP.Handlers.default405,
+    HTTP.Handlers.static_dispatch(auth_middleware),  # or static_dispatch()
+)
+```
+
+Such a router serves `serve!` requests, not `listen!` streams. Register its
+routes at run time: the function pointers do not survive precompilation.
+Registering a route compiles its handler right away, so startup takes longer
+than with a plain router.
+
+The server also needs a response type it can compile its writes for, and a
+router's return type is unknown. State the response types the router's
+handlers return on the handler you pass to `serve!`:
+
+```julia
+const AppResponse = Union{
+    HTTP.Response{String},
+    HTTP.Response{Vector{UInt8}},
+    HTTP.Response{HTTP.EmptyBody},
+    HTTP.Response{HTTP.SSEStream},
+}
+
+server = HTTP.serve!(req -> router(req)::AppResponse, "127.0.0.1", 8080)
+```
+
 ## Static Files
 
 `HTTP.fileserver(root)` returns a request handler that serves the files under

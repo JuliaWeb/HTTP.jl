@@ -607,3 +607,93 @@ end
         @test record.kwargs[:exception][1] === :boom
     end
 end
+
+mutable struct _StaticDispatchCounter
+    n::Int
+end
+
+(h::_StaticDispatchCounter)(req) = (h.n += 1; "count:$(h.n)")
+
+@testset "HTTP router static_dispatch" begin
+    calls = Ref(0)
+    count_calls = handler -> req -> begin
+        calls[] += 1
+        return handler(req)
+    end
+    inner = HT.Router(_ -> "inner404", _ -> "inner405", HT.Handlers.static_dispatch())
+    HT.register!(inner, "GET", "/api/inner/{id}", req -> "inner:" * HT.getparam(req, "id"))
+    router = HT.Router(_ -> "404", _ -> "405", HT.Handlers.static_dispatch(count_calls))
+    HT.register!(router, "GET", "/users/{id}", req -> "user:" * HT.getparam(req, "id") * ":" * HT.getroute(req))
+    HT.register!(router, "POST", "/echo") do req
+        return "echo:" * String(_read_all_handler_bytes(req.body))
+    end
+    HT.register!(router, "/fail", _ -> throw(ArgumentError("handler failed")))
+    HT.register!(router, "/api/**", inner)
+
+    @test HT.Handlers.gethandler(router, HT.Request("GET", "/users/7"))[1] isa HT.Handlers._HandlerFn
+    @test router(HT.Request("GET", "/users/7")) == "user:7:/users/{id}"
+    @test calls[] == 1
+    # A buffered request body takes the other compiled pointer; any other
+    # request body type goes through ordinary dispatch.
+    @test router(HT.Request("POST", "/echo", HT.Headers(), HT.BytesBody(collect(codeunits("ping"))))) == "echo:ping"
+    @test router(HT.Request("POST", "/echo", HT.Headers(), "pong")) == "echo:pong"
+    @test router(HT.Request("GET", "/api/inner/9")) == "inner:9"
+    @test router(HT.Request("GET", "/api/other")) == "inner404"
+    @test router(HT.Request("GET", "/missing")) == "404"
+    # A mutable handler is called by reference, not through a copy.
+    counter = _StaticDispatchCounter(0)
+    HT.register!(router, "GET", "/count", counter)
+    @test router(HT.Request("GET", "/count")) == "count:1"
+    @test router(HT.Request("GET", "/count")) == "count:2"
+    @test counter.n == 2
+    @test router(HT.Request("DELETE", "/users/7")) == "405"
+    @test_throws ArgumentError router(HT.Request("GET", "/fail"))
+
+    # A handler copied out of a precompiled image no longer has the address its
+    # function pointers were made for.
+    h = HT.Handlers._HandlerFn(_ -> 1)
+    stale = HT.Handlers._HandlerFn(h.handler, h.root, h.root_address + 1, h.handler_ptr, h.empty_ptr, h.bytes_ptr)
+    @test h(HT.Request("GET", "/")) == 1
+    err = try
+        stale(HT.Request("GET", "/"))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("precompilation", err.msg)
+
+    # Such a router answers a listen! stream it matched with 500.
+    server = Logging.with_logger(Test.TestLogger()) do
+        HT.listen!(router, "127.0.0.1", 0; listenany = true)
+    end
+    try
+        response = HT.get("http://$(HT.server_addr(server))/users/7"; retry = false, status_exception = false)
+        @test response.status == 500
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
+@testset "HTTP router static_dispatch live server" begin
+    router = HT.Router(HT.Handlers.default404, HT.Handlers.default405, HT.Handlers.static_dispatch())
+    HT.register!(router, "GET", "/hello/{name}", _router_hello_request)
+    HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
+    server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
+    client = HT.Client()
+    try
+        address = HT.server_addr(server)
+        for protocol in (:h1, :h2)
+            hello = HT.get(client, "http://$(address)/hello/jane"; protocol = protocol)
+            @test String(_read_all_handler_bytes(hello.body)) == "hello:jane"
+            echo = HT.post(client, "http://$(address)/echo/jane"; body = "ping", protocol = protocol)
+            @test String(_read_all_handler_bytes(echo.body)) == "echo:jane:ping"
+            @test HT.get(client, "http://$(address)/missing"; protocol = protocol, status_exception = false).status == 404
+            @test HT.request(client, "PUT", "http://$(address)/hello/jane"; protocol = protocol, status_exception = false).status == 405
+        end
+    finally
+        close(client)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
