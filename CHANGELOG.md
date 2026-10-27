@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `HTTP.get!` and the other `do!` methods return an HTTP/2 response whose
+  stream had already ended when its head was read, such as a 204. They threw
+  a `TypeError` with `protocol = :h2`, and with `:auto` when HTTP/2 was
+  negotiated. ([#1520])
+
 ## [v2.13.0] - 2026-10-27
 
 ### Changed
@@ -1594,3 +1600,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1508]: https://github.com/JuliaWeb/HTTP.jl/issues/1508
 [#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
 [#1512]: https://github.com/JuliaWeb/HTTP.jl/issues/1512
+[#1520]: https://github.com/JuliaWeb/HTTP.jl/issues/1520
