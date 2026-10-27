@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.13.0] - 2026-10-27
+
 ### Changed
 - The multipart parsers (`parse_multipart_form`, `parse_multipart`,
   `parse_multipart_mixed`) take `max_parts`, 1000 by default as in Go's
@@ -1241,7 +1243,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.3...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.0...HEAD
+[v2.13.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.3...v2.13.0
 [v2.12.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.2...v2.12.3
 [v2.12.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.1...v2.12.2
 [v2.12.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.0...v2.12.1
