@@ -509,7 +509,7 @@ function _server_close(stream::Stream)::Nothing
 end
 
 """
-    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
+    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddrV4, Reseau.TCP.SocketAddrV6}
 
 Return the client's address for a server `stream`, or `nothing` when it is not
 known. `string(addr)` gives `"ip:port"`; `addr.ip` is a tuple of the address
@@ -535,8 +535,16 @@ end
     return stream.h2_conn
 end
 
-@inline _conn_remote_addr(conn::TCP.Conn) = TCP.remote_addr(conn)
-@inline _conn_remote_addr(conn::TLS.Conn) = TLS.remote_addr(conn)
+@inline _conn_remote_addr(conn::TCP.Conn) = _ip_addr(TCP.remote_addr(conn))
+@inline _conn_remote_addr(conn::TLS.Conn) = _ip_addr(TLS.remote_addr(conn))
+
+# A TCP endpoint is IPv4 or IPv6. Reseau declares the abstract `SocketAddr`;
+# narrowing to the two concrete types lets callers format it statically.
+@inline function _ip_addr(@nospecialize(addr))
+    addr isa TCP.SocketAddrV4 && return addr
+    addr isa TCP.SocketAddrV6 && return addr
+    return nothing
+end
 
 function _write_response_body_to_stream!(stream::Stream, body)::Nothing
     body === nothing && return nothing
@@ -596,30 +604,44 @@ struct _StreamHandlerAdapter{F}
     max_body_bytes::Int64
 end
 
-function _buffered_stream_request(stream::Stream, max_body_bytes::Int64)::Request
+function (adapter::_StreamHandlerAdapter)(stream::Stream)
     request = startread(stream)
-    body_bytes = _server_read(stream, max_body_bytes)
-    body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
-    return Request(
+    body_bytes = _server_read(stream, adapter.max_body_bytes)
+    # One call per request body type: the handler's response types are then
+    # handled once per body type rather than as a product of two unions.
+    if isempty(body_bytes)
+        _serve_buffered!(adapter, stream, _buffered_request(request, EmptyBody(), Int64(0)))
+    else
+        body = BytesBody(body_bytes)
+        _serve_buffered!(adapter, stream, _buffered_request(request, body, Int64(length(body_bytes))))
+    end
+    return nothing
+end
+
+function _buffered_request(request::Request, body::B, content_length::Int64)::Request{B} where {B<:AbstractBody}
+    return _request_nocopy(
         request.method,
-        request.target;
-        headers=request.headers,
-        trailers=request.trailers,
-        body=body,
-        host=request.host,
-        content_length=length(body_bytes),
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        close=request.close,
-        context=get_request_context(request),
+        request.target,
+        copy(request.headers),
+        copy(request.trailers),
+        body,
+        request.host,
+        content_length,
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        get_request_context(request),
     )
 end
 
-function (adapter::_StreamHandlerAdapter)(stream::Stream)
-    req = _buffered_stream_request(stream, adapter.max_body_bytes)
+function _serve_buffered!(adapter::_StreamHandlerAdapter, stream::Stream, req::Request)
     resp = adapter.handler(req)
     resp isa Response || throw(ProtocolError("streamhandler request handler must return HTTP.Response"))
-    response = resp::Response
+    # A separate call per response type, when the handler returns several.
+    return _write_buffered_response!(stream, req, resp)
+end
+
+function _write_buffered_response!(stream::Stream, req::Request, response::Response)
     # Writing updates the stream's response, and a handler may reuse one `Response`.
     stream.response = _response_nocopy_exact(
         response.status,
@@ -651,7 +673,7 @@ body larger than `max_body_bytes` gets `413 Content Too Large`, as with
 [`serve!`](@ref); `0` means no limit. A response body that is not in memory,
 such as a file from `fileserver`, is streamed.
 """
-function streamhandler(handler; max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES)
+function streamhandler(handler::F; max_body_bytes::Integer=_SERVER_DEFAULT_MAX_BODY_BYTES) where {F}
     max_body_bytes >= 0 || throw(ArgumentError("max_body_bytes must be >= 0"))
     return _StreamHandlerAdapter(handler, Int64(max_body_bytes))
 end
