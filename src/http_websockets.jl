@@ -1174,7 +1174,7 @@ function open(
         )
     catch err
         # Raise the HTTP error types `request` raises, such as `ConnectError`.
-        wrapped = _wrap_client_transport_error(err, "websocket handshake")
+        wrapped = err isa Exception ? _wrap_client_transport_error(err::Exception, "websocket handshake") : err
         wrapped === err ? rethrow() : throw(wrapped)
     end
     return ws
