@@ -303,11 +303,16 @@ function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundary_delimite
     error("boundary delimiter not found")
 end
 
-function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::AbstractVector{UInt8}; start::Int=1)
+# The default `max_parts` of the multipart parsers, as in Go's mime/multipart.
+const _DEFAULT_MULTIPART_MAX_PARTS = 1000
+
+function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::AbstractVector{UInt8}; start::Int=1, max_parts::Integer=0)
     idxs = Tuple{Int,Int}[]
     while true
         terminating, i, end_index = find_multipart_boundary(bytes, boundary; start=start)
         push!(idxs, (i, end_index))
+        # n delimiters enclose n - 1 parts; stop scanning as soon as there are too many.
+        max_parts > 0 && length(idxs) - 1 > max_parts && error("multipart body has more than max_parts = $(Int(max_parts)) parts")
         terminating && break
         start = end_index + 1
     end
@@ -400,9 +405,14 @@ function _multipart_subtype_and_boundary(content_type::AbstractString)::Union{No
     return nothing
 end
 
-function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString; require_contentdisposition::Bool=true)::Vector{Multipart}
+function parse_multipart_body(
+    body::AbstractVector{UInt8},
+    boundary::AbstractString;
+    require_contentdisposition::Bool=true,
+    max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS,
+)::Vector{Multipart}
     multiparts = Multipart[]
-    idxs = find_multipart_boundaries(body, collect(codeunits(boundary)))
+    idxs = find_multipart_boundaries(body, collect(codeunits(boundary)); max_parts=max_parts)
     length(idxs) > 1 || return multiparts
     for i in 1:(length(idxs)-1)
         chunk = view(body, idxs[i][2]+1:idxs[i+1][1]-1)
@@ -413,8 +423,8 @@ function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractStr
 end
 
 """
-    parse_multipart_form(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
-    parse_multipart_form(message) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_form(content_type_header, body; max_parts=1000) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_form(message; max_parts=1000) -> Union{Vector{Multipart}, Nothing}
 
 Parse a `multipart/form-data` body, using the boundary in
 `content_type_header`. The `message` form reads the `Content-Type` header and
@@ -422,7 +432,8 @@ body of a `Request` or `Response`, such as the request in a `serve!` handler.
 
 Returns `nothing` when the content type is not `multipart/form-data` or there
 is no body. Each [`Multipart`](@ref) has the part's `name`, `filename` (or
-`nothing`), `contenttype`, and its content as the `IO` `data`.
+`nothing`), `contenttype`, and its content as the `IO` `data`. A body with
+more than `max_parts` parts throws an error; `max_parts = 0` removes the limit.
 
 # Examples
 ```jldoctest
@@ -463,20 +474,21 @@ end
 """
 function parse_multipart_form(
     content_type_header::Union{String,Nothing},
-    body::Union{AbstractVector{UInt8},Nothing},
+    body::Union{AbstractVector{UInt8},Nothing};
+    max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS,
 )::Union{Vector{Multipart},Nothing}
     (content_type_header === nothing || body === nothing) && return nothing
     parsed = _multipart_subtype_and_boundary(content_type_header)
     (parsed === nothing || parsed[1] != "form-data") && return nothing
-    return parse_multipart_body(body, parsed[2])
+    return parse_multipart_body(body, parsed[2]; max_parts=max_parts)
 end
 
-function parse_multipart_form(message::Union{Request,Response})::Union{Vector{Multipart},Nothing}
+function parse_multipart_form(message::Union{Request,Response}; max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS)::Union{Vector{Multipart},Nothing}
     ct = header(message, "Content-Type")
     isempty(ct) && return nothing
     bytes = _message_body_bytes(message.body)
     bytes === nothing && return nothing
-    return parse_multipart_form(ct, bytes)
+    return parse_multipart_form(ct, bytes; max_parts=max_parts)
 end
 
 @inline _message_body_bytes(::EmptyBody) = nothing
@@ -489,20 +501,23 @@ end
 @inline _message_body_bytes(::AbstractBody) = nothing
 
 """
-    parse_multipart(content_type_header, body, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
-    parse_multipart(message, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart(content_type_header, body, required_type=nothing; max_parts=1000) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart(message, required_type=nothing; max_parts=1000) -> Union{Vector{Multipart}, Nothing}
 
 Parse a multipart body of any subtype, such as `multipart/form-data` or
 `multipart/mixed`, using the boundary in `content_type_header`. The `message`
 form reads the header and body of a `Request` or `Response`.
 
 `required_type` (`:formdata` or `:mixed`) accepts only that subtype. Returns
-`nothing` when the content type does not match or there is no body.
+`nothing` when the content type does not match or there is no body. A body
+with more than `max_parts` parts throws an error; `max_parts = 0` removes the
+limit.
 """
 function parse_multipart(
     content_type_header::Union{String,Nothing},
     body::Union{AbstractVector{UInt8},Nothing},
-    required_type::Union{Symbol,Nothing}=nothing,
+    required_type::Union{Symbol,Nothing}=nothing;
+    max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS,
 )::Union{Vector{Multipart},Nothing}
     (content_type_header === nothing || body === nothing) && return nothing
     parsed = _multipart_subtype_and_boundary(content_type_header)
@@ -511,24 +526,32 @@ function parse_multipart(
     # Compare as strings: a Symbol made from the sender's subtype is never freed.
     type = replace(subtype, '-' => "")
     required_type !== nothing && String(required_type) != type && return nothing
-    return parse_multipart_body(body, boundary_delimiter; require_contentdisposition=(type == "formdata"))
+    return parse_multipart_body(body, boundary_delimiter; require_contentdisposition=(type == "formdata"), max_parts=max_parts)
 end
 
-function parse_multipart(message::Union{Request,Response}, required_type::Union{Symbol,Nothing}=nothing)::Union{Vector{Multipart},Nothing}
+function parse_multipart(
+    message::Union{Request,Response},
+    required_type::Union{Symbol,Nothing}=nothing;
+    max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS,
+)::Union{Vector{Multipart},Nothing}
     ct = header(message, "Content-Type")
     isempty(ct) && return nothing
     bytes = _message_body_bytes(message.body)
     bytes === nothing && return nothing
-    return parse_multipart(ct, bytes, required_type)
+    return parse_multipart(ct, bytes, required_type; max_parts=max_parts)
 end
 
 """
-    parse_multipart_mixed(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
-    parse_multipart_mixed(message) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_mixed(content_type_header, body; max_parts=1000) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_mixed(message; max_parts=1000) -> Union{Vector{Multipart}, Nothing}
 
 Parse a `multipart/mixed` body; see [`parse_multipart`](@ref).
 """
-parse_multipart_mixed(content_type_header::Union{String,Nothing}, body::Union{AbstractVector{UInt8},Nothing}) =
-    parse_multipart(content_type_header, body, :mixed)
+parse_multipart_mixed(
+    content_type_header::Union{String,Nothing},
+    body::Union{AbstractVector{UInt8},Nothing};
+    max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS,
+) = parse_multipart(content_type_header, body, :mixed; max_parts=max_parts)
 
-parse_multipart_mixed(message::Union{Request,Response}) = parse_multipart(message, :mixed)
+parse_multipart_mixed(message::Union{Request,Response}; max_parts::Integer=_DEFAULT_MULTIPART_MAX_PARTS) =
+    parse_multipart(message, :mixed; max_parts=max_parts)

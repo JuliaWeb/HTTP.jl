@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The multipart parsers (`parse_multipart_form`, `parse_multipart`,
+  `parse_multipart_mixed`) take `max_parts`, 1000 by default as in Go's
+  `mime/multipart`, and throw for a body with more parts; `max_parts = 0`
+  removes the limit. Without a limit a 50 MB body of tiny parts allocated
+  820 MB while parsing. ([#1453])
+
 ## [v2.12.3] - 2026-10-23
 
 ### Fixed
@@ -1526,6 +1533,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1449]: https://github.com/JuliaWeb/HTTP.jl/issues/1449
 [#1451]: https://github.com/JuliaWeb/HTTP.jl/issues/1451
 [#1452]: https://github.com/JuliaWeb/HTTP.jl/issues/1452
+[#1453]: https://github.com/JuliaWeb/HTTP.jl/issues/1453
 [#1454]: https://github.com/JuliaWeb/HTTP.jl/issues/1454
 [#1455]: https://github.com/JuliaWeb/HTTP.jl/issues/1455
 [#1456]: https://github.com/JuliaWeb/HTTP.jl/issues/1456
