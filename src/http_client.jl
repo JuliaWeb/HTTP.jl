@@ -870,7 +870,7 @@ function _do_incoming!(
                 _validate_request_start_line!(current_request.method, current_request.target)
                 next_request = _copy_request_for_send(current_request, retry_attempt == 1)
                 next_url = _request_url(current_secure, current_address, current_request.target)
-                next_proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
+                next_proxy_plan = _proxy_plan(proxy_config, current_secure, current_address, current_server_name)
                 next_use_h2 = next_proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD &&
                     _use_h2(client, next_proxy_plan, current_secure, protocol)
                 _emit_trace(trace, RequestEvent(next_request, next_url, retry_attempt, redirect_count, next_use_h2 ? :h2 : :h1))

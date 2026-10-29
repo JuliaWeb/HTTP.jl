@@ -2005,7 +2005,7 @@ function _roundtrip_incoming!(
     while true
         attempt_request = request
         request_deadline = _request_deadline_ns(attempt_request)
-        plan = _proxy_plan(proxy_config, secure, String(address))
+        plan = _proxy_plan(proxy_config, secure, String(address), server_name === nothing ? nothing : String(server_name))
         connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, attempt_request)
         connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, attempt_request)
         tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, attempt_request)
