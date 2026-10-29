@@ -2362,14 +2362,42 @@ end
     end
 end
 
+@testset "HTTP/2 buffered responses over the peer's header list limit take no send credit" begin
+    # The head is checked before credit is taken for the first DATA frame;
+    # credit taken for a frame never sent was lost to the connection (16 KiB
+    # per refused response, until the connection's window was gone).
+    listener = NC.listen("tcp", "127.0.0.1:0")
+    client = NC.connect(NC.addr(listener))
+    server_conn = NC.accept(listener)
+    send_state = HT._H2SendWindowState()
+    lock(() -> send_state.peer_max_header_list_size = 200, send_state.state_lock)
+    HT._register_h2_send_window!(send_state, UInt32(1))
+    windows() = lock(() -> (send_state.conn_send_window, send_state.stream_send_window[UInt32(1)]), send_state.state_lock)
+    before = windows()
+    response = HT.Response(200, repeat("u", 70_000); headers = ["X-Large" => repeat("v", 500)])
+    err = try
+        HT._write_h2_response!(server_conn, ReentrantLock(), send_state, UInt32(1), HT.Request("GET", "/"), response)
+        nothing
+    catch e
+        e
+    end
+    try
+        @test HT._is_h2_peer_header_list_error(err)
+        @test windows() == before
+    finally
+        close(client)
+        close(server_conn)
+        close(listener)
+    end
+end
+
 @testset "HTTP/2 server resets a stream whose response cannot be sent" begin
     # The response headers exceed the client's SETTINGS_MAX_HEADER_LIST_SIZE.
     # The client must get RST_STREAM instead of waiting for a response forever.
-    started = Channel{Nothing}(1)
-    logger = Test.TestLogger()
+    # The limit is the client's choice, so nothing is logged.
+    logger = Test.TestLogger(; min_level = Base.CoreLogging.Warn)
     server = Base.CoreLogging.with_logger(logger) do
         HT.serve!("127.0.0.1", 0; listenany = true) do request
-            put!(started, nothing)
             headers = HT.Headers()
             HT.setheader(headers, "X-Large", repeat("v", 500))
             return HT.Response(200, "unsent"; headers = headers)
@@ -2378,19 +2406,40 @@ end
     address = HT.server_addr(server)
     conn = nothing
     try
-        conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x6) => UInt32(100)])
+        conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x6) => UInt32(200)])
         _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/too-large")
-        take!(started)
+        frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.RSTStreamFrame || f isa HT.HeadersFrame)
+        @test frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).error_code == UInt32(0x2)
+        # The stream is reset after the error would have been logged.
+        @test isempty(logger.logs)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+
+    # A stream handler's head over the limit resets the stream the same way.
+    logger = Test.TestLogger(; min_level = Base.CoreLogging.Warn)
+    server = Base.CoreLogging.with_logger(logger) do
+        HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            HT.setheader(stream, "X-Large", repeat("v", 500))
+            HT.startwrite(stream)
+            write(stream, "unsent")
+        end
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x6) => UInt32(200)])
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/too-large")
+        frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.RSTStreamFrame || f isa HT.HeadersFrame)
+        @test frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).error_code == UInt32(0x2)
+        # The handler task finishes before its error would be logged.
         tracked = only(HT._server_conns(server))
-        # Observe stream 1 finish on the server, not elapsed time.
         while HT._conn_state(tracked) != HT._ConnState.IDLE
             yield()
         end
-        # A PING ACK sent after the stream ended shows no reset preceded it.
-        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
-        frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.RSTStreamFrame || f isa HT.PingFrame)
-        @test frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).error_code == UInt32(0x2)
-        @test any(record -> record.level == Base.CoreLogging.Error, logger.logs)
+        @test isempty(logger.logs)
     finally
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)

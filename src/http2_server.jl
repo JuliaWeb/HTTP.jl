@@ -1125,9 +1125,20 @@ function _h2_trailer_header_fields(trailers::Headers)::Vector{HeaderField}
     return header_fields
 end
 
+# The client chose SETTINGS_MAX_HEADER_LIST_SIZE (RFC 9113 §6.5.2), so a header
+# block over it is the client's limit, not a server failure: the stream is reset
+# without logging an error.
+@inline function _check_h2_peer_header_list_size(header_fields::Vector{HeaderField}, max_header_list_size::Int)::Nothing
+    max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size &&
+        throw(ProtocolError("HTTP/2 response header block exceeds peer SETTINGS_MAX_HEADER_LIST_SIZE", _PROTOCOL_ERROR_PEER_HEADER_LIST))
+    return nothing
+end
+
+@inline _is_h2_peer_header_list_error(err)::Bool = err isa ProtocolError && (err::ProtocolError).code == _PROTOCOL_ERROR_PEER_HEADER_LIST
+
 # Callers hold the write lock: the encoder's table changes must reach the wire in order.
 function _encode_h2_header_fields!(encoder::Encoder, header_fields::Vector{HeaderField}, max_header_list_size::Int)::Vector{UInt8}
-    max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response header block exceeds peer SETTINGS_MAX_HEADER_LIST_SIZE"))
+    _check_h2_peer_header_list_size(header_fields, max_header_list_size)
     return encode_header_block(encoder, header_fields)
 end
 
@@ -1398,6 +1409,10 @@ function _write_h2_headers_and_first_batch!(
         send_state.peer_max_send_frame_size
     end
     server_max = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
+    # Before taking send credit: the encode below would throw for these
+    # headers, and credit taken for a DATA frame never sent would be lost to
+    # the connection.
+    _check_h2_peer_header_list_size(header_fields, max_header_list_size)
     # Take only the credit available now for the first DATA frame: HEADERS are
     # not flow-controlled and must not wait for WINDOW_UPDATE.
     first_chunk = total_len == 0 ? 0 : _reserve_h2_send_window!(send_state, stream_id, total_len; block=false)
@@ -1621,8 +1636,10 @@ function _handle_h2_stream!(
         end
         if !(stream_cancelled || (@atomic :acquire send_state.closed))
             # The response could not be sent; reset the stream so the client
-            # does not wait for it. A peer that went away needs no log.
-            _is_h2_transport_error(err) || @error "h2 server could not send the response" exception = err
+            # does not wait for it. A peer that went away, or whose header
+            # list limit the response exceeds, needs no log.
+            _is_h2_transport_error(err) || _is_h2_peer_header_list_error(err) ||
+                @error "h2 server could not send the response" exception = err
             _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_INTERNAL)
         end
     finally

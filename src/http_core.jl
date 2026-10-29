@@ -29,6 +29,8 @@ end
     _PROTOCOL_ERROR_BODY_TOO_LARGE = 3
     # A server response body that does not match its own Content-Length.
     _PROTOCOL_ERROR_RESPONSE_LENGTH = 4
+    # An HTTP/2 header block over the peer's SETTINGS_MAX_HEADER_LIST_SIZE.
+    _PROTOCOL_ERROR_PEER_HEADER_LIST = 5
 end
 
 """
