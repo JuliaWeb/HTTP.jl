@@ -168,10 +168,14 @@ end
 @inline function _read_exact_bytes!(io::IO, n::Int)::Vector{UInt8}
     n >= 0 || throw(ArgumentError("n must be >= 0"))
     n == 0 && return UInt8[]
-    bytes = Vector{UInt8}(undef, n)
-    readbytes = readbytes!(io, bytes, n)
-    readbytes == n || throw(ParseError("unexpected EOF while reading HTTP/2 frame payload"))
-    return bytes
+    return _read_exact_bytes!(io, n, Vector{UInt8}(undef, n))
+end
+
+# Reads exactly `n` bytes into `buf`, resized to `n`, and returns it.
+@inline function _read_exact_bytes!(io::IO, n::Int, buf::Vector{UInt8})::Vector{UInt8}
+    resize!(buf, n)
+    n == 0 || readbytes!(io, buf, n) == n || throw(ParseError("unexpected EOF while reading HTTP/2 frame payload"))
+    return buf
 end
 
 @inline function _read_u32_be(bytes::Vector{UInt8}, index::Int)::UInt32
@@ -213,13 +217,18 @@ end
     return FrameHeader(length, bytes[i+3], bytes[i+4], _read_u32_be(bytes, i + 5) & 0x7fff_ffff)
 end
 
-function _read_frame_header!(io::IO)::FrameHeader
-    return _parse_frame_header(_read_exact_bytes!(io, 9), 1)
+# `buf`, when given, receives the 9 header bytes instead of a new vector.
+function _read_frame_header!(io::IO, buf::Union{Nothing,Vector{UInt8}}=nothing)::FrameHeader
+    bytes = buf === nothing ? _read_exact_bytes!(io, 9) : _read_exact_bytes!(io, 9, buf)
+    return _parse_frame_header(bytes, 1)
 end
 
 # Parse the header in place when the reader already buffers all 9 bytes.
-function _read_frame_header!(reader::_ConnReader)::FrameHeader
-    _conn_reader_available(reader) >= 9 || return _parse_frame_header(_read_exact_bytes!(reader, 9), 1)
+function _read_frame_header!(reader::_ConnReader, buf::Union{Nothing,Vector{UInt8}}=nothing)::FrameHeader
+    if _conn_reader_available(reader) < 9
+        bytes = buf === nothing ? _read_exact_bytes!(reader, 9) : _read_exact_bytes!(reader, 9, buf)
+        return _parse_frame_header(bytes, 1)
+    end
     header = _parse_frame_header(reader.buf, reader.next)
     reader.next += 9
     return header
@@ -292,19 +301,21 @@ end
 end
 
 """
-    read_frame!(io)
+    read_frame!(io[, buf])
 
 Read and decode one HTTP/2 frame from `io`.
 
-Returns a concrete `AbstractFrame` subtype.
+Returns a concrete `AbstractFrame` subtype. With `buf`, an unpadded DATA frame's
+`data` is `buf` itself, resized to the payload, so it is only valid until `buf`
+is used again; other frames own their bytes.
 
 Throws:
 - `ParseError` for malformed wire payloads
 - `ProtocolError` for locally enforced invariants such as frame-size overflow
 - `EOFError` or other I/O exceptions from the underlying stream
 """
-function read_frame!(io::IO)::AbstractFrame
-    header = _read_frame_header!(io)
+function read_frame!(io::IO, buf::Union{Nothing,Vector{UInt8}}=nothing)::AbstractFrame
+    header = _read_frame_header!(io, buf)
     header.length <= _H2_MAX_FRAME_SIZE || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
     if io isa _ConnReader && header.type == FRAME_WINDOW_UPDATE && header.length == 4 && _conn_reader_available(io) >= 4
         # Flow control sends these for every read; parse them in place.
@@ -313,7 +324,8 @@ function read_frame!(io::IO)::AbstractFrame
         increment == 0 && throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
         return WindowUpdateFrame(header.stream_id, increment)
     end
-    payload = _read_exact_bytes!(io, header.length)
+    payload = buf !== nothing && header.type == FRAME_DATA ?
+        _read_exact_bytes!(io, header.length, buf) : _read_exact_bytes!(io, header.length)
     # This function intentionally validates only frame-local invariants. Stream-
     # level rules such as "HEADERS must precede DATA" live in the client/server
     # state machines above the framer.
@@ -511,11 +523,18 @@ followed by the same update for `stream_id` when `stream_level` is `true`, so
 both go out in one write. `increment` must be positive.
 """
 function _window_update_frames(stream_id::UInt32, increment::UInt32, stream_level::Bool)::Vector{UInt8}
-    increment > 0 || throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
     bytes = Vector{UInt8}(undef, stream_level ? 26 : 13)
-    _encode_window_update!(bytes, 1, UInt32(0), increment)
-    stream_level && _encode_window_update!(bytes, 14, stream_id, increment)
+    _window_update_frames!(bytes, stream_id, increment, stream_level)
     return bytes
+end
+
+# Like `_window_update_frames`, but encodes into the front of `buf` (at least 26
+# bytes, or 13 without `stream_level`) and returns a view of the encoded bytes.
+function _window_update_frames!(buf::Vector{UInt8}, stream_id::UInt32, increment::UInt32, stream_level::Bool)
+    increment > 0 || throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
+    _encode_window_update!(buf, 1, UInt32(0), increment)
+    stream_level && _encode_window_update!(buf, 14, stream_id, increment)
+    return view(buf, 1:(stream_level ? 26 : 13))
 end
 
 @inline function _encode_window_update!(bytes::Vector{UInt8}, pos::Int, stream_id::UInt32, increment::UInt32)::Nothing
