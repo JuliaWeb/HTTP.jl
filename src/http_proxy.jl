@@ -504,13 +504,20 @@ function _proxy_plan(
     config::ProxyConfig,
     secure::Bool,
     address::AbstractString,
+    server_name::Union{Nothing,String}=nothing,
 )::_ProxyPlan
     host, port_text = HostResolvers.split_host_port(String(address))
     port = tryparse(Int, port_text)
     port === nothing && throw(ArgumentError("invalid address port in proxy planning: $address"))
+    # A TLS connection is verified for one server name, so a request pinned to a
+    # different name than the address host gets its own pooled connections.
+    target = string(secure ? "https://" : "http://", address)
+    if secure && server_name !== nothing && server_name != host
+        target = string(target, "|sni=", server_name)
+    end
     proxy = _proxy_for(config, secure, host, port)
     if proxy === nothing
-        return _ProxyPlan(_ProxyPlanMode.DIRECT, nothing, String(address), string(secure ? "https://" : "http://", address))
+        return _ProxyPlan(_ProxyPlanMode.DIRECT, nothing, String(address), target)
     end
     (proxy::_ProxyTarget).secure && throw(ArgumentError("https proxy URLs are not supported yet"))
     mode = if _proxy_scheme_is_socks((proxy::_ProxyTarget).scheme)
@@ -521,5 +528,5 @@ function _proxy_plan(
     proxy_target = proxy::_ProxyTarget
     proxy_pool_key = proxy_target.pool_identity === nothing ?
         proxy_target.url : string(proxy_target.url, "|auth=", proxy_target.pool_identity::UUID)
-    return _ProxyPlan(mode, proxy_target, proxy_target.address, string(proxy_pool_key, "|", secure ? "https://" : "http://", address))
+    return _ProxyPlan(mode, proxy_target, proxy_target.address, string(proxy_pool_key, "|", target))
 end

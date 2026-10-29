@@ -1406,6 +1406,44 @@ end
     end
 end
 
+@testset "HTTP pooled TLS connections are not reused for another pinned server name" begin
+    cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt")
+    key_file = joinpath(@__DIR__, "resources", "localhost-only.key")
+    for protocol in (:h1, :h2)
+        tls_listener = TL.listen(
+            "tcp",
+            "127.0.0.1:0",
+            TL.Config(verify_peer = false, cert_file = cert_file, key_file = key_file, alpn_protocols = ["h2", "http/1.1"]);
+            backlog = 8,
+        )
+        address = ND.join_host_port("127.0.0.1", Int((TL.addr(tls_listener)::NC.SocketAddrV4).port))
+        server = HT.serve!(request -> HT.Response(200, "ok"), tls_listener)
+        # The certificate names only localhost; the client checks the name, not the chain.
+        client = HT.Client(transport = HT.Transport(tls_config = TL.Config(verify_peer = false, verify_hostname = true)))
+        fetch(server_name) = HT.do!(
+            client, address, HT.Request("GET", "/"; host = address); secure = true, server_name, protocol,
+        )
+        try
+            response = fetch("localhost")
+            @test response.status == 200
+            @test String(_read_all_body_bytes_client(response.body)) == "ok"
+            # The idle connection was verified for localhost, so it must not carry
+            # a request pinned to evil.example.
+            err = try
+                fetch("evil.example")
+                nothing
+            catch ex
+                ex
+            end
+            @test err !== nothing && occursin("not valid for host evil.example", sprint(showerror, err))
+        finally
+            close(client)
+            HT.forceclose(server)
+            wait(server)
+        end
+    end
+end
+
 @testset "HTTP high-level request redirect=false and redirect_limit=0 return redirect responses" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
