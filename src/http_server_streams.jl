@@ -100,8 +100,9 @@ function _suppressed_body_content_length!(headers::Headers, response::Response):
     return nothing
 end
 
-# Writes a header block on a live HTTP/2 server stream. A failed write comes from
-# the client or the connection; a field the peer's limit refuses is the handler's.
+# Writes a header block on a live HTTP/2 server stream. A failed write, or a
+# block over the client's header list limit, comes from the client or the
+# connection; any other error, such as an invalid field, is the handler's.
 function _write_h2_stream_header_fields!(stream::Stream, header_fields::Vector{HeaderField}, end_stream::Bool)::Nothing
     try
         _write_h2_header_fields!(
@@ -114,7 +115,7 @@ function _write_h2_stream_header_fields!(stream::Stream, header_fields::Vector{H
             _server_write_deadline_ns(stream.server::Server),
         )
     catch err
-        _is_h2_transport_error(err) && (stream.io_error = err)
+        (_is_h2_transport_error(err) || _is_h2_peer_header_list_error(err)) && (stream.io_error = err)
         rethrow()
     end
     return nothing
