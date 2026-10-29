@@ -251,6 +251,14 @@ end
     ])
 end
 
+@testset "HTTP/2 client requires a three-digit :status" begin
+    for value in ("40000", "+200", "-1", "20", "2O0")
+        @test HT._h2_header_block_status([HT.HeaderField(":status", value, false)]) === nothing
+        @test_throws HT.ProtocolError HT._decode_response_headers([HT.HeaderField(":status", value, false)])
+    end
+    @test HT._h2_header_block_status([HT.HeaderField(":status", "103", false)]) == 103
+end
+
 @testset "HTTP/2 client rejects response without status pseudo-header" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

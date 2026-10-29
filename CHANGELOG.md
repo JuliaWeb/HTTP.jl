@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A response status code must be three digits, in HTTP/1 status lines and
+  the HTTP/2 `:status` field. Codes such as `+200` or `40000` were accepted,
+  and with `status_exception = true` a code of 32768 or more threw
+  `InexactError` instead of `StatusError`. ([#1523])
+
 ## [v2.13.1] - 2026-10-27
 
 ### Fixed
@@ -1604,3 +1610,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1511]: https://github.com/JuliaWeb/HTTP.jl/issues/1511
 [#1512]: https://github.com/JuliaWeb/HTTP.jl/issues/1512
 [#1520]: https://github.com/JuliaWeb/HTTP.jl/issues/1520
+[#1523]: https://github.com/JuliaWeb/HTTP.jl/issues/1523

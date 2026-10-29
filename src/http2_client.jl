@@ -1760,7 +1760,7 @@ end
 function _h2_header_block_status(headers::Vector{HeaderField})::Union{Nothing,Int}
     for header in headers
         header.name == ":status" || continue
-        return tryparse(Int, header.value)
+        return _parse_status_code(header.value)
     end
     return nothing
 end
@@ -1797,11 +1797,8 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
             saw_regular && throw(ProtocolError("HTTP/2 pseudo-headers must precede regular headers"))
             if name == ":status"
                 status === nothing || throw(ProtocolError("duplicate HTTP/2 :status pseudo-header"))
-                parsed_status = try
-                    parse(Int, normalized)
-                catch
-                    throw(ProtocolError("malformed HTTP/2 :status pseudo-header"))
-                end
+                parsed_status = _parse_status_code(normalized)
+                parsed_status === nothing && throw(ProtocolError("malformed HTTP/2 :status pseudo-header"))
                 status = parsed_status
             else
                 throw(ProtocolError("unsupported HTTP/2 response pseudo-header $(repr(name))"))
