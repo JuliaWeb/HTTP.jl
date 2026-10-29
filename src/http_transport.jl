@@ -197,7 +197,7 @@ end
 
 """
     Transport(; tls_config=nothing, proxy=nothing, retry_bucket=RetryBucket(),
-              max_idle_per_host=2, max_idle_total=64, max_conns_per_host=0,
+              max_idle_total=64, max_idle_per_host=max_idle_total, max_conns_per_host=0,
               idle_timeout_ns=90_000_000_000, max_header_bytes=1024*1024,
               max_line_bytes=64*1024, local_addr=nothing)
 
@@ -209,8 +209,9 @@ connections.
   directly. A `Client` created without a `transport` uses
   [`ProxyFromEnvironment`](@ref) instead.
 - `retry_bucket`: the [`RetryBucket`](@ref) that limits retries, or `nothing`.
-- `max_idle_per_host`, `max_idle_total`: how many idle HTTP/1 connections to
-  keep for one host and in all.
+- `max_idle_total`, `max_idle_per_host`: how many idle HTTP/1 connections to
+  keep in all and for one host; by default one host may use the whole pool.
+  A connection returned to a full pool replaces the one idle the longest.
 - `max_conns_per_host`: the most HTTP/1 connections to one host, counting idle,
   busy, and opening ones; further requests wait for one. `0` means no limit.
 - `idle_timeout_ns`: how long, in nanoseconds, an idle HTTP/1 or HTTP/2
@@ -291,8 +292,8 @@ function Transport(;
     tls_config::Union{Nothing,TLS.Config}=nothing,
     proxy=nothing,
     retry_bucket::Union{Nothing,RetryBucket}=RetryBucket(),
-    max_idle_per_host::Integer=2,
     max_idle_total::Integer=64,
+    max_idle_per_host::Integer=max_idle_total,
     max_conns_per_host::Integer=0,
     idle_timeout_ns::Integer=Int64(90_000_000_000),
     max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
@@ -1337,6 +1338,7 @@ function _put_idle_conn!(transport::Transport, conn::Conn)
     end
     waiter_to_notify = nothing
     should_close = false
+    evicted = nothing
     lock(transport.lock)
     try
         if _transport_closed(transport)
@@ -1347,9 +1349,14 @@ function _put_idle_conn!(transport::Transport, conn::Conn)
                 waiter_to_notify = waiter
             else
                 idle_list = get(() -> Conn[], transport.idle, conn.key)
-                if length(idle_list) >= transport.max_idle_per_host || (@atomic :acquire transport.idle_total) >= transport.max_idle_total
+                if length(idle_list) >= transport.max_idle_per_host
                     should_close = true
                 else
+                    # A full pool keeps the connection just used and closes the
+                    # one idle the longest, as Go's Transport does.
+                    if (@atomic :acquire transport.idle_total) >= transport.max_idle_total
+                        evicted = _pop_oldest_idle_locked!(transport)
+                    end
                     push!(idle_list, conn)
                     transport.idle[conn.key] = idle_list
                     @atomic :acquire_release transport.idle_total += 1
@@ -1359,9 +1366,26 @@ function _put_idle_conn!(transport::Transport, conn::Conn)
     finally
         unlock(transport.lock)
     end
+    evicted === nothing || _close_owned_conn!(transport, evicted::Conn)
     waiter_to_notify === nothing || (_notify_waiter!(waiter_to_notify); return nothing)
     should_close && _close_owned_conn!(transport, conn)
     return nothing
+end
+
+function _pop_oldest_idle_locked!(transport::Transport)::Union{Nothing,Conn}
+    oldest_list = nothing
+    oldest_i = 0
+    oldest_key = ""
+    for (key, idle_list) in transport.idle, (i, conn) in enumerate(idle_list)
+        if oldest_list === nothing || conn.last_used_ns < (oldest_list::Vector{Conn})[oldest_i].last_used_ns
+            oldest_list, oldest_i, oldest_key = idle_list, i, key
+        end
+    end
+    oldest_list === nothing && return nothing
+    conn = popat!(oldest_list::Vector{Conn}, oldest_i)
+    isempty(oldest_list::Vector{Conn}) && delete!(transport.idle, oldest_key)
+    @atomic :acquire_release transport.idle_total -= 1
+    return conn
 end
 
 """
