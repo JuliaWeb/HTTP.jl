@@ -24,11 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   very short part; they threw `MethodError`. ([#1526])
 - Header text that is not valid UTF-8, which peers may send as bytes
   0x80-0xFF, no longer throws `InvalidCharError`. A server request with such
-  an `Expect` header got no response at all (it now gets 417), and the
-  client threw on such a `Content-Encoding`. Multipart `Content-Type`
-  parsing, the WebSocket handshake header checks, redirect host comparison,
-  and showing a response with such a reason phrase threw the same way.
-  ([#1524])
+  an `Expect` header got no response at all (it now gets 417), and requests
+  threw on such a `Content-Encoding`, `Set-Cookie`, `Keep-Alive`, or
+  `Retry-After` in the response. `Range` and `If-*` handling in
+  `servefile`/`servecontent`, multipart `Content-Type` parsing, the WebSocket
+  handshake checks, SSE `retry:` fields, redirect host comparison, and
+  showing a response with such a reason phrase threw the same way. Header
+  values are now trimmed of SP and HTAB only, so a value padded with other
+  whitespace, such as a no-break space, keeps it. ([#1524])
 
 ## [v2.13.1] - 2026-10-27
 
