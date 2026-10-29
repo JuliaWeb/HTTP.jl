@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `Transport` keeps up to 64 idle connections per host by default
+  (`max_idle_per_host` now defaults to `max_idle_total`; it was 2), and a
+  connection returned to a full pool replaces the one idle the longest instead
+  of being closed. Clients with many parallel requests to one host, such as
+  CloudStore's ranged downloads, no longer dial again for most of them. ([#1528])
+
 ### Fixed
 - A response status code must be three digits, in HTTP/1 status lines and
   the HTTP/2 `:status` field. Codes such as `+200` or `40000` were accepted,
@@ -1611,3 +1618,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1512]: https://github.com/JuliaWeb/HTTP.jl/issues/1512
 [#1520]: https://github.com/JuliaWeb/HTTP.jl/issues/1520
 [#1523]: https://github.com/JuliaWeb/HTTP.jl/issues/1523
+[#1528]: https://github.com/JuliaWeb/HTTP.jl/issues/1528
