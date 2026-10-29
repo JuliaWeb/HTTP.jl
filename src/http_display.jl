@@ -70,7 +70,7 @@ function _body_content_encoding(headers::Union{Nothing,Headers})::Union{Nothing,
     headers === nothing && return nothing
     value = header(headers::Headers, "Content-Encoding", nothing)
     value === nothing && return nothing
-    normalized = _ascii_lowercase_string(strip(value::String))
+    normalized = _ascii_lowercase_string(_strip_ows(value::String))
     isempty(normalized) && return nothing
     normalized == "identity" && return nothing
     return normalized

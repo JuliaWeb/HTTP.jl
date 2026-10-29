@@ -54,6 +54,21 @@ end
           [("permessage-deflate$(bad)", Dict("a$(bad)" => "1"))]
     @test HT._escape_terminal_control_chars("a$(bad)\e") == "a\\xFF\\e"
     @test sprint(show, HT.Response(200; reason = "R$(bad)")) == "Response(HTTP.Response 200 R\\xFF, 0 headers, no body)"
+    # Overlong UTF-8: Base `strip`, `isspace`, and `tryparse(Int, _)` throw on it.
+    long = "\xe0\x8f\x88"
+    @test HT._strip_ows(" \ta$(long) \t") == "a$(long)"
+    @test HT._strip_ows(" \t ") == ""
+    @test [(c.name, c.value) for c in HT.Cookies.readsetcookies(HT.Headers(["Set-Cookie" => "a=b; Max-Age=$(long)", "Set-Cookie" => "$(long)"]))] == [("a", "b")]
+    @test isempty(HT.Cookies.readcookies(HT.Headers(["Cookie" => "$(long)=1"]), ""))
+    @test HT._response_content_encoding(HT.Headers(["Content-Encoding" => "$(long)gzip"]), nothing) === nothing
+    @test HT._keepalive_timeout_hint_ns(HT.Headers(["Keep-Alive" => "timeout=$(long)"])) == -1
+    @test HT._parse_retry_after_delay_ns("$(long)") === nothing
+    @test HT._parse_sse_retry("$(long)") === nothing
+    @test HT._parse_single_range("bytes=0-$(long)", Int64(10)) === :invalid
+    @test HT._parse_http_date("$(long)") === nothing
+    @test HT._multipart_subtype_and_boundary("multipart/form-data; boundary=$(long)") == ("form-data", "$(long)")
+    @test HT.WebSockets._pmce_parse_window_bits("$(long)") === nothing
+    @test !HT.WebSockets._ws_valid_handshake_key("$(long)")
     @test occursin("<x$(bad)-compressed", sprint(show, MIME"text/plain"(), HT.Response(200, ["Content-Encoding" => "x$(bad)"]; body = "hi")))
 end
 

@@ -1160,6 +1160,17 @@ end
     return String(SubString(s, lo, hi))
 end
 
+# `strip` for header text: removes only SP and HTAB, HTTP's whitespace (OWS,
+# RFC 9110 §5.6.3), and returns a view. Base `strip` checks characters with
+# `isspace`, which throws InvalidCharError on overlong UTF-8 that a peer can
+# send in a header value.
+@inline function _strip_ows(s::AbstractString)::SubString{String}
+    str = s isa Union{String,SubString{String}} ? s : String(s)
+    lo, hi = _trim_http_ows_bounds(codeunits(str))
+    hi < lo && return SubString(str, 1, 0)
+    return SubString(str, lo, thisind(str, hi))
+end
+
 @inline function _trim_http_ows_bounds(bytes)::Tuple{Int,Int}
     lo = firstindex(bytes)
     hi = lastindex(bytes)

@@ -208,12 +208,12 @@ function _pmce_parse_extension_header(value::AbstractString)::Vector{Tuple{Strin
     for offer in eachsplit(value, ',')
         parts = collect(eachsplit(offer, ';'))
         isempty(parts) && continue
-        name = strip(parts[1])
+        name = _strip_ows(parts[1])
         isempty(name) && continue
         params = Dict{String,String}()
         for p in @view parts[2:end]
-            kv = split(strip(p), '='; limit=2)
-            key = strip(kv[1])
+            kv = split(_strip_ows(p), '='; limit=2)
+            key = _strip_ows(kv[1])
             isempty(key) && continue
             params[_ascii_lowercase_string(key)] = length(kv) == 2 ? strip(kv[2], ['"', ' ']) : ""
         end
@@ -223,7 +223,8 @@ function _pmce_parse_extension_header(value::AbstractString)::Vector{Tuple{Strin
 end
 
 _pmce_parse_window_bits(s::AbstractString)::Union{Nothing,Int} = begin
-    n = tryparse(Int, s)
+    # `tryparse` skips Unicode whitespace with `isspace`, which throws on overlong UTF-8.
+    n = isascii(s) ? tryparse(Int, s) : nothing
     (n === nothing || n < 8 || n > 15) ? nothing : n
 end
 

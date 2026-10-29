@@ -316,7 +316,7 @@ function _parse_retry_after_delay_ns(
     value::AbstractString;
     now::Dates.DateTime=Dates.now(Dates.UTC),
 )::Union{Nothing,Int64}
-    stripped = strip(String(value))
+    stripped = _strip_ows(String(value))
     isempty(stripped) && return nothing
     parsed_secs = try
         parse(Int, stripped)

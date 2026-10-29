@@ -19,6 +19,7 @@ import ..headers
 import ..setheader
 import .._valid_header_field_name
 import .._fast_lowercase
+import .._strip_ows
 
 include("http_public_suffix.jl")
 
@@ -296,9 +297,9 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
         isempty(line) && continue
         # Keep empty parts, as Go does, so `parts[1]` exists even for a value
         # such as ";": an empty first part is a missing name, and is skipped.
-        parts = split(strip(line), ';')
+        parts = split(_strip_ows(line), ';')
         length(parts) == 1 && parts[1] == "" && continue
-        part = strip(parts[1])
+        part = _strip_ows(parts[1])
         j = findfirst(isequal('='), part)
         if j !== nothing
             name, val = SubString(part, 1, prevind(part, j)), SubString(part, j + 1)
@@ -310,7 +311,7 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
         !ok && continue
         c = Cookie(name, val, line)
         for i in 2:length(parts)
-            part = strip(parts[i])
+            part = _strip_ows(parts[i])
             isempty(part) && continue
             j = findfirst(isequal('='), part)
             if j !== nothing
@@ -403,8 +404,8 @@ cookies(r::Request) = readcookies(r.headers, "")
 function readcookies(hdrs::Headers, filter::String="")::Vector{Cookie}
     result = Cookie[]
     for line in headers(hdrs, "Cookie")
-        for part in split(strip(line), ';'; keepempty=false)
-            part = strip(part)
+        for part in split(_strip_ows(line), ';'; keepempty=false)
+            part = _strip_ows(part)
             length(part) <= 1 && continue
             j = findfirst(isequal('='), part)
             if j !== nothing
