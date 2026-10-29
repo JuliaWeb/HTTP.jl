@@ -273,6 +273,9 @@ end
         copyto!(reader.buf, 1, bytes, 1, length(bytes))
         reader.next, reader.stop = 1, length(bytes)
         check(reader)
+        # Compile this call first: `check` may have inlined it.
+        reader.next = 1
+        HT.read_frame!(reader)
         reader.next = 1
         @test @allocated(HT.read_frame!(reader)) <= 64
     finally
