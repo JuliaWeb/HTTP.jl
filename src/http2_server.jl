@@ -868,15 +868,17 @@ function _write_data_frames_h2_server!(
         send_state.peer_max_send_frame_size
     end
     max_frame_size = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
-    # Each pass reserves send window (at most one frame's worth), copies the
-    # DATA frame header and payload into one buffer, and writes it in one call.
+    # Each pass reserves send window, copies the DATA frame headers and payload
+    # into `out`, and writes it in one call. Writes finish before returning, so
+    # every pass reuses `out`.
+    out = UInt8[]
     while offset <= total_len
         first_chunk = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
         first_chunk <= 0 && continue
-        # Pre-size an output Vector that fits this batch exactly.
+        # Size `out` to fit this batch exactly.
         n_frames_first = cld(first_chunk, max_frame_size)
         batch_len = first_chunk + 9 * n_frames_first
-        out = Vector{UInt8}(undef, batch_len)
+        resize!(out, batch_len)
         out_pos = 1
         # Emit frames covering this reservation.
         remaining_in_res = first_chunk

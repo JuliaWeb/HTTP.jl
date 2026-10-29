@@ -211,6 +211,11 @@ mutable struct H2Connection
     # Guarded by `state_lock`.
     read_before_stream_id::UInt32
     @atomic closed::Bool
+    # Holds each DATA payload (and a frame header split across reads) between
+    # reading it and copying it into its stream. Touched only by the read loop.
+    frame_buf::Vector{UInt8}
+    # Encoding space for WINDOW_UPDATE frames. Guarded by `write_lock`.
+    window_update_buf::Vector{UInt8}
 end
 
 """
@@ -1084,10 +1089,11 @@ function _send_window_updates!(conn::H2Connection, stream_id::UInt32, nbytes::In
     nbytes <= 0 && return nothing
     increment = UInt32(nbytes)
     try
-        bytes = _window_update_frames(stream_id, increment, stream_level)
         lock(conn.write_lock)
         try
-            _write_frame_bytes_h2!(conn, bytes, Int64(0))
+            bytes = _window_update_frames!(conn.window_update_buf, stream_id, increment, stream_level)
+            _set_h2_write_deadline!(conn, Int64(0))
+            _write_all_h2!(conn, bytes)
         finally
             unlock(conn.write_lock)
         end
@@ -1353,7 +1359,7 @@ function _run_h2_read_loop!(conn::H2Connection)
     try
         while true
             (@atomic :acquire conn.closed) && return nothing
-            frame = read_frame!(conn.reader)
+            frame = read_frame!(conn.reader, conn.frame_buf)
             _note_h2_frame_read!(conn)
             _process_incoming_frame!(conn, frame)
         end
@@ -1547,6 +1553,8 @@ function _connect_h2_from_tcp!(
             Int64(time_ns()),
             UInt32(0),
             false,
+            UInt8[],
+            Vector{UInt8}(undef, 26),
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)

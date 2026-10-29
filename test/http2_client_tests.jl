@@ -1182,6 +1182,30 @@ end
     end
 end
 
+@testset "HTTP/2 downloads do not allocate per DATA frame" begin
+    payload = rand(UInt8, 4 << 20)
+    listener = TL.listen("tcp", "127.0.0.1:0", TL.Config(
+        verify_peer = false, cert_file = _TLS_CERT_PATH, key_file = _TLS_KEY_PATH, alpn_protocols = ["h2"]); backlog = 8)
+    server = HT.serve!(request -> HT.Response(200, payload), listener)
+    client = HT.Client(transport = HT.Transport(tls_config = TL.Config(verify_peer = false, server_name = "localhost")))
+    sink = Vector{UInt8}(undef, length(payload))
+    url = "https://$(HT.server_addr(server))/"
+    try
+        download() = HT.get(url; client, response_stream = sink)
+        for _ in 1:3
+            @test download().proto_major == 2
+        end
+        # Server writes and client reads reuse their buffers, so the bytes allocated
+        # by both ends are a small fraction of the 256 DATA frames' payload.
+        @test @allocated(download()) < length(payload) ÷ 4
+        @test sink == payload
+    finally
+        close(client)
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 @testset "HTTP/2 client exposes response trailers after body EOF" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -3179,6 +3203,8 @@ function _build_bare_h2_connection()
         Int64(0),
         UInt32(0),
         false,
+        UInt8[],
+        Vector{UInt8}(undef, 26),
     )
     cleanup = () -> begin
         close(client_tcp)

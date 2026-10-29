@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- HTTP/2 downloads no longer allocate per DATA frame: the client reads each
+  payload into one buffer per connection before copying it into its stream,
+  encodes WINDOW_UPDATE frames into a reused buffer, and the server reuses one
+  buffer for each response body's DATA frames. A 16 MiB download into a
+  `response_stream` allocated 16.3 MiB in the client, and 37 MiB with an
+  HTTP.jl server in the same process; it now allocates 0.2 MiB and 0.3 MiB.
+  ([#1527])
+
 ## [v2.13.3] - 2026-10-29
 
 ### Fixed
@@ -1672,3 +1681,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1533]: https://github.com/JuliaWeb/HTTP.jl/issues/1533
 [#1534]: https://github.com/JuliaWeb/HTTP.jl/issues/1534
 [#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
+[#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
