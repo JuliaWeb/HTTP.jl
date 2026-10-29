@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset the same way, instead of logged and answered with 500, and a refused
   buffered response no longer keeps up to 16 KiB of the connection's send
   window, which after a few such responses stalled every later one. ([#1531])
+- A WebSocket server no longer answers a client that hung up without a close
+  frame, or a read idle timeout, with the close frame
+  `1002 invalid close status code`. Close code 1006 is never sent: `close`
+  with it now closes the connection without a frame. ([#1533])
 
 ## [v2.13.2] - 2026-10-29
 
@@ -1647,3 +1651,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1529]: https://github.com/JuliaWeb/HTTP.jl/issues/1529
 [#1524]: https://github.com/JuliaWeb/HTTP.jl/issues/1524
 [#1531]: https://github.com/JuliaWeb/HTTP.jl/issues/1531
+[#1533]: https://github.com/JuliaWeb/HTTP.jl/issues/1533
