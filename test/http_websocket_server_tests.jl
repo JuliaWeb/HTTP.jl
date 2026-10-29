@@ -255,6 +255,39 @@ end
     @test any(record -> record.kwargs[:exception][1] isa HT.ProtocolError, records)
 end
 
+@testset "HTTP.WebSockets server sends no close frame to a client that hung up" begin
+    # The client half-closes without a close frame. The server records that as
+    # 1006, which is never sent; it sent "1002 invalid close status code".
+    for upgrade in (false, true)
+        server = if upgrade
+            HT.listen!("127.0.0.1", 0; listenany = true) do stream
+                W.upgrade(ws -> (for msg in ws; end), stream)
+            end
+        else
+            W.listen!(ws -> (for msg in ws; end), "127.0.0.1", 0)
+        end
+        address = upgrade ? HT.server_addr(server) : W.server_addr(server)
+        sock = NC.connect(ND.HostResolver(), "tcp", address)
+        try
+            key = HT.WebSockets.ws_random_handshake_key()
+            write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" *
+                "Sec-WebSocket-Key: $(key)\r\nSec-WebSocket-Version: 13\r\n\r\n")))
+            head = UInt8[]
+            byte = Vector{UInt8}(undef, 1)
+            while !endswith(String(copy(head)), "\r\n\r\n")
+                readbytes!(sock, byte, 1; all = true) == 1 || error("unexpected EOF")
+                append!(head, byte)
+            end
+            @test startswith(String(head), "HTTP/1.1 101 ")
+            NC.closewrite(sock)
+            @test isempty(read(sock))
+        finally
+            NC.close(sock)
+            upgrade ? HT.forceclose(server) : close(server)
+        end
+    end
+end
+
 @testset "HTTP.WebSockets server timeouts bound the handshake and idle reads" begin
     # A 1 ns timeout has passed before any byte arrives.
     handshake_server = W.listen!(ws -> nothing, "127.0.0.1", 0; read_header_timeout_ns = 1)
