@@ -1449,10 +1449,10 @@ function _make_tls_config_for_h2(
     # offers h1 so TLS can complete and fall back when the peer declines h2.
     protocols = isempty(config.alpn_protocols) ? default_protocols : copy(config.alpn_protocols)
     effective_handshake_timeout_ns = _min_nonzero_ns(config.handshake_timeout_ns, handshake_timeout_ns)
-    effective_server_name = if server_name === nothing
-        config.server_name === nothing ? host : config.server_name::String
-    else
-        server_name
+    # A server name set on the transport's TLS config is verified on every
+    # connection, as for HTTP/1 (`_effective_tls_config`).
+    if config.server_name !== nothing
+        effective_server_name = config.server_name::String
     end
     return _copy_tls_config_for_request(
         config,
