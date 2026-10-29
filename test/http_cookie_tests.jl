@@ -253,6 +253,7 @@ end
     @test !HT.Cookies.hasport("[::1]")
     @test HT.Cookies.canonicalhost("Example.com.:443") == "example.com"
     @test HT.Cookies.canonicalhost("exämple.com") == ""
+    @test HT.Cookies.canonicalhost(":443") == ""
     @test HT.Cookies.defaultPath("") == "/"
     @test HT.Cookies.defaultPath("relative") == "/"
     @test HT.Cookies.defaultPath("/file") == "/"
@@ -295,6 +296,8 @@ end
 
     # Non-ASCII names and quoted values are invalid and skipped.
     @test isempty(C.readsetcookies(_set_cookie_headers("ké=v", "k=\"é\"")))
+    # A value with no cookie in it, or no name before the first ';'.
+    @test isempty(C.readsetcookies(_set_cookie_headers(";", " ;; ", "\u00a0", ";k=v", "; k=v; Path=/")))
     @test [(c.name, c.value) for c in C.readsetcookies(_set_cookie_headers("k=v; pä=1"))] == [("k", "v")]
     headers = HT.Headers()
     HT.appendheader(headers, "Cookie", "ké=v; ok=1")

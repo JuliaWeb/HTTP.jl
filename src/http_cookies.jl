@@ -294,7 +294,9 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
     result = Cookie[]
     for line in headers(hdrs, "Set-Cookie")
         isempty(line) && continue
-        parts = split(strip(line), ';'; keepempty=false)
+        # Keep empty parts, as Go does, so `parts[1]` exists even for a value
+        # such as ";": an empty first part is a missing name, and is skipped.
+        parts = split(strip(line), ';')
         length(parts) == 1 && parts[1] == "" && continue
         part = strip(parts[1])
         j = findfirst(isequal('='), part)
@@ -704,7 +706,7 @@ function canonicalhost(host)
     isempty(host) && return ""
     if hasport(host)
         host, _, err = splithostport(host)
-        err && return ""
+        (err || isempty(host)) && return ""
     end
     host[end] == '.' && (host = chop(host))
     return isascii(host) ? _fast_lowercase(host) : ""
