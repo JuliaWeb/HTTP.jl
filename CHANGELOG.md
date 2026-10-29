@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.13.3] - 2026-10-29
+
 ### Fixed
 - After an HTTP/2 connection error, the server half-closes the connection and
   drains the client's input (for up to 500 ms) before closing it. Closing at
@@ -1305,7 +1307,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.2...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...HEAD
+[v2.13.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.2...v2.13.3
 [v2.13.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.1...v2.13.2
 [v2.13.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.0...v2.13.1
 [v2.13.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.12.3...v2.13.0
