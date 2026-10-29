@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frame, or a read idle timeout, with the close frame
   `1002 invalid close status code`. Close code 1006 is never sent: `close`
   with it now closes the connection without a frame. ([#1533])
+- A request whose `server_name` is pinned (`do!` or `roundtrip!` with
+  `server_name`) no longer reuses an idle TLS connection to the same address
+  that was verified for a different server name. The pinned name is now part
+  of the connection pool key, so it is always checked against the server's
+  certificate. ([#1534])
 
 ## [v2.13.2] - 2026-10-29
 
@@ -1657,3 +1662,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1532]: https://github.com/JuliaWeb/HTTP.jl/issues/1532
 [#1531]: https://github.com/JuliaWeb/HTTP.jl/issues/1531
 [#1533]: https://github.com/JuliaWeb/HTTP.jl/issues/1533
+[#1534]: https://github.com/JuliaWeb/HTTP.jl/issues/1534
