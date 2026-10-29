@@ -2337,3 +2337,46 @@ end
 end
 
 end
+
+@testset "HTTP transport pool: one host may fill it, and a full pool closes its oldest idle connection" begin
+    transport = HT.Transport()
+    @test transport.max_idle_total == 64
+    @test transport.max_idle_per_host == 64
+    close(transport)
+    transport = HT.Transport(max_idle_total = 8)
+    @test transport.max_idle_per_host == 8
+    close(transport)
+
+    listeners = [ND.listen("tcp", "127.0.0.1:0"; backlog = 8) for _ in 1:2]
+    addresses = [ND.join_host_port("127.0.0.1", Int((NC.addr(l)::NC.SocketAddrV4).port)) for l in listeners]
+    accepted = Channel{NC.Conn}(8)
+    server_tasks = [Threads.@spawn(try
+        while true
+            put!(accepted, NC.accept(l))
+        end
+    catch
+    end) for l in listeners]
+    transport = HT.Transport(max_idle_total = 2)
+    try
+        plans = [HT._proxy_plan(transport.proxy, false, a) for a in addresses]
+        a1 = HT._acquire_conn!(transport, plans[1], addresses[1], false, nothing)
+        a2 = HT._acquire_conn!(transport, plans[1], addresses[1], false, nothing)
+        b1 = HT._acquire_conn!(transport, plans[2], addresses[2], false, nothing)
+        HT._put_idle_conn!(transport, a1)
+        HT._put_idle_conn!(transport, a2)
+        # The pool is full: b1 stays and a1, idle the longest, is closed.
+        HT._put_idle_conn!(transport, b1)
+        @test HT._conn_closed(a1)
+        @test !HT._conn_closed(a2)
+        @test !HT._conn_closed(b1)
+        @test lock(() -> (transport.idle[a2.key] == [a2] && transport.idle[b1.key] == [b1]), transport.lock)
+        @test (@atomic transport.idle_total) == 2
+    finally
+        close(transport)
+        foreach(l -> HTTP.@try_ignore(NC.close(l)), listeners)
+        foreach(t -> HTTP.@try_ignore(wait(t)), server_tasks)
+        while isready(accepted)
+            HTTP.@try_ignore NC.close(take!(accepted))
+        end
+    end
+end
