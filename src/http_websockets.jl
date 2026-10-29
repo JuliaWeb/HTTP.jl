@@ -28,6 +28,9 @@ import ..CookieJar
 import ..COOKIEJAR
 import ..Cookies
 import .._ConnReader
+import .._ascii_equal_fold
+import .._ascii_lowercase_string
+import .._strip_ows
 import .._blocking_readbytes!
 import .._USE_TRANSPORT_PROXY
 import .._close_conn!
@@ -260,10 +263,9 @@ end
 function _response_has_token(hdrs::Headers, name::AbstractString, token::AbstractString)::Bool
     values = headers(hdrs, name)
     isempty(values) && return false
-    lower_token = lowercase(token)
     for value in values
         for part in eachsplit(value, ',')
-            lowercase(strip(part)) == lower_token && return true
+            _ascii_equal_fold(_strip_ows(part), token) && return true
         end
     end
     return false
@@ -791,7 +793,7 @@ end
 
 function _parse_websocket_url(url::AbstractString, query=nothing)
     text = String(url)
-    lower = lowercase(text)
+    lower = _ascii_lowercase_string(text)
     if startswith(lower, "ws://")
         return _parse_http_url("http://" * text[6:end], query)
     elseif startswith(lower, "wss://")
@@ -804,7 +806,7 @@ end
 
 function _normalize_websocket_redirect_location(location::AbstractString)::String
     text = String(location)
-    lower = lowercase(text)
+    lower = _ascii_lowercase_string(text)
     if startswith(lower, "ws://")
         return "http://" * text[6:end]
     elseif startswith(lower, "wss://")
@@ -823,7 +825,7 @@ function _validate_websocket_upgrade!(
     accept == expected_accept || throw(WebSocketError(CloseFrameBody(1002, "websocket handshake accept mismatch")))
     subprotocol = header(response.headers, "Sec-WebSocket-Protocol", nothing)
     subprotocol === nothing && return nothing
-    normalized = strip(subprotocol)
+    normalized = _strip_ows(subprotocol)
     isempty(normalized) && return nothing
     if isempty(requested_subprotocols)
         throw(WebSocketError(CloseFrameBody(1002, "unexpected websocket subprotocol in response")))
@@ -1505,7 +1507,7 @@ function _origin_allowed_default(request::Request, server_secure::Bool=false)::B
     server = _split_host_with_default_port(request_host::String, server_default_port)
     server === nothing && return false
     req_host, req_port = server
-    return lowercase(origin_host) == lowercase(req_host) && origin_port == req_port
+    return _ascii_equal_fold(origin_host, req_host) && origin_port == req_port
 end
 
 function _run_origin_check(checker, request::Request)::Bool
@@ -1540,7 +1542,7 @@ function _upgrade_response(
     _ws_headers_have_token(request.headers, "Connection", "upgrade", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     version = header(request.headers, "Sec-WebSocket-Version", nothing)
     version === nothing && return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
-    strip(version) == "13" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
+    _strip_ows(version) == "13" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     raw_key = header(request.headers, "Sec-WebSocket-Key", nothing)
     raw_key === nothing && return Response(400, BytesBody(Vector{UInt8}("missing websocket key")); content_length=21, headers=Headers())
     allowed = check_origin === nothing ? _origin_allowed_default(request, server_secure) : _run_origin_check(check_origin, request)

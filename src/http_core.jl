@@ -1111,7 +1111,10 @@ function _ascii_case(s::AbstractString, upper::Bool, unicode::Bool)::String
     changes = false
     @inbounds for b in units
         if b >= 0x80 && unicode
-            return upper ? uppercase(str) : lowercase(str)
+            # Base's case mapping throws on invalid UTF-8, which peers can send
+            # as header bytes; fold only the ASCII letters of such a string.
+            isvalid(str) && return upper ? uppercase(str) : lowercase(str)
+            unicode = false
         end
         changes |= lo <= b <= hi
     end
@@ -1155,6 +1158,17 @@ end
     # Most values have nothing to trim; return a String as is.
     s isa String && lo == firstindex(s) && hi == lastindex(s) && return s
     return String(SubString(s, lo, hi))
+end
+
+# `strip` for header text: removes only SP and HTAB, HTTP's whitespace (OWS,
+# RFC 9110 §5.6.3), and returns a view. Base `strip` checks characters with
+# `isspace`, which throws InvalidCharError on overlong UTF-8 that a peer can
+# send in a header value.
+@inline function _strip_ows(s::AbstractString)::SubString{String}
+    str = s isa Union{String,SubString{String}} ? s : String(s)
+    lo, hi = _trim_http_ows_bounds(codeunits(str))
+    hi < lo && return SubString(str, 1, 0)
+    return SubString(str, lo, thisind(str, hi))
 end
 
 @inline function _trim_http_ows_bounds(bytes)::Tuple{Int,Int}

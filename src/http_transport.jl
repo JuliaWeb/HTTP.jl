@@ -1647,11 +1647,11 @@ function _keepalive_timeout_hint_ns(hdrs::Headers)::Int64
         for param in eachsplit(value, ',')
             eq = findfirst(==('='), param)
             eq === nothing && continue
-            name = strip(SubString(param, firstindex(param), prevind(param, eq)))
+            name = _strip_ows(SubString(param, firstindex(param), prevind(param, eq)))
             _ascii_lowercase_equal(name, "timeout") || continue
-            raw = strip(SubString(param, nextind(param, eq)))
+            raw = _strip_ows(SubString(param, nextind(param, eq)))
             if ncodeunits(raw) >= 2 && startswith(raw, '"') && endswith(raw, '"')
-                raw = strip(SubString(raw, nextind(raw, firstindex(raw)), prevind(raw, lastindex(raw))))
+                raw = _strip_ows(SubString(raw, nextind(raw, firstindex(raw)), prevind(raw, lastindex(raw))))
             end
             (!isempty(raw) && all(isdigit, raw)) || continue
             secs = tryparse(Int64, raw)

@@ -1080,9 +1080,9 @@ function _request_has_unsupported_expect(request::Request)::Bool
     saw_supported = false
     for value in values
         for token in eachsplit(value, ',')
-            trimmed = lowercase(strip(token))
+            trimmed = _strip_ows(token)
             isempty(trimmed) && return true
-            if trimmed == "100-continue"
+            if _ascii_equal_fold(trimmed, "100-continue")
                 saw_supported = true
                 continue
             end

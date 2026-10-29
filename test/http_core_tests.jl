@@ -22,9 +22,9 @@ const HT = HTTP
             @test HT._fast_lowercase(s) == lowercase(s)
             @test HT._fast_uppercase(s) == uppercase(s)
         else
-            # Base rejects invalid UTF-8, and so do these.
-            @test_throws Base.InvalidCharError HT._fast_lowercase(s)
-            @test_throws Base.InvalidCharError HT._fast_uppercase(s)
+            # Base throws on invalid UTF-8, which peers can send; fold ASCII only.
+            @test HT._fast_lowercase(s) == "a\xffb"
+            @test HT._fast_uppercase(s) == "A\xffB"
         end
         @test HT._ascii_lowercase_string(s) == String(map(c -> isascii(c) ? lowercase(c) : c, collect(s)))
         @test HT.canonical_header_key(s) == canonical_reference(s)
@@ -39,6 +39,37 @@ const HT = HTTP
     @test minimum(@allocated(lower_name()) for _ in 1:3) < 32
     @test minimum(@allocated(canonical_name()) for _ in 1:3) < 32
     @test minimum(@allocated(method()) for _ in 1:3) < 32
+end
+
+@testset "Header text that is not UTF-8 is compared and shown without throwing" begin
+    bad = "\xff"
+    @test HT._response_content_encoding(HT.Headers(["Content-Encoding" => "gzip$(bad)"]), nothing) === nothing
+    @test HT._response_content_encoding(HT.Headers(["Content-Encoding" => "GZIP"]), nothing) === :gzip
+    @test HT._multipart_subtype_and_boundary("multipart/form-data$(bad); boundary=x") == ("form-data$(bad)", "x")
+    @test HT._multipart_subtype_and_boundary("Multipart/Form-Data; Boundary$(bad)=x") === nothing
+    @test !HT.WebSockets._ws_header_value_has_token("up$(bad)grade", "upgrade")
+    @test HT.WebSockets._ws_header_value_has_token("x$(bad), Upgrade", "upgrade")
+    @test HT.WebSockets._response_has_token(HT.Headers(["Upgrade" => "web$(bad)socket, WebSocket"]), "Upgrade", "websocket")
+    @test HT.WebSockets._pmce_parse_extension_header("Permessage-Deflate$(bad); A$(bad)=1") ==
+          [("permessage-deflate$(bad)", Dict("a$(bad)" => "1"))]
+    @test HT._escape_terminal_control_chars("a$(bad)\e") == "a\\xFF\\e"
+    @test sprint(show, HT.Response(200; reason = "R$(bad)")) == "Response(HTTP.Response 200 R\\xFF, 0 headers, no body)"
+    # Overlong UTF-8: Base `strip`, `isspace`, and `tryparse(Int, _)` throw on it.
+    long = "\xe0\x8f\x88"
+    @test HT._strip_ows(" \ta$(long) \t") == "a$(long)"
+    @test HT._strip_ows(" \t ") == ""
+    @test [(c.name, c.value) for c in HT.Cookies.readsetcookies(HT.Headers(["Set-Cookie" => "a=b; Max-Age=$(long)", "Set-Cookie" => "$(long)"]))] == [("a", "b")]
+    @test isempty(HT.Cookies.readcookies(HT.Headers(["Cookie" => "$(long)=1"]), ""))
+    @test HT._response_content_encoding(HT.Headers(["Content-Encoding" => "$(long)gzip"]), nothing) === nothing
+    @test HT._keepalive_timeout_hint_ns(HT.Headers(["Keep-Alive" => "timeout=$(long)"])) == -1
+    @test HT._parse_retry_after_delay_ns("$(long)") === nothing
+    @test HT._parse_sse_retry("$(long)") === nothing
+    @test HT._parse_single_range("bytes=0-$(long)", Int64(10)) === :invalid
+    @test HT._parse_http_date("$(long)") === nothing
+    @test HT._multipart_subtype_and_boundary("multipart/form-data; boundary=$(long)") == ("form-data", "$(long)")
+    @test HT.WebSockets._pmce_parse_window_bits("$(long)") === nothing
+    @test !HT.WebSockets._ws_valid_handshake_key("$(long)")
+    @test occursin("<x$(bad)-compressed", sprint(show, MIME"text/plain"(), HT.Response(200, ["Content-Encoding" => "x$(bad)"]; body = "hi")))
 end
 
 @testset "HTTP core headers" begin

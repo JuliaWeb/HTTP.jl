@@ -82,7 +82,7 @@ end
 end
 
 function _parse_http_date(value::AbstractString)::Union{Nothing,DateTime}
-    stripped = strip(value)
+    stripped = _strip_ows(value)
     isempty(stripped) && return nothing
     return Cookies._parse_http_gmt_datetime(stripped)
 end
@@ -91,7 +91,7 @@ end
 # whitespace, from the rest of `value`. Both are views into `value`, so scanning
 # a list of tags stays linear in its length. An invalid tag gives an empty tag.
 function _scan_http_etag(value::Union{String,SubString{String}})::Tuple{SubString{String},SubString{String}}
-    s = strip(value)
+    s = _strip_ows(value)
     bytes = codeunits(s)
     n = length(bytes)
     start = n >= 2 && bytes[1] == UInt8('W') && bytes[2] == UInt8('/') ? 3 : 1
@@ -122,7 +122,7 @@ function _header_etag(headers::Headers)::String
     isempty(raw) && return ""
     etag, remain = _scan_http_etag(raw)
     isempty(etag) && return ""
-    isempty(strip(remain)) || return ""
+    isempty(_strip_ows(remain)) || return ""
     return String(etag)
 end
 
@@ -132,7 +132,7 @@ function _if_match_satisfied(request::Request, headers::Headers)::Union{Nothing,
     etag = _header_etag(headers)
     buf = SubString(raw)
     while true
-        buf = strip(buf)
+        buf = _strip_ows(buf)
         isempty(buf) && break
         if first(buf) == ','
             buf = SubString(buf, 2)
@@ -163,7 +163,7 @@ function _if_none_match_satisfied(request::Request, headers::Headers)::Union{Not
     etag = _header_etag(headers)
     buf = SubString(raw)
     while true
-        buf = strip(buf)
+        buf = _strip_ows(buf)
         isempty(buf) && break
         if first(buf) == ','
             buf = SubString(buf, 2)
@@ -194,7 +194,7 @@ function _if_range_satisfied(request::Request, headers::Headers, modtime::Union{
     raw = header(request.headers, "If-Range", "")
     isempty(raw) && return nothing
     etag, remain = _scan_http_etag(raw)
-    if !isempty(etag) && isempty(strip(remain))
+    if !isempty(etag) && isempty(_strip_ows(remain))
         return _etag_strong_match(etag, _header_etag(headers))
     end
     modtime === nothing && return false
@@ -248,7 +248,7 @@ function _parse_single_range(range_header::AbstractString, size::Int64)::Union{N
     # Ignore an unknown range unit (RFC 9110 §14.2) and a request for several
     # ranges, which would need a multipart response: send the whole content.
     startswith(range_header, "bytes=") || return nothing
-    specs = filter(!isempty, map(strip, split(String(SubString(String(range_header), 7)), ',')))
+    specs = filter(!isempty, map(_strip_ows, split(String(SubString(String(range_header), 7)), ',')))
     length(specs) > 1 && return nothing
     length(specs) == 1 || return :invalid
     spec = specs[1]
@@ -293,7 +293,7 @@ function _servecontent_extension_type(name::AbstractString)::Union{Nothing,Strin
     slash = _find_last_ascii_delim(name, 0x2f)
     dot = _find_last_ascii_delim(name, 0x2e)
     (dot == 0 || dot <= slash) && return nothing
-    ext = lowercase(String(SubString(name, dot, lastindex(name))))
+    ext = _ascii_lowercase_string(SubString(name, dot, lastindex(name)))
     return get(() -> nothing, _SERVECONTENT_EXTENSION_MIME_TYPES, ext)
 end
 

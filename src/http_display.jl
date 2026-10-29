@@ -10,7 +10,7 @@ const _HTTP_REDACTED_HEADERS = Set([
 ])
 
 @inline function _http_render_header_value(name::AbstractString, value::AbstractString)::String
-    return lowercase(String(name)) in _HTTP_REDACTED_HEADERS ? "******" : String(value)
+    return _ascii_lowercase_string(name) in _HTTP_REDACTED_HEADERS ? "******" : String(value)
 end
 
 @inline function _http_proto_string(major::Integer, minor::Integer)::String
@@ -30,6 +30,14 @@ function _escape_terminal_control_chars(text::AbstractString)::String
     out = IOBuffer()
     changed = false
     for c in text
+        if !isvalid(c)
+            # Bytes that are not UTF-8 have no code point; show them as \xNN.
+            for b in codeunits(string(c))
+                write(out, "\\x", uppercase(string(b, base=16, pad=2)))
+            end
+            changed = true
+            continue
+        end
         code = UInt32(c)
         if c == '\n'
             write(out, "\\n")
@@ -62,7 +70,7 @@ function _body_content_encoding(headers::Union{Nothing,Headers})::Union{Nothing,
     headers === nothing && return nothing
     value = header(headers::Headers, "Content-Encoding", nothing)
     value === nothing && return nothing
-    normalized = lowercase(strip(value::String))
+    normalized = _ascii_lowercase_string(_strip_ows(value::String))
     isempty(normalized) && return nothing
     normalized == "identity" && return nothing
     return normalized

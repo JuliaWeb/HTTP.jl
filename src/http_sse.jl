@@ -454,7 +454,9 @@ function _append_sse_field!(state::_SSEState, field::String, value::String)::Not
 end
 
 function _parse_sse_retry(value::String)
-    parsed = tryparse(Int, strip(value))
+    digits = _strip_ows(value)
+    # `tryparse` skips Unicode whitespace with `isspace`, which throws on overlong UTF-8.
+    parsed = isascii(digits) ? tryparse(Int, digits) : nothing
     (parsed === nothing || parsed < 0) && return nothing
     return parsed
 end

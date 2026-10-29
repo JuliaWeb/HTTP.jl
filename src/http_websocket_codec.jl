@@ -735,7 +735,7 @@ function ws_compute_accept_key(key::AbstractString)::String
 end
 
 function _ws_valid_handshake_key(key::AbstractString)::Bool
-    stripped = strip(String(key))
+    stripped = _strip_ows(String(key))
     isempty(stripped) && return false
     decoded = try
         Base64.base64decode(stripped)
@@ -747,12 +747,12 @@ end
 
 @inline function _ws_header_value_has_token(value::AbstractString, token::AbstractString, case_sensitive::Bool=false)::Bool
     for part in eachsplit(value, ',')
-        trimmed = strip(part)
+        trimmed = _strip_ows(part)
         isempty(trimmed) && continue
         if case_sensitive
             trimmed == token && return true
         else
-            lowercase(trimmed) == lowercase(token) && return true
+            _ascii_equal_fold(trimmed, token) && return true
         end
     end
     return false
@@ -774,14 +774,14 @@ function ws_is_websocket_request(request::Request)::Bool
     ws_get_request_sec_websocket_key(request) === nothing && return false
     version = header(request.headers, "Sec-WebSocket-Version", nothing)
     version === nothing && return false
-    strip(version) == "13" || return false
+    _strip_ows(version) == "13" || return false
     return true
 end
 
 function ws_get_request_sec_websocket_key(request::Request)::Union{Nothing,String}
     key = header(request.headers, "Sec-WebSocket-Key", nothing)
     key === nothing && return nothing
-    stripped = strip(key)
+    stripped = _strip_ows(key)
     _ws_valid_handshake_key(stripped) || return nothing
     return stripped
 end
@@ -792,7 +792,7 @@ function ws_select_subprotocol(request::Request, server_protocols::AbstractVecto
     requested = String[]
     for value in values
         for part in eachsplit(value, ',')
-            trimmed = strip(part)
+            trimmed = _strip_ows(part)
             isempty(trimmed) && continue
             push!(requested, String(trimmed))
         end
