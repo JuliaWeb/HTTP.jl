@@ -1052,6 +1052,10 @@ end
         raw, closed = _raw_http_request_until_close(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n")
         @test occursin("HTTP/1.1 417", raw)
         @test closed
+        # Header bytes that are not UTF-8 get the same answer, not a dropped connection.
+        raw, closed = _raw_http_request_until_close(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: \xff-continue\r\nConnection: close\r\n\r\n")
+        @test occursin("HTTP/1.1 417", raw)
+        @test closed
     finally
         _run_test_operation(() -> HT.forceclose(server))
         _run_test_operation(() -> wait(server))

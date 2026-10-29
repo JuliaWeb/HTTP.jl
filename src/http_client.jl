@@ -1543,7 +1543,7 @@ function _response_content_encoding(headers::Headers, decompress::Union{Nothing,
     decompress === false && return nothing
     encoding = header(headers, "Content-Encoding", nothing)
     encoding === nothing && return nothing
-    normalized = lowercase(strip(encoding))
+    normalized = _ascii_lowercase_string(strip(encoding))
     if normalized == "gzip" || normalized == "x-gzip"
         return :gzip
     elseif normalized == "deflate" || normalized == "x-deflate"

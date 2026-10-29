@@ -293,7 +293,7 @@ function _servecontent_extension_type(name::AbstractString)::Union{Nothing,Strin
     slash = _find_last_ascii_delim(name, 0x2f)
     dot = _find_last_ascii_delim(name, 0x2e)
     (dot == 0 || dot <= slash) && return nothing
-    ext = lowercase(String(SubString(name, dot, lastindex(name))))
+    ext = _ascii_lowercase_string(SubString(name, dot, lastindex(name)))
     return get(() -> nothing, _SERVECONTENT_EXTENSION_MIME_TYPES, ext)
 end
 

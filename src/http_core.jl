@@ -1111,7 +1111,10 @@ function _ascii_case(s::AbstractString, upper::Bool, unicode::Bool)::String
     changes = false
     @inbounds for b in units
         if b >= 0x80 && unicode
-            return upper ? uppercase(str) : lowercase(str)
+            # Base's case mapping throws on invalid UTF-8, which peers can send
+            # as header bytes; fold only the ASCII letters of such a string.
+            isvalid(str) && return upper ? uppercase(str) : lowercase(str)
+            unicode = false
         end
         changes |= lo <= b <= hi
     end

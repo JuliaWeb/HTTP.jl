@@ -104,7 +104,7 @@ function _resolve_relative_redirect_request_target(current_target::String, locat
 end
 
 @inline function _normalize_redirect_host(host::String)::String
-    normalized = lowercase(host)
+    normalized = _fast_lowercase(host)
     while !isempty(normalized) && last(normalized) == '.'
         normalized = normalized[1:prevind(normalized, lastindex(normalized))]
     end

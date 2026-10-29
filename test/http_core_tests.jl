@@ -22,9 +22,9 @@ const HT = HTTP
             @test HT._fast_lowercase(s) == lowercase(s)
             @test HT._fast_uppercase(s) == uppercase(s)
         else
-            # Base rejects invalid UTF-8, and so do these.
-            @test_throws Base.InvalidCharError HT._fast_lowercase(s)
-            @test_throws Base.InvalidCharError HT._fast_uppercase(s)
+            # Base throws on invalid UTF-8, which peers can send; fold ASCII only.
+            @test HT._fast_lowercase(s) == "a\xffb"
+            @test HT._fast_uppercase(s) == "A\xffB"
         end
         @test HT._ascii_lowercase_string(s) == String(map(c -> isascii(c) ? lowercase(c) : c, collect(s)))
         @test HT.canonical_header_key(s) == canonical_reference(s)
@@ -39,6 +39,22 @@ const HT = HTTP
     @test minimum(@allocated(lower_name()) for _ in 1:3) < 32
     @test minimum(@allocated(canonical_name()) for _ in 1:3) < 32
     @test minimum(@allocated(method()) for _ in 1:3) < 32
+end
+
+@testset "Header text that is not UTF-8 is compared and shown without throwing" begin
+    bad = "\xff"
+    @test HT._response_content_encoding(HT.Headers(["Content-Encoding" => "gzip$(bad)"]), nothing) === nothing
+    @test HT._response_content_encoding(HT.Headers(["Content-Encoding" => "GZIP"]), nothing) === :gzip
+    @test HT._multipart_subtype_and_boundary("multipart/form-data$(bad); boundary=x") == ("form-data$(bad)", "x")
+    @test HT._multipart_subtype_and_boundary("Multipart/Form-Data; Boundary$(bad)=x") === nothing
+    @test !HT.WebSockets._ws_header_value_has_token("up$(bad)grade", "upgrade")
+    @test HT.WebSockets._ws_header_value_has_token("x$(bad), Upgrade", "upgrade")
+    @test HT.WebSockets._response_has_token(HT.Headers(["Upgrade" => "web$(bad)socket, WebSocket"]), "Upgrade", "websocket")
+    @test HT.WebSockets._pmce_parse_extension_header("Permessage-Deflate$(bad); A$(bad)=1") ==
+          [("permessage-deflate$(bad)", Dict("a$(bad)" => "1"))]
+    @test HT._escape_terminal_control_chars("a$(bad)\e") == "a\\xFF\\e"
+    @test sprint(show, HT.Response(200; reason = "R$(bad)")) == "Response(HTTP.Response 200 R\\xFF, 0 headers, no body)"
+    @test occursin("<x$(bad)-compressed", sprint(show, MIME"text/plain"(), HT.Response(200, ["Content-Encoding" => "x$(bad)"]; body = "hi")))
 end
 
 @testset "HTTP core headers" begin

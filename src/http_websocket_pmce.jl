@@ -215,9 +215,9 @@ function _pmce_parse_extension_header(value::AbstractString)::Vector{Tuple{Strin
             kv = split(strip(p), '='; limit=2)
             key = strip(kv[1])
             isempty(key) && continue
-            params[lowercase(String(key))] = length(kv) == 2 ? strip(kv[2], ['"', ' ']) : ""
+            params[_ascii_lowercase_string(key)] = length(kv) == 2 ? strip(kv[2], ['"', ' ']) : ""
         end
-        push!(offers, (lowercase(String(name)), params))
+        push!(offers, (_ascii_lowercase_string(name), params))
     end
     return offers
 end

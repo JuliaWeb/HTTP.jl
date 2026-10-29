@@ -752,7 +752,7 @@ end
         if case_sensitive
             trimmed == token && return true
         else
-            lowercase(trimmed) == lowercase(token) && return true
+            _ascii_equal_fold(trimmed, token) && return true
         end
     end
     return false

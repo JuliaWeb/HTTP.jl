@@ -28,6 +28,8 @@ import ..CookieJar
 import ..COOKIEJAR
 import ..Cookies
 import .._ConnReader
+import .._ascii_equal_fold
+import .._ascii_lowercase_string
 import .._blocking_readbytes!
 import .._USE_TRANSPORT_PROXY
 import .._close_conn!
@@ -260,10 +262,9 @@ end
 function _response_has_token(hdrs::Headers, name::AbstractString, token::AbstractString)::Bool
     values = headers(hdrs, name)
     isempty(values) && return false
-    lower_token = lowercase(token)
     for value in values
         for part in eachsplit(value, ',')
-            lowercase(strip(part)) == lower_token && return true
+            _ascii_equal_fold(strip(part), token) && return true
         end
     end
     return false
@@ -791,7 +792,7 @@ end
 
 function _parse_websocket_url(url::AbstractString, query=nothing)
     text = String(url)
-    lower = lowercase(text)
+    lower = _ascii_lowercase_string(text)
     if startswith(lower, "ws://")
         return _parse_http_url("http://" * text[6:end], query)
     elseif startswith(lower, "wss://")
@@ -804,7 +805,7 @@ end
 
 function _normalize_websocket_redirect_location(location::AbstractString)::String
     text = String(location)
-    lower = lowercase(text)
+    lower = _ascii_lowercase_string(text)
     if startswith(lower, "ws://")
         return "http://" * text[6:end]
     elseif startswith(lower, "wss://")
@@ -1505,7 +1506,7 @@ function _origin_allowed_default(request::Request, server_secure::Bool=false)::B
     server = _split_host_with_default_port(request_host::String, server_default_port)
     server === nothing && return false
     req_host, req_port = server
-    return lowercase(origin_host) == lowercase(req_host) && origin_port == req_port
+    return _ascii_equal_fold(origin_host, req_host) && origin_port == req_port
 end
 
 function _run_origin_check(checker, request::Request)::Bool

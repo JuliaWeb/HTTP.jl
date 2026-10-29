@@ -401,13 +401,13 @@ end
 # or a value without a boundary.
 function _multipart_subtype_and_boundary(content_type::AbstractString)::Union{Nothing,Tuple{String,String}}
     fields = split(content_type, ';')
-    media_type = lowercase(strip(fields[1]))
+    media_type = _ascii_lowercase_string(strip(fields[1]))
     startswith(media_type, "multipart/") || return nothing
     subtype = String(SubString(media_type, ncodeunits("multipart/") + 1))
     for field in Iterators.drop(fields, 1)
         eq = findfirst(==('='), field)
         eq === nothing && continue
-        lowercase(strip(SubString(field, firstindex(field), prevind(field, eq)))) == "boundary" || continue
+        _ascii_equal_fold(strip(SubString(field, firstindex(field), prevind(field, eq))), "boundary") || continue
         value = strip(SubString(field, nextind(field, eq)))
         if length(value) >= 2 && startswith(value, '"') && endswith(value, '"')
             value = replace(SubString(value, nextind(value, firstindex(value)), prevind(value, lastindex(value))), r"\\(.)" => s"\1")
