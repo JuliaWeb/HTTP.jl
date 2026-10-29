@@ -2188,6 +2188,13 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         close_kind == _H2_CONN_CLOSE_PROTOCOL && _try_write_h2_goaway!(conn, write_lock, max_stream_id, UInt32(0x1), _server_write_deadline_ns(server))
         _fail_h2_send_window_state!(send_state)
         _fail_h2_server_streams!(states_lock, states, send_state)
+        if close_kind == _H2_CONN_CLOSE_PROTOCOL
+            # The client usually has frames in flight. Closing with them unread
+            # resets the connection, which drops a GOAWAY not yet delivered, so
+            # half-close and drain first, as the HTTP/1 server does (bounded).
+            @try_ignore _close_server_write!(conn)
+            _drain_before_close!(conn)
+        end
         _set_conn_shutdown_hook!(tracked, nothing)
         _finalize_server_conn!(server, tracked)
     end

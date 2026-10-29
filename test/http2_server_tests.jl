@@ -2391,6 +2391,47 @@ end
     end
 end
 
+@testset "HTTP/2 server's error GOAWAY reaches a client that keeps sending" begin
+    # A connection error ends with GOAWAY and a close. Closing a socket that still
+    # holds unread input resets the connection (RST instead of FIN), which drops
+    # any GOAWAY bytes not yet delivered, so the server half-closes and drains
+    # the input first: the client reads the GOAWAY and then EOF, not a reset.
+    server = HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        # A PING with a 7-byte payload is a connection error; 256 KiB of PINGs follow it.
+        bad_ping = UInt8[0x00, 0x00, 0x07, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
+        io = IOBuffer()
+        HT.write_frame!(io, HT.PingFrame(false, ntuple(UInt8, 8)))
+        pings = repeat(take!(io), 15_420)
+        writer = errormonitor(Threads.@spawn HTTP.@try_ignore _write_all_h2_server_raw!(conn::NC.Conn, vcat(bad_ping, pings)))
+        wait(writer)
+        frame_or_err = nothing
+        while true
+            frame_or_err = try
+                HT.read_frame!(reader)
+            catch err
+                err
+            end
+            (frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception) && break
+        end
+        @test frame_or_err isa HT.GoAwayFrame
+        frame_or_err isa HT.GoAwayFrame && @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
+        after = try
+            HT.read_frame!(reader)
+        catch err
+            err
+        end
+        @test after isa HT.ParseError && occursin("EOF", sprint(showerror, after))
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server resets a stream whose response cannot be sent" begin
     # The response headers exceed the client's SETTINGS_MAX_HEADER_LIST_SIZE.
     # The client must get RST_STREAM instead of waiting for a response forever.
