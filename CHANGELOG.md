@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made the request throw `BoundsError` while storing cookies. Such values
   are now ignored, and so is a value with no name before its first `;`
   (RFC 6265 §5.2). ([#1525])
+- The multipart parsers throw their usual error for a body with an empty or
+  very short part; they threw `MethodError`. ([#1526])
 
 ## [v2.13.1] - 2026-10-27
 
@@ -1616,3 +1618,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1520]: https://github.com/JuliaWeb/HTTP.jl/issues/1520
 [#1523]: https://github.com/JuliaWeb/HTTP.jl/issues/1523
 [#1525]: https://github.com/JuliaWeb/HTTP.jl/issues/1525
+[#1526]: https://github.com/JuliaWeb/HTTP.jl/issues/1526

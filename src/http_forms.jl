@@ -330,7 +330,8 @@ function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::Abstr
 end
 
 function find_header_boundary(bytes::AbstractVector{UInt8})
-    length(_CRLFCRLF) > length(bytes) && return nothing
+    # A part too short to hold the separator, such as an empty one, has none.
+    length(_CRLFCRLF) > length(bytes) && error("no delimiter found separating header from multipart body")
     l = length(bytes) - length(_CRLFCRLF) + 1
     i = 1
     end_index = length(_CRLFCRLF)
