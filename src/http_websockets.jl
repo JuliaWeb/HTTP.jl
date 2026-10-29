@@ -730,10 +730,21 @@ function Base.iterate(ws::WebSocket, st=nothing)
 end
 
 function close(ws::WebSocket, body::Union{Nothing,CloseFrameBody}=nothing)
+    # 1006 records that the connection closed without a close frame, such as
+    # when the peer hung up or a read timed out (RFC 6455 §7.1.5). It is never
+    # sent, and there is no close to answer: the connection just closes.
+    abnormal = body !== nothing && body.code == 1006
     @lock ws.closelock begin
         if !ws.writeclosed
             ws.writeclosed = true
-            if body !== nothing
+            if body === nothing
+                @try_ignore begin
+                    @lock ws.sendlock begin
+                        ws_close!(ws.codec; status_code=UInt16(1000), reason=UInt8[])
+                        _flush_ws_output_locked!(ws)
+                    end
+                end
+            elseif !abnormal
                 if !_valid_close_status(body.code)
                     body = CloseFrameBody(1002, "invalid close status code")
                 end
@@ -743,21 +754,17 @@ function close(ws::WebSocket, body::Union{Nothing,CloseFrameBody}=nothing)
                         _flush_ws_output_locked!(ws)
                     end
                 end
-            else
-                @try_ignore begin
-                    @lock ws.sendlock begin
-                        ws_close!(ws.codec; status_code=UInt16(1000), reason=UInt8[])
-                        _flush_ws_output_locked!(ws)
-                    end
-                end
             end
         end
     end
     if !ws.readclosed
-        deadline = time() + 5.0
-        while time() < deadline
-            ws.readclosed && break
-            IOPoll.sleep(0.05)
+        # Give the peer time to answer the close frame, if one was sent.
+        if !abnormal
+            deadline = time() + 5.0
+            while time() < deadline
+                ws.readclosed && break
+                IOPoll.sleep(0.05)
+            end
         end
         ws.readclosed = true
     end
