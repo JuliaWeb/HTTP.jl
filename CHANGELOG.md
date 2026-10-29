@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that was verified for a different server name. The pinned name is now part
   of the connection pool key, so it is always checked against the server's
   certificate. ([#1534])
+- With a `Transport` whose `tls_config` sets `server_name`, HTTP/2
+  connections (`protocol = :h2`, or `:auto` when the server offers h2) now
+  verify the server's certificate against that name, as HTTP/1 connections
+  do. They checked the request's host instead, so a certificate valid only
+  for the dialed host was accepted. ([#1535])
 
 ## [v2.13.2] - 2026-10-29
 
@@ -1663,3 +1668,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1531]: https://github.com/JuliaWeb/HTTP.jl/issues/1531
 [#1533]: https://github.com/JuliaWeb/HTTP.jl/issues/1533
 [#1534]: https://github.com/JuliaWeb/HTTP.jl/issues/1534
+[#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
