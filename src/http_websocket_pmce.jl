@@ -57,6 +57,10 @@ _inflate_init!(z::_ZStream, windowbits::Integer) =
         z, -windowbits, _zlib_version(), sizeof(_ZStream))
 _inflate!(z::_ZStream, flush::Integer) = ccall((:inflate, libz), Cint, (Ref{_ZStream}, Cint), z, flush)
 _inflate_reset!(z::_ZStream) = ccall((:inflateReset, libz), Cint, (Ref{_ZStream},), z)
+_inflate_get_dictionary!(z::_ZStream, dict::Vector{UInt8}, len::Ref{Cuint}) =
+    ccall((:inflateGetDictionary, libz), Cint, (Ref{_ZStream}, Ptr{UInt8}, Ref{Cuint}), z, dict, len)
+_inflate_set_dictionary!(z::_ZStream, dict::Vector{UInt8}, len::Integer) =
+    ccall((:inflateSetDictionary, libz), Cint, (Ref{_ZStream}, Ptr{UInt8}, Cuint), z, dict, len)
 _inflate_end!(z::_ZStream) = ccall((:inflateEnd, libz), Cint, (Ref{_ZStream},), z)
 
 # Negotiated permessage-deflate parameters (RFC 7692 §7.1). Window bits are the
@@ -145,6 +149,7 @@ function pmce_decompress!(ctx::PMCEContext, payload::AbstractVector{UInt8}; max_
     end
     out = UInt8[]
     buf = Vector{UInt8}(undef, max(256, 4 * length(input) + 256))
+    stream_ended = false
     GC.@preserve input buf begin
         z.next_in = pointer(input)
         z.avail_in = length(input) % Cuint
@@ -160,12 +165,38 @@ function pmce_decompress!(ctx::PMCEContext, payload::AbstractVector{UInt8}; max_
                     throw(WebSocketProtocolError("permessage-deflate: decompressed message exceeds maximum"))
                 append!(out, @view buf[1:produced])
             end
+            # A block with BFINAL set ends the DEFLATE stream (RFC 7692
+            # §7.2.3.4). zlib then consumes no more input and returns
+            # Z_STREAM_END again, so looping would never end.
+            if code == _Z_STREAM_END
+                stream_ended = true
+                break
+            end
             (z.avail_in == 0 && z.avail_out != 0) && break
             code == _Z_BUF_ERROR && break
         end
     end
-    ctx.inflate_no_takeover && _inflate_reset!(z)
+    if ctx.inflate_no_takeover
+        _inflate_reset!(z)
+    elseif stream_ended
+        _restart_inflate_keeping_window!(z)
+    end
     return out
+end
+
+# zlib inflates nothing after the end of a stream, so the next message needs a
+# new one. With context takeover that message may still refer to this one's
+# data (RFC 7692 §7.2.2), so the new stream starts with the old window.
+function _restart_inflate_keeping_window!(z::_ZStream)::Nothing
+    window = Vector{UInt8}(undef, 32768)
+    len = Ref{Cuint}(0)
+    GC.@preserve window begin
+        _inflate_get_dictionary!(z, window, len) == _Z_OK || error("permessage-deflate: inflateGetDictionary failed")
+        _inflate_reset!(z) == _Z_OK || error("permessage-deflate: inflateReset failed")
+        len[] == 0 || _inflate_set_dictionary!(z, window, len[]) == _Z_OK ||
+            error("permessage-deflate: inflateSetDictionary failed")
+    end
+    return nothing
 end
 
 # ── extension-header negotiation (RFC 7692 §7.1, §9) ─────────────────────────

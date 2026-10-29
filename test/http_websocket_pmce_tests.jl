@@ -33,6 +33,19 @@ const W = HTTP.WebSockets
     y = W.pmce_compress!(c3, big); @test W.pmce_decompress!(s3, y) == big
     @test x == y
 
+    # A message whose DEFLATE data ends in a block with BFINAL set, as in the
+    # RFC 7692 §7.2.3.4 example for "Hello": inflating it looped forever.
+    final_hello = UInt8[0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x00]
+    c4 = W.PMCEContext(ctx_takeover, true); s4 = W.PMCEContext(ctx_takeover, false)
+    @test W.pmce_decompress!(s4, final_hello) == Vector{UInt8}("Hello")
+    # With context takeover, later messages may refer back to "Hello".
+    W.pmce_compress!(c4, Vector{UInt8}("Hello"))
+    @test W.pmce_decompress!(s4, W.pmce_compress!(c4, Vector{UInt8}("HelloHello"))) == Vector{UInt8}("HelloHello")
+    @test W.pmce_decompress!(s4, W.pmce_compress!(c4, Vector{UInt8}("Hello"))) == Vector{UInt8}("Hello")
+    s5 = W.PMCEContext(nct, false)
+    @test W.pmce_decompress!(s5, final_hello) == Vector{UInt8}("Hello")
+    @test W.pmce_decompress!(s5, final_hello) == Vector{UInt8}("Hello")
+
     # malformed compressed data is rejected
     @test_throws W.WebSocketProtocolError W.pmce_decompress!(
         W.PMCEContext(ctx_takeover, false), UInt8[0xde, 0xad, 0xbe, 0xef, 0x99])

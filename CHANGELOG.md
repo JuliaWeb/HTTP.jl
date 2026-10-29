@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- permessage-deflate decompression (WebSockets with `compress = true`)
+  stopped responding on a message whose DEFLATE data ends with a final block,
+  as in the RFC 7692 §7.2.3.4 example: it looped without end. Such messages
+  now decompress, and later messages keep the sliding window. ([#1529])
 - A response status code must be three digits, in HTTP/1 status lines and
   the HTTP/2 `:status` field. Codes such as `+200` or `40000` were accepted,
   and with `status_exception = true` a code of 32768 or more threw
@@ -1619,3 +1623,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1523]: https://github.com/JuliaWeb/HTTP.jl/issues/1523
 [#1525]: https://github.com/JuliaWeb/HTTP.jl/issues/1525
 [#1526]: https://github.com/JuliaWeb/HTTP.jl/issues/1526
+[#1529]: https://github.com/JuliaWeb/HTTP.jl/issues/1529
