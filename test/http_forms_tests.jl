@@ -433,6 +433,12 @@ end
     @test HT.parse_multipart_form("multipart/mixed; boundary=abc", body) === nothing
     @test_throws ErrorException HT.parse_multipart_form("multipart/form-data; boundary=", body)
     @test_throws ErrorException HT.parse_multipart_form("multipart/form-data; boundary=" * 'a'^71, body)
+    # A part with no room for its header separator is malformed like any other
+    # part without one (it threw MethodError).
+    for part in ("", "ab", "a\r\n")
+        short = Vector{UInt8}("--b\r\n$(part)\r\n--b--\r\n")
+        @test_throws ErrorException HT.parse_multipart_form("multipart/form-data; boundary=b", short)
+    end
 
     # Any AbstractVector body works, including one that is not contiguous in memory.
     bytes = Vector{UInt8}("--b\r\nContent-Disposition: form-data; name=\"n\"\r\n\r\nv\r\n--b--\r\n")
