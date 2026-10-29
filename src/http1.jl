@@ -1001,6 +1001,20 @@ function _parse_request_line(line::AbstractString)::Tuple{String,String,UInt8,UI
     return method, target, major, minor
 end
 
+# status-code = 3DIGIT (RFC 9110 §15, RFC 9112 §4). `parse(Int, ...)` would also
+# take a sign, surrounding whitespace, and more digits, such as 40000, which
+# `StatusError`'s `Int16` field cannot hold.
+function _parse_status_code(token::AbstractString)::Union{Nothing,Int}
+    bytes = codeunits(token)
+    length(bytes) == 3 || return nothing
+    status = 0
+    for b in bytes
+        0x30 <= b <= 0x39 || return nothing
+        status = 10 * status + Int(b - 0x30)
+    end
+    return status
+end
+
 function _parse_status_line(line::AbstractString)::Tuple{UInt8,UInt8,Int,String}
     first_space = findfirst(isequal(' '), line)
     first_space === nothing && throw(ParseError("malformed HTTP/1 status line: $(repr(line))"))
@@ -1014,12 +1028,8 @@ function _parse_status_line(line::AbstractString)::Tuple{UInt8,UInt8,Int,String}
     else
         SubString(line, rest_start, prevind(line, second_space))
     end
-    status = try
-        parse(Int, code_token)
-    catch
-        throw(ParseError("invalid HTTP status code in status line: $(repr(line))"))
-    end
-    status < 0 && throw(ParseError("invalid HTTP status code in status line: $(repr(line))"))
+    status = _parse_status_code(code_token)
+    status === nothing && throw(ParseError("invalid HTTP status code in status line: $(repr(line))"))
     if second_space === nothing || second_space == lastindex(line)
         reason = ""
     else

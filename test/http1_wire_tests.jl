@@ -506,6 +506,16 @@ end
     @test _read_all_body_bytes(resp.body) == UInt8[]
 end
 
+@testset "HTTP/1 status codes are exactly three digits" begin
+    for code in ("200", "099", "999")
+        @test HT._read_response(IOBuffer("HTTP/1.1 $code X\r\nContent-Length: 0\r\n\r\n")).status == parse(Int, code)
+    end
+    # 32768 used to parse, and `StatusError(response)` then threw InexactError.
+    for code in ("32768", "2000", "20", "+200", "-1", "2O0", "", " 200", "200\t")
+        @test_throws HT.ParseError HT._read_response(IOBuffer("HTTP/1.1 $code X\r\nContent-Length: 0\r\n\r\n"))
+    end
+end
+
 @testset "HTTP/1 status line reason phrase handling" begin
     response = HT.Response(200, HT.EmptyBody(); content_length = 0)
     io = IOBuffer()
