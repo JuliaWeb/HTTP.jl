@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- An HTTP/2 client that advertises a small `SETTINGS_MAX_HEADER_LIST_SIZE`
+  no longer makes the server log an error for each response head over it; the
+  stream is reset as before. A `listen!` handler's head over the limit is now
+  reset the same way, instead of logged and answered with 500, and a refused
+  buffered response no longer keeps up to 16 KiB of the connection's send
+  window, which after a few such responses stalled every later one. ([#1531])
+
 ## [v2.13.2] - 2026-10-29
 
 ### Fixed
@@ -1638,3 +1646,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1526]: https://github.com/JuliaWeb/HTTP.jl/issues/1526
 [#1529]: https://github.com/JuliaWeb/HTTP.jl/issues/1529
 [#1524]: https://github.com/JuliaWeb/HTTP.jl/issues/1524
+[#1531]: https://github.com/JuliaWeb/HTTP.jl/issues/1531
