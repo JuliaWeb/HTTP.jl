@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (RFC 6265 §5.2). ([#1525])
 - The multipart parsers throw their usual error for a body with an empty or
   very short part; they threw `MethodError`. ([#1526])
+- Header text that is not valid UTF-8, which peers may send as bytes
+  0x80-0xFF, no longer throws `InvalidCharError`. A server request with such
+  an `Expect` header got no response at all (it now gets 417), and the
+  client threw on such a `Content-Encoding`. Multipart `Content-Type`
+  parsing, the WebSocket handshake header checks, redirect host comparison,
+  and showing a response with such a reason phrase threw the same way.
+  ([#1524])
 
 ## [v2.13.1] - 2026-10-27
 
@@ -1624,3 +1631,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1525]: https://github.com/JuliaWeb/HTTP.jl/issues/1525
 [#1526]: https://github.com/JuliaWeb/HTTP.jl/issues/1526
 [#1529]: https://github.com/JuliaWeb/HTTP.jl/issues/1529
+[#1524]: https://github.com/JuliaWeb/HTTP.jl/issues/1524
