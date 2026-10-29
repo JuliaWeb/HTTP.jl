@@ -3888,6 +3888,47 @@ end
     @test_throws HT.ProtocolError HT._decode_h2_trailer_headers(HT.HeaderField[HT.HeaderField("x-a\xffb", "v", false)])
 end
 
+@testset "HTTP/2 verifies the server name set on the transport's TLS config" begin
+    cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt")
+    listener = Reseau.TLS.listen(
+        "tcp",
+        "127.0.0.1:0",
+        Reseau.TLS.Config(
+            verify_peer = false,
+            cert_file = cert_file,
+            key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            alpn_protocols = ["h2", "http/1.1"],
+        );
+        backlog = 8,
+    )
+    server = HT.serve!(req -> HT.Response(204), listener; allow_h2c = false)
+    address = ND.join_host_port("localhost", Int((TL.addr(listener)::NC.SocketAddrV4).port))
+    # The self-signed certificate is valid for localhost only.
+    function fetch(server_name, protocol)
+        client = HT.Client(transport = HT.Transport(tls_config = TL.Config(server_name = server_name, ca_file = cert_file)))
+        try
+            response = HT.get!(client, address, "/"; secure = true, protocol = protocol)
+            HT.body_close!(response.body)
+            return "status $(response.status)"
+        catch err
+            return sprint(showerror, err)
+        finally
+            close(client)
+        end
+    end
+    try
+        for protocol in (:h1, :h2, :auto)
+            @test fetch("localhost", protocol) == "status 204"
+            # The certificate covers the dialed host, but the configured name is
+            # what must be verified.
+            @test occursin("not valid for host other.example", fetch("other.example", protocol))
+        end
+    finally
+        HT.forceclose(server)
+        wait(server)
+    end
+end
+
 @testset "do! returns HTTP/2 responses whose stream ended with the head" begin
     listener = Reseau.TLS.listen(
         "tcp",
