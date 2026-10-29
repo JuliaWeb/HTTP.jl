@@ -2401,7 +2401,6 @@ end
     conn = nothing
     try
         conn, reader = _open_raw_h2_server_conn(address)
-        NC.set_read_deadline!(conn::NC.Conn, Int64(time_ns()) + 20_000_000_000)
         # A PING with a 7-byte payload is a connection error; 256 KiB of PINGs follow it.
         bad_ping = UInt8[0x00, 0x00, 0x07, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
         io = IOBuffer()
