@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- After an HTTP/2 connection error, the server half-closes the connection and
+  drains the client's input (for up to 500 ms) before closing it. Closing at
+  once reset the connection, and clients often lost the GOAWAY and its error
+  code. ([#1532])
 - An HTTP/2 client that advertises a small `SETTINGS_MAX_HEADER_LIST_SIZE`
   no longer makes the server log an error for each response head over it; the
   stream is reset as before. A `listen!` handler's head over the limit is now
@@ -1646,4 +1650,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1526]: https://github.com/JuliaWeb/HTTP.jl/issues/1526
 [#1529]: https://github.com/JuliaWeb/HTTP.jl/issues/1529
 [#1524]: https://github.com/JuliaWeb/HTTP.jl/issues/1524
+[#1532]: https://github.com/JuliaWeb/HTTP.jl/issues/1532
 [#1531]: https://github.com/JuliaWeb/HTTP.jl/issues/1531
