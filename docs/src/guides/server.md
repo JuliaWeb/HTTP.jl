@@ -210,7 +210,9 @@ server = HTTP.serve!(router, "127.0.0.1", 8080)
 Read the matched route and its path variables with `HTTP.getroute`,
 `HTTP.getparams`, and `HTTP.getparam`. A path that matches no route gets
 `404 Not Found`, and a path that matches with another method gets
-`405 Method Not Allowed`.
+`405 Method Not Allowed`. Each path segment is percent-decoded before it is
+matched, so `/%61dmin` takes the route `/admin`; path variables keep the text
+as sent, still percent-encoded.
 
 Middleware is a function that takes a handler and returns a new handler. The
 third argument of `Router` wraps every route registered on it. This router
@@ -278,6 +280,11 @@ file or directory. `spa_fallback` serves the given file for a missing path that
 does not look like a file name, as a single-page app needs. It answers
 `If-Modified-Since` and single `Range` requests, and also `If-None-Match` when
 you pass `etag`.
+
+A path with a `..` segment, an encoded slash (`%2F`), a backslash, or a name
+that ends in a dot or space (which Windows drops) gets `400 Bad Request`. Routes are case-sensitive, but the default file systems on
+macOS and Windows are not, so there `/ADMIN/x` serves `admin/x` even when a
+route guards `/admin/**`; check access in the handler when that matters.
 
 [`HTTP.servefile`](@ref) serves one file for a request, and
 [`HTTP.servecontent`](@ref) serves bytes or a seekable `IO` that you already

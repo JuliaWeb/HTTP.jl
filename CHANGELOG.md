@@ -8,12 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `Router` percent-decodes each segment of the request path, and of each
+  route, before matching, so `/%61dmin` takes the route `/admin`, and a
+  variable pattern such as `{id:[0-9]+}` is matched against the decoded
+  segment. `getparam` and `getparams` still return the segment as sent. An
+  encoded slash (`%2F`) stays inside its segment. `fileserver` and `servefile`
+  now split the path before decoding it, so a path with `%2F` gets `400`
+  instead of `%2F` acting as a separator; so does a name that ends in a dot or
+  space, which Windows drops (`/admin./x` would open `admin/x`). Routes
+  compared the raw text while `fileserver` read the decoded path, so a route
+  that guarded `/admin/**` did not cover other spellings of the same files.
+  ([#1538])
 - A URL host that ends in a number must be a dotted-decimal IPv4 address, such
   as `127.0.0.1`. Other forms, such as `127.1`, `0x7f.1`, `2130706433`, `0`,
   or `010.0.0.1`, now throw an `ArgumentError`, also as a redirect `Location`.
   The system resolver read them as IPv4 addresses, differently on each
   platform (macOS reads `010.0.0.1` as `10.0.0.1`, glibc as `8.0.0.1`), while
   URL parsers such as URIs.jl read a host name (RFC 3986 §7.4). ([#1537])
+
+## [v2.13.5] - 2026-10-29
+
+### Fixed
+- The HTTP/2 server now counts the streams it resets because of a client's
+  frames, such as a body that contradicts its `Content-Length`, toward the same
+  limit as RST_STREAM frames sent by the client, and sends
+  GOAWAY(ENHANCE_YOUR_CALM) past it. Before, a client could make it reset
+  streams on one connection without limit (CVE-2025-8671). ([#1544])
+- With `read_header_timeout` set, the HTTP/2 server now applies it to a whole
+  header block, from its HEADERS frame to the CONTINUATION frame that ends it,
+  as the HTTP/1 server does for a request head. It restarted the timeout for
+  each CONTINUATION frame, so a client sending them slowly could keep a block
+  open far longer: with a 1 s timeout, a block that took 3.3 s was accepted.
+  ([#1543])
+- The HTTP/2 server now ends the connection with PROTOCOL_ERROR when a client
+  sends RST_STREAM or WINDOW_UPDATE for a stream it never opened, or any
+  PUSH_PROMISE (RFC 9113 §5.1, §6.4, §8.4); it ignored these frames. A
+  WINDOW_UPDATE that takes a stream's send window over 2^31 - 1 now resets
+  only that stream with FLOW_CONTROL_ERROR instead of closing the connection.
+  The other flow-control violations close the connection with
+  FLOW_CONTROL_ERROR instead of PROTOCOL_ERROR, and DATA on a stream the client
+  already ended is reset with STREAM_CLOSED instead of PROTOCOL_ERROR.
+  ([#1542])
+
+## [v2.13.4] - 2026-10-29
+
+### Changed
 - HTTP/2 downloads no longer allocate per DATA frame: the client reads each
   payload into one buffer per connection before copying it into its stream,
   encodes WINDOW_UPDATE frames into a reused buffer, and the server reuses one
@@ -26,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The error for a URL without `http://` or `https://`, such as
   `//user:secret@host/`, and the trace URL for that request no longer include
   the URL's user name and password. ([#1539])
+- A URL whose port is followed by another `:`, such as `http://host:8080:/`,
+  now throws an `ArgumentError`; it was read as `host:8080`, while URIs.jl
+  rejects it and Go reads the host as `host:8080` with the default port.
+  ([#1540])
 
 ## [v2.13.3] - 2026-10-29
 
@@ -1327,7 +1370,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.5...HEAD
+[v2.13.5]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.4...v2.13.5
+[v2.13.4]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...v2.13.4
 [v2.13.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.2...v2.13.3
 [v2.13.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.1...v2.13.2
 [v2.13.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.0...v2.13.1
@@ -1694,4 +1739,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
 [#1537]: https://github.com/JuliaWeb/HTTP.jl/issues/1537
+[#1538]: https://github.com/JuliaWeb/HTTP.jl/issues/1538
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
+[#1540]: https://github.com/JuliaWeb/HTTP.jl/issues/1540
+[#1542]: https://github.com/JuliaWeb/HTTP.jl/issues/1542
+[#1543]: https://github.com/JuliaWeb/HTTP.jl/issues/1543
+[#1544]: https://github.com/JuliaWeb/HTTP.jl/issues/1544

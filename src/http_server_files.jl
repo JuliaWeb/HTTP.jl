@@ -513,9 +513,9 @@ end
 # filesystem treat additional forms as separators or as absolute paths --
 # notably on Windows, where '\' is a separator and a leading drive ("C:\") or
 # UNC ("\\host\share") segment is absolute and discards the accumulated root.
-# Because URL-decoding happens before the '/' split, an encoded backslash
-# (%5c) survives inside a single segment and would otherwise pass the plain
-# '.'/'..' check. These checks are deliberately platform-independent (we treat
+# Because each segment is URL-decoded after the '/' split, an encoded slash
+# (%2f) or backslash (%5c) survives inside a single segment and would otherwise
+# pass the plain '.'/'..' check. These checks are deliberately platform-independent (we treat
 # '\' as a separator and reject Windows-absolute forms even on POSIX hosts) so
 # the same hardening applies regardless of where the server runs and so it is
 # testable everywhere.
@@ -531,6 +531,9 @@ end
     (':' in segment) && return true
     # No file system allows NUL in a name; `stat` would throw on it.
     ('\0' in segment) && return true
+    # Windows drops a trailing dot or space from a name, so `admin.` would open
+    # `admin` although a route for `/admin/**` does not match it.
+    (endswith(segment, '.') || endswith(segment, ' ')) && return true
     # Absolute paths (POSIX or, when running on Windows, drive/UNC forms) cause
     # joinpath to discard the root. Guard against the host's own notion of an
     # absolute path as well as the cross-platform forms covered above.
@@ -538,14 +541,16 @@ end
     return false
 end
 
+# Split before decoding, as `Router` does, so an encoded slash (`%2F`) is part
+# of a segment and gets it rejected rather than acting as a separator.
 function _decoded_request_path_segments(path::AbstractString)::Vector{String}
-    decoded = try
-        URIs.unescapeuri(String(path))
-    catch
-        throw(ArgumentError("invalid request path"))
-    end
     segments = String[]
-    for segment in split(decoded, '/'; keepempty=false)
+    for raw in split(String(path), '/'; keepempty=false)
+        segment = try
+            URIs.unescapeuri(raw)
+        catch
+            throw(ArgumentError("invalid request path"))
+        end
         _is_unsafe_request_path_segment(segment) && throw(ArgumentError("invalid request path"))
         push!(segments, String(segment))
     end

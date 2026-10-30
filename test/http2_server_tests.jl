@@ -1254,7 +1254,7 @@ end
         @test closed
         if closed
             goaway = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.GoAwayFrame)
-            @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_PROTOCOL
+            @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_FLOW_CONTROL
             @test lock(() -> state.received_body_bytes, state.lock) == 3 * 16_384
         end
     finally
@@ -1804,11 +1804,17 @@ end
     finally
         unlock(conn_state.state_lock)
     end
-    @test_throws HT.ProtocolError HT._apply_h2_window_update!(
-        conn_state,
-        HT.WindowUpdateFrame(UInt32(0), UInt32(1)),
-    )
+    conn_err = try
+        HT._apply_h2_window_update!(conn_state, HT.WindowUpdateFrame(UInt32(0), UInt32(1)))
+        nothing
+    catch err
+        err
+    end
+    @test conn_err isa HT.ProtocolError
+    @test (conn_err::HT.ProtocolError).code == HT._PROTOCOL_ERROR_FLOW_CONTROL
 
+    # A stream window over the maximum is that stream's error: the window is
+    # left alone and the caller resets the stream.
     stream_state = HT._H2SendWindowState()
     HT._register_h2_send_window!(stream_state, UInt32(3))
     lock(stream_state.state_lock)
@@ -1817,11 +1823,9 @@ end
     finally
         unlock(stream_state.state_lock)
     end
-    @test_throws HT.ProtocolError HT._apply_h2_window_update!(
-        stream_state,
-        HT.WindowUpdateFrame(UInt32(3), UInt32(1)),
-    )
-    @test HT._apply_h2_window_update!(stream_state, HT.WindowUpdateFrame(UInt32(5), UInt32(1))) === nothing
+    @test HT._apply_h2_window_update!(stream_state, HT.WindowUpdateFrame(UInt32(3), UInt32(1)))
+    @test lock(() -> stream_state.stream_send_window[UInt32(3)], stream_state.state_lock) == Int64(0x7fff_ffff)
+    @test !HT._apply_h2_window_update!(stream_state, HT.WindowUpdateFrame(UInt32(5), UInt32(1)))
 end
 
 @testset "HTTP/2 server rejects request Content-Length mismatches" begin
@@ -1925,10 +1929,97 @@ end
         _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/ended"; end_stream = true)
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), true, collect(codeunits("late"))))
         reset_frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, frame -> frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == UInt32(1))
-        @test (reset_frame::HT.RSTStreamFrame).error_code == UInt32(0x1)
+        # STREAM_CLOSED: the client had already ended the stream (RFC 9113 §6.1).
+        @test (reset_frame::HT.RSTStreamFrame).error_code == UInt32(0x5)
 
         _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
         @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
+    finally
+        HTTP.@try_ignore put!(release, nothing)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+# RFC 9113 §5.1 and §6.4 (frames for a stream the client never opened) and §8.4
+# (a client cannot push): each is a connection error of type PROTOCOL_ERROR.
+@testset "HTTP/2 server rejects frames for idle streams and client PUSH_PROMISE" begin
+    server = HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true)
+    address = HT.server_addr(server)
+    try
+        frames = HT.AbstractFrame[
+            HT.RSTStreamFrame(UInt32(1), UInt32(0x8)),
+            HT.WindowUpdateFrame(UInt32(1), UInt32(1)),
+            # The server never pushes, so even-numbered streams are idle too.
+            HT.WindowUpdateFrame(UInt32(2), UInt32(1)),
+            HT.PushPromiseFrame(UInt32(1), UInt32(2), true, UInt8[]),
+        ]
+        for bad in frames
+            conn, reader = _open_raw_h2_server_conn(address)
+            try
+                _write_frame_h2_server_raw!(conn, bad)
+                # Frames are handled in order: a PING ACK first means the bad frame was accepted.
+                _write_frame_h2_server_raw!(conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+                frame = _read_h2_server_frame_until!(conn, reader, f -> f isa HT.GoAwayFrame || f isa HT.PingFrame)
+                @test frame isa HT.GoAwayFrame
+                frame isa HT.GoAwayFrame && @test (frame::HT.GoAwayFrame).error_code == UInt32(0x1)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+
+        # The same frames for a stream that was opened and has finished are ignored.
+        conn, reader = _open_raw_h2_server_conn(address)
+        try
+            encoder = HT.Encoder()
+            decoder = HT.Decoder()
+            _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/a")
+            @test _read_h2_server_text_response!(conn, reader, decoder, UInt32(1)) == "ok"
+            _write_frame_h2_server_raw!(conn, HT.RSTStreamFrame(UInt32(1), UInt32(0x8)))
+            _write_frame_h2_server_raw!(conn, HT.WindowUpdateFrame(UInt32(1), UInt32(1)))
+            _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/b")
+            @test _read_h2_server_text_response!(conn, reader, decoder, UInt32(3)) == "ok"
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+    finally
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+# RFC 9113 §6.9.1: a WINDOW_UPDATE that takes a window over 2^31 - 1 resets the
+# stream, or for the connection window ends the connection, with FLOW_CONTROL_ERROR.
+@testset "HTTP/2 server answers send-window overflow with FLOW_CONTROL_ERROR" begin
+    release = Channel{Nothing}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            request.target == "/held" && take!(release)
+            return HT.Response(200, "ok")
+        end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/held")
+        # 65_535 + (2^31 - 1) is over the maximum window.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(0x7fff_ffff)))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.RSTStreamFrame || f isa HT.GoAwayFrame || f isa HT.PingFrame)
+        @test frame isa HT.RSTStreamFrame
+        if frame isa HT.RSTStreamFrame
+            @test (frame::HT.RSTStreamFrame).stream_id == UInt32(1)
+            @test (frame::HT.RSTStreamFrame).error_code == UInt32(0x3)
+        end
+        # Other streams on the connection keep working.
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
+        @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
+
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(0), UInt32(0x7fff_ffff)))
+        goaway = _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.GoAwayFrame)::HT.GoAwayFrame
+        @test goaway.error_code == UInt32(0x3)
     finally
         HTTP.@try_ignore put!(release, nothing)
         conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
@@ -2275,16 +2366,66 @@ end
         server = HT.Server(handler = identity, idle_timeout_ns = 60_000_000_000)
         idle_state = HT._H2SendWindowState(0, server.idle_timeout_ns)
         @atomic idle_state.idle_deadline_ns = Int64(1)
-        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0))
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0), Int64(0))
         @test_throws Reseau.IOPoll.DeadlineExceededError readbytes!(conn, buf, 1)
         # An open stream gets the read timeout (none here) instead.
         states[UInt32(3)] = HT._H2ServerStreamState(UInt32(3))
-        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0))
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0), Int64(0))
         @test readbytes!(conn, buf, 1) == 1
     finally
         HTTP.@try_ignore NC.close(client)
         HTTP.@try_ignore NC.close(conn)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 server gives a header block one deadline for all its frames" begin
+    listener = NC.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    client = ND.connect("tcp", ND.join_host_port("127.0.0.1", Int(laddr.port)))
+    conn = NC.accept(listener)
+    try
+        # A byte is waiting, so only a deadline that has passed fails a read.
+        write(client, UInt8[0x01])
+        buf = Vector{UInt8}(undef, 1)
+        server = HT.Server(handler = identity, read_header_timeout_ns = 60_000_000_000)
+        send_state = HT._H2SendWindowState()
+        states_lock = ReentrantLock()
+        states = Dict{UInt32, HT._H2ServerStreamState}(UInt32(1) => HT._H2ServerStreamState(UInt32(1)))
+        # While a block is open, each CONTINUATION read gets the block's deadline
+        # (here already passed), not a fresh 60 s read_header_timeout.
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, UInt32(1), Int64(1))
+        @test_throws Reseau.IOPoll.DeadlineExceededError readbytes!(conn, buf, 1)
+        # Outside a block, the open stream gets the read timeout (none here).
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, UInt32(0), Int64(1))
+        @test readbytes!(conn, buf, 1) == 1
+    finally
+        HTTP.@try_ignore NC.close(client)
+        HTTP.@try_ignore NC.close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A header block split across frames still arrives under the timeout.
+    server = HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true, read_header_timeout = 60)
+    address = HT.server_addr(server)
+    raw = nothing
+    try
+        raw, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        block = HT.encode_header_block(encoder, HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/split", false),
+        ])
+        mid = cld(length(block), 2)
+        _write_frame_h2_server_raw!(raw::NC.Conn, HT.HeadersFrame(UInt32(1), true, false, block[1:mid]))
+        _write_frame_h2_server_raw!(raw::NC.Conn, HT.ContinuationFrame(UInt32(1), true, block[(mid + 1):end]))
+        @test _read_h2_server_text_response!(raw::NC.Conn, reader, HT.Decoder(), UInt32(1)) == "ok"
+    finally
+        raw === nothing || HTTP.@try_ignore NC.close(raw::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
@@ -2765,6 +2906,98 @@ end
             HTTP.@try_ignore NC.close(conn::NC.Conn)
         end
     finally
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+# MadeYouReset (CVE-2025-8671): a client that forces the server to reset streams
+# itself — here by opening each with END_STREAM and a Content-Length it does not
+# fulfil, so the server resets it at dispatch before a handler starts and frees
+# the stream slot at once — is as abusive as the Rapid-Reset client that sends
+# RST_STREAM itself. The server must count these forced resets toward the same
+# budget and send GOAWAY(ENHANCE_YOUR_CALM).
+@testset "HTTP/2 server bounds server-forced stream resets (MadeYouReset)" begin
+    # `_note_h2_forced_reset!` trips the GOAWAY exactly past the budget, and only once.
+    control = HT._H2ServerConnControl()
+    listener = NC.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    client = ND.connect("tcp", ND.join_host_port("127.0.0.1", Int(laddr.port)))
+    server_conn = NC.accept(listener)
+    reader = HT._ConnReader(client)
+    write_lock = ReentrantLock()
+    try
+        count = 0
+        # Budget 3: the fourth forced reset sends the GOAWAY.
+        for _ in 1:3
+            count = HT._note_h2_forced_reset!(server_conn, write_lock, control, count, 3, UInt32(9), Int64(0))
+        end
+        @test count == 3
+        @test !(@atomic control.goaway_sent)
+        count = HT._note_h2_forced_reset!(server_conn, write_lock, control, count, 3, UInt32(9), Int64(0))
+        @test count == 4
+        @test (@atomic control.goaway_sent)
+        @test (@atomic control.shutdown_requested)
+        goaway = HT.read_frame!(reader)
+        @test goaway isa HT.GoAwayFrame
+        @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_ENHANCE_YOUR_CALM
+        # A second trip past the budget keeps `goaway_sent` set and writes nothing
+        # more: closing the server side then reading to EOF yields no extra frame.
+        count = HT._note_h2_forced_reset!(server_conn, write_lock, control, count, 3, UInt32(9), Int64(0))
+        @test count == 5
+        @test (@atomic control.goaway_sent)
+        HTTP.@try_ignore NC.close(server_conn)
+        @test isempty(read(client))
+    finally
+        HTTP.@try_ignore NC.close(client)
+        HTTP.@try_ignore NC.close(server_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # Live server: a stream of Content-Length-mismatch requests (each reset at
+    # dispatch, no handler, slot freed at once) trips GOAWAY(ENHANCE_YOUR_CALM).
+    served = Threads.Atomic{Int}(0)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_concurrent_streams = 2) do request
+        Threads.atomic_add!(served, 1)
+        return HT.Response(200, "ok"; proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        # Budget = max_concurrent_streams (2) + 100 = 102; send more than that.
+        goaway = nothing
+        sid = UInt32(1)
+        for _ in 1:400
+            fields = HT.HeaderField[
+                HT.HeaderField(":method", "POST", false),
+                HT.HeaderField(":scheme", "http", false),
+                HT.HeaderField(":authority", address, false),
+                HT.HeaderField(":path", "/", false),
+                HT.HeaderField("content-length", "5", false),  # promises a body it never sends
+            ]
+            ok = try
+                _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(sid, true, true, HT.encode_header_block(encoder, fields)))
+                true
+            catch
+                false
+            end
+            ok || break
+            sid += UInt32(2)
+        end
+        # The GOAWAY follows the per-stream RST_STREAMs (one per forced reset),
+        # more than `_read_h2_server_frame_until!` will scan, so read in a loop.
+        goaway = nothing
+        while goaway === nothing
+            frame = HT.read_frame!(reader)
+            frame isa HT.GoAwayFrame && (goaway = frame::HT.GoAwayFrame)
+        end
+        @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_ENHANCE_YOUR_CALM
+        # No handler ever ran: the resets happened at dispatch.
+        @test served[] == 0
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         HTTP.@try_ignore wait(server.serve_task::Task)
     end

@@ -1214,6 +1214,15 @@ end
     end
 end
 
+@testset "HTTP URL with a second port separator" begin
+    # `host:` means the default port; in `host:8080:` the host would be `host:8080`.
+    @test HT._parse_http_url("http://a.com:/").address == "a.com:80"
+    @test HT._parse_http_url("https://[::1]:/p").address == "[::1]:443"
+    for url in ("http://a.com:8080:/", "http://a.com:8080:", "http://[::1]:8080:/", "http://u@a.com:80:/x")
+        @test_throws ArgumentError HT._parse_http_url(url)
+    end
+end
+
 @testset "HTTP URL authority characters" begin
     # Each of these would dial a host other than the one a browser or URIs.jl
     # reads from the same URL, or put control bytes into the Host header.

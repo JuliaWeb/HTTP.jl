@@ -132,6 +132,30 @@ end
     @test query_router(HT.Request("GET", "http://example.test/api/widgets/77?expand=true")) == ("77", "/api/widgets/{name}")
 end
 
+@testset "HTTP router matches percent-decoded segments" begin
+    router = HT.Router(_ -> "404", _ -> "405")
+    HT.register!(router, "GET", "/admin/**", _ -> "admin")
+    HT.register!(router, "GET", "/my%20files/**", _ -> "files")
+    HT.register!(router, "GET", "/users/{id}", req -> "user:" * HT.getparam(req, "id"))
+    HT.register!(router, "GET", "/n/{id:[0-9]+}", req -> "n:" * HT.getparam(req, "id"))
+    HT.register!(router, "GET", "/**", _ -> "public")
+    # Handlers such as `fileserver` read the decoded path, so every spelling of
+    # a segment must take the same route.
+    for target in ("/admin/x", "/%61dmin/x", "/%61%64%6D%69%6E/x", "http://h/%61dmin/x")
+        @test router(HT.Request("GET", target)) == "admin"
+    end
+    @test router(HT.Request("GET", "/my%20%66iles/x")) == "files"
+    # Patterns see the decoded segment; variables keep the text as sent.
+    @test router(HT.Request("GET", "/n/%31%32")) == "n:%31%32"
+    @test router(HT.Request("GET", "/users/a%20b,c%2Cd")) == "user:a%20b,c%2Cd"
+    # An encoded slash stays inside its segment.
+    @test router(HT.Request("GET", "/users/a%2Fb")) == "user:a%2Fb"
+    @test router(HT.Request("GET", "/admin%2Fx")) == "public"
+    # A segment that does not decode is matched as written.
+    @test router(HT.Request("GET", "/users/100%")) == "user:100%"
+    @test_throws ArgumentError HT.register!(router, "GET", "/a/%2A", _ -> "")
+end
+
 @testset "HTTP handlers cookie middleware" begin
     headers = HT.Headers()
     HT.setheader(headers, "Cookie", "abc=def; mode=test")
