@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.14.0] - 2026-10-30
+
 ### Changed
 - `Router` percent-decodes each segment of the request path, and of each
   route, before matching, so `/%61dmin` takes the route `/admin`, and a
@@ -1370,7 +1372,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.5...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.0...HEAD
+[v2.14.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.5...v2.14.0
 [v2.13.5]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.4...v2.13.5
 [v2.13.4]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...v2.13.4
 [v2.13.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.2...v2.13.3
