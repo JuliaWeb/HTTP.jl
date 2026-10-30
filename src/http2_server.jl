@@ -173,7 +173,7 @@ end
 # `stream_id`        : the id carried by the HEADERS frame.
 # `max_stream_id`    : the highest client stream id seen so far on the conn.
 # `open_streams`     : number of currently-tracked streams (in `states`).
-# `reset_streams`    : number of streams the peer has opened then RST_STREAM'd.
+# `reset_streams`    : number of streams the peer has reset or made the server reset.
 # `max_concurrent`   : advertised SETTINGS_MAX_CONCURRENT_STREAMS (<=0 disables).
 # `reset_budget`     : reset count beyond which the connection is abusive.
 @inline function _h2_server_new_stream_decision(
@@ -1865,7 +1865,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     peer_goaway_last_stream_id = typemax(UInt32)
     # Per-connection stream-flood limits.
     max_concurrent_streams = server.max_concurrent_streams
-    # Number of streams the peer has opened and then reset/closed via RST_STREAM.
+    # Number of streams the peer has reset with RST_STREAM or made the server
+    # reset (see `_note_h2_forced_reset!`).
     # Tracked to detect the CVE-2023-44487 "Rapid Reset" pattern, where the peer
     # keeps its own concurrent-stream count low by immediately cancelling each
     # stream it opens.
