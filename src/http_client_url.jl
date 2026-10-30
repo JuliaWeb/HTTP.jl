@@ -405,11 +405,6 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
         has_userinfo = !_text_range_empty(userinfo_range)
         authority_range = _text_range(nextind(s, at_idx), authority_range.last)
     end
-    # An empty port (`host:`) means the scheme's default port (RFC 3986 §3.2.3).
-    if !_text_range_empty(authority_range) && @inbounds(bytes[authority_range.last] == UInt8(':'))
-        authority_range = _text_range(authority_range.first, prevind(s, authority_range.last))
-    end
-
     _text_range_empty(authority_range) && throw(ArgumentError("URL missing host: $(_url_for_message(s))"))
 
     host_range = authority_range
@@ -431,7 +426,8 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
             port_first = colon_idx + 1
         end
     end
-    has_explicit_port = port_first != 0
+    # An empty port (`host:`) means the scheme's default port (RFC 3986 §3.2.3).
+    has_explicit_port = port_first != 0 && port_first <= authority_range.last
     has_explicit_port && _check_url_port(SubString(s, port_first, authority_range.last))
     # RFC 9110 §4.2.1: an http(s) URI with an empty host is invalid. Dialing
     # one (`http://:8080/`) would reach the local machine.
