@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `response_stream` allocated 16.3 MiB in the client, and 37 MiB with an
   HTTP.jl server in the same process; it now allocates 0.2 MiB and 0.3 MiB.
   ([#1527])
+- `Router` percent-decodes each segment of the request path, and of each
+  route, before matching, so `/%61dmin` takes the route `/admin`, and
+  `getparam` and `getparams` return decoded text (`a%20b` is now `a b`). An
+  encoded slash (`%2F`) stays inside its segment. `fileserver` and `servefile`
+  now split the path before decoding it, so a path with `%2F` gets `400`
+  instead of `%2F` acting as a separator. Routes compared the raw text while
+  `fileserver` read the decoded path, so a route that guarded `/admin/**` did
+  not cover other spellings of the same files. ([#1538])
 
 ### Fixed
 - The error for a URL without `http://` or `https://`, such as
@@ -1687,4 +1695,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1534]: https://github.com/JuliaWeb/HTTP.jl/issues/1534
 [#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
+[#1538]: https://github.com/JuliaWeb/HTTP.jl/issues/1538
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539

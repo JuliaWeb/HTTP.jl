@@ -719,9 +719,32 @@ end
     end
 end
 
+@testset "HTTP fileserver reads request paths as the router does" begin
+    # A path is split on '/' before decoding, so an encoded slash is part of a
+    # segment, not a separator.
+    @test_throws ArgumentError HT._decoded_request_path_segments("/docs%2Findex.html")
+    @test HT._decoded_request_path_segments("/my%20docs/a+b%2B.txt") == ["my docs", "a+b+.txt"]
+    mktempdir() do dir
+        mkpath(joinpath(dir, "admin"))
+        write(joinpath(dir, "admin", "secret.txt"), "secret")
+        router = HT.Router()
+        HT.register!(router, "GET", "/admin/**", _ -> HT.Response(403))
+        HT.register!(router, "GET", "/**", HT.fileserver(dir))
+        @test router(HT.Request("GET", "/admin/secret.txt")).status == 403
+        # Each other spelling of the guarded path takes the guarded route, or
+        # the fileserver refuses it.
+        for target in ("/%61dmin/secret.txt", "/%61dmin%2Fsecret.txt", "//admin/secret.txt",
+                       "/./admin/secret.txt", "/x/../admin/secret.txt", "/admin%2fsecret.txt")
+            resp = router(HT.Request("GET", target))
+            @test resp.status in (400, 403)
+            HT.body_close!(resp.body)
+        end
+    end
+end
+
 @testset "HTTP fileserver Windows backslash path traversal" begin
-    # Regression for the Windows path-traversal vector: URL-decoding happens
-    # before splitting the request path on '/', so an encoded backslash (%5c),
+    # Regression for the Windows path-traversal vector: each segment is
+    # URL-decoded after splitting the request path on '/', so an encoded backslash (%5c),
     # a drive specifier ("C:\\..."), or a UNC prefix ("\\\\host\\share")
     # survives as a single segment that is not equal to '.' or '..'. On Windows
     # joinpath would then honor those separators / absolute forms and escape the
