@@ -936,6 +936,13 @@ end
     return server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
 end
 
+# How long a header block may take from its HEADERS frame to END_HEADERS.
+@inline _h2_header_block_timeout_ns(server::Server)::Int64 =
+    server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
+
+# While a header block is open (`continuation_stream` is set), every frame read
+# gets the block's own deadline, set when its HEADERS frame arrived, so a peer
+# that sends CONTINUATION frames slowly cannot keep the block open longer.
 function _set_h2_frame_read_deadline!(
     server::Server,
     conn::Union{TCP.Conn,TLS.Conn},
@@ -943,11 +950,12 @@ function _set_h2_frame_read_deadline!(
     states::Dict{UInt32,_H2ServerStreamState},
     send_state::_H2SendWindowState,
     continuation_stream::UInt32,
+    header_block_deadline_ns::Int64,
 )::Nothing
     lock(states_lock)
     try
         deadline = if continuation_stream != UInt32(0)
-            _deadline_after(server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns)
+            header_block_deadline_ns
         elseif !isempty(states)
             _deadline_after(server.read_timeout_ns)
         else
@@ -1820,11 +1828,12 @@ function _h2_server_refuse_stream!(
     block = copy(hf.header_block_fragment)
     block_bytes = _h2_charge_header_block_frame(0, block, max_header_block_bytes)
     end_headers = hf.end_headers
+    # The whole block must arrive within the request-header timeout.
+    deadline_ns = _deadline_after(_h2_header_block_timeout_ns(server))
     while !end_headers
         # The peer must complete the header block with CONTINUATION frames for
-        # this same stream before any other frame (RFC 9113 §6.10). Reuse the
-        # request-header read deadline so a stalled block cannot hold the slot.
-        _set_read_deadline!(conn, _deadline_after(server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns))
+        # this same stream before any other frame (RFC 9113 §6.10).
+        _set_read_deadline!(conn, deadline_ns)
         frame = read_frame!(reader)
         frame isa ContinuationFrame || throw(ProtocolError("expected CONTINUATION for stream $(hf.stream_id)"))
         cf = frame::ContinuationFrame
@@ -1859,6 +1868,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     conn_control = _H2ServerConnControl()
     states = Dict{UInt32,_H2ServerStreamState}()
     continuation_stream = UInt32(0)
+    # When the open header block must be complete (0: no limit).
+    header_block_deadline_ns = Int64(0)
     # Size of the header block being received; see `_h2_charge_header_block_frame`.
     header_block_bytes = 0
     max_stream_id = UInt32(0)
@@ -1907,7 +1918,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             # A graceful shutdown keeps reading until the streams its GOAWAY
             # covered are done; they still need WINDOW_UPDATE, PING, and DATA.
             _server_shutting_down(server) && !_h2_server_has_active_streams(states_lock, states) && return nothing
-            _set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, continuation_stream)
+            _set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, continuation_stream, header_block_deadline_ns)
             frame = try
                 read_frame!(reader)
             catch err
@@ -2107,7 +2118,10 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         end
                         state.header_block_end_stream && (stream_error = _end_h2_server_stream_locked!(state))
                     end
-                    hf.end_headers || (continuation_stream = hf.stream_id)
+                    if !hf.end_headers
+                        continuation_stream = hf.stream_id
+                        header_block_deadline_ns = _deadline_after(_h2_header_block_timeout_ns(server))
+                    end
                     notify(state.condition)
                 finally
                     unlock(state.lock)

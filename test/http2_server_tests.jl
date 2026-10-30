@@ -2366,16 +2366,66 @@ end
         server = HT.Server(handler = identity, idle_timeout_ns = 60_000_000_000)
         idle_state = HT._H2SendWindowState(0, server.idle_timeout_ns)
         @atomic idle_state.idle_deadline_ns = Int64(1)
-        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0))
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0), Int64(0))
         @test_throws Reseau.IOPoll.DeadlineExceededError readbytes!(conn, buf, 1)
         # An open stream gets the read timeout (none here) instead.
         states[UInt32(3)] = HT._H2ServerStreamState(UInt32(3))
-        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0))
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, idle_state, UInt32(0), Int64(0))
         @test readbytes!(conn, buf, 1) == 1
     finally
         HTTP.@try_ignore NC.close(client)
         HTTP.@try_ignore NC.close(conn)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 server gives a header block one deadline for all its frames" begin
+    listener = NC.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    client = ND.connect("tcp", ND.join_host_port("127.0.0.1", Int(laddr.port)))
+    conn = NC.accept(listener)
+    try
+        # A byte is waiting, so only a deadline that has passed fails a read.
+        write(client, UInt8[0x01])
+        buf = Vector{UInt8}(undef, 1)
+        server = HT.Server(handler = identity, read_header_timeout_ns = 60_000_000_000)
+        send_state = HT._H2SendWindowState()
+        states_lock = ReentrantLock()
+        states = Dict{UInt32, HT._H2ServerStreamState}(UInt32(1) => HT._H2ServerStreamState(UInt32(1)))
+        # While a block is open, each CONTINUATION read gets the block's deadline
+        # (here already passed), not a fresh 60 s read_header_timeout.
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, UInt32(1), Int64(1))
+        @test_throws Reseau.IOPoll.DeadlineExceededError readbytes!(conn, buf, 1)
+        # Outside a block, the open stream gets the read timeout (none here).
+        HT._set_h2_frame_read_deadline!(server, conn, states_lock, states, send_state, UInt32(0), Int64(1))
+        @test readbytes!(conn, buf, 1) == 1
+    finally
+        HTTP.@try_ignore NC.close(client)
+        HTTP.@try_ignore NC.close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # A header block split across frames still arrives under the timeout.
+    server = HT.serve!(request -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true, read_header_timeout = 60)
+    address = HT.server_addr(server)
+    raw = nothing
+    try
+        raw, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        block = HT.encode_header_block(encoder, HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/split", false),
+        ])
+        mid = cld(length(block), 2)
+        _write_frame_h2_server_raw!(raw::NC.Conn, HT.HeadersFrame(UInt32(1), true, false, block[1:mid]))
+        _write_frame_h2_server_raw!(raw::NC.Conn, HT.ContinuationFrame(UInt32(1), true, block[(mid + 1):end]))
+        @test _read_h2_server_text_response!(raw::NC.Conn, reader, HT.Decoder(), UInt32(1)) == "ok"
+    finally
+        raw === nothing || HTTP.@try_ignore NC.close(raw::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
 
