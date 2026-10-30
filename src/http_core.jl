@@ -31,6 +31,8 @@ end
     _PROTOCOL_ERROR_RESPONSE_LENGTH = 4
     # An HTTP/2 header block over the peer's SETTINGS_MAX_HEADER_LIST_SIZE.
     _PROTOCOL_ERROR_PEER_HEADER_LIST = 5
+    # An HTTP/2 flow-control violation by the peer (RFC 9113 FLOW_CONTROL_ERROR).
+    _PROTOCOL_ERROR_FLOW_CONTROL = 6
 end
 
 """

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The HTTP/2 server now ends the connection with PROTOCOL_ERROR when a client
+  sends RST_STREAM or WINDOW_UPDATE for a stream it never opened, or any
+  PUSH_PROMISE (RFC 9113 §5.1, §6.4, §8.4); it ignored these frames. A
+  WINDOW_UPDATE that takes a stream's send window over 2^31 - 1 now resets
+  only that stream with FLOW_CONTROL_ERROR instead of closing the connection.
+  The other flow-control violations close the connection with
+  FLOW_CONTROL_ERROR instead of PROTOCOL_ERROR, and DATA on a stream the client
+  already ended is reset with STREAM_CLOSED instead of PROTOCOL_ERROR.
+  ([#1542])
+
 ## [v2.13.4] - 2026-10-29
 
 ### Changed
@@ -1696,3 +1707,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
 [#1540]: https://github.com/JuliaWeb/HTTP.jl/issues/1540
+[#1542]: https://github.com/JuliaWeb/HTTP.jl/issues/1542

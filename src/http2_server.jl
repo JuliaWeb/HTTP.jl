@@ -137,6 +137,8 @@ end
 const _H2_ERROR_PROTOCOL = UInt32(0x1)
 const _H2_ERROR_INTERNAL = UInt32(0x2)
 const _H2_ERROR_CANCEL = UInt32(0x8)
+const _H2_ERROR_FLOW_CONTROL = UInt32(0x3)
+const _H2_ERROR_STREAM_CLOSED = UInt32(0x5)
 # RFC 9113 error codes used for stream/connection flood protection.
 const _H2_ERROR_REFUSED_STREAM = UInt32(0x7)
 const _H2_ERROR_ENHANCE_YOUR_CALM = UInt32(0xb)
@@ -297,13 +299,14 @@ function _apply_h2_peer_settings!(
             if id == UInt16(0x1)
                 header_table_size = Int(value)
             elseif id == UInt16(0x4)
-                value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large"))
+                # RFC 9113 §6.5.2, §6.9.2: both are connection FLOW_CONTROL_ERRORs.
+                value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large", _PROTOCOL_ERROR_FLOW_CONTROL))
                 new_window = Int64(value)
                 delta = new_window - send_state.initial_stream_send_window
                 send_state.initial_stream_send_window = new_window
                 for stream_id in keys(send_state.stream_send_window)
                     updated = send_state.stream_send_window[stream_id] + delta
-                    updated > _H2_FLOW_CONTROL_MAX_WINDOW && throw(ProtocolError("HTTP/2 stream send window overflow"))
+                    updated > _H2_FLOW_CONTROL_MAX_WINDOW && throw(ProtocolError("HTTP/2 stream send window overflow", _PROTOCOL_ERROR_FLOW_CONTROL))
                     send_state.stream_send_window[stream_id] = updated
                 end
             elseif id == UInt16(0x2)
@@ -333,26 +336,30 @@ function _apply_h2_peer_settings!(
     return nothing
 end
 
-function _apply_h2_window_update!(send_state::_H2SendWindowState, frame::WindowUpdateFrame)::Nothing
+# Adds a WINDOW_UPDATE's credit to its window. A window pushed over 2^31 - 1
+# is a FLOW_CONTROL_ERROR (RFC 9113 §6.9.1): for the connection this throws,
+# and for a stream it returns `true`, leaving the window as it was, so the
+# caller resets that stream.
+function _apply_h2_window_update!(send_state::_H2SendWindowState, frame::WindowUpdateFrame)::Bool
     lock(send_state.state_lock)
     try
         increment = Int64(frame.window_size_increment)
         if frame.stream_id == UInt32(0)
             updated = send_state.conn_send_window + increment
-            updated > _H2_FLOW_CONTROL_MAX_WINDOW && throw(ProtocolError("HTTP/2 connection send window overflow"))
+            updated > _H2_FLOW_CONTROL_MAX_WINDOW && throw(ProtocolError("HTTP/2 connection send window overflow", _PROTOCOL_ERROR_FLOW_CONTROL))
             send_state.conn_send_window = updated
         elseif haskey(send_state.stream_send_window, frame.stream_id)
             updated = send_state.stream_send_window[frame.stream_id] + increment
-            updated > _H2_FLOW_CONTROL_MAX_WINDOW && throw(ProtocolError("HTTP/2 stream send window overflow"))
+            updated > _H2_FLOW_CONTROL_MAX_WINDOW && return true
             send_state.stream_send_window[frame.stream_id] = updated
         else
-            return nothing
+            return false
         end
         notify(send_state.window_condition; all=true)
     finally
         unlock(send_state.state_lock)
     end
-    return nothing
+    return false
 end
 
 function _wait_h2_send_window_locked!(
@@ -1723,6 +1730,18 @@ function _try_write_h2_goaway!(
     return nothing
 end
 
+# The GOAWAY error code for a connection error raised by the read loop.
+@inline function _h2_goaway_error_code(err::Exception)::UInt32
+    err isa ProtocolError && (err::ProtocolError).code == _PROTOCOL_ERROR_FLOW_CONTROL && return _H2_ERROR_FLOW_CONTROL
+    return _H2_ERROR_PROTOCOL
+end
+
+# Whether a nonzero `stream_id` names a stream the client has not opened. The
+# server opens no streams (it never pushes), so every even id is idle too
+# (RFC 9113 §5.1).
+@inline _h2_server_stream_idle(stream_id::UInt32, max_stream_id::UInt32)::Bool =
+    iseven(stream_id) || stream_id > max_stream_id
+
 function _request_h2_conn_shutdown!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
@@ -1819,6 +1838,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     rapid_reset_budget = max_concurrent_streams > 0 ?
         max_concurrent_streams + _H2_RAPID_RESET_ALLOWANCE : 0
     close_kind = _H2_CONN_CLOSE_CLEAN
+    goaway_code = _H2_ERROR_PROTOCOL
     try
         preface = _read_exact_h2_server!(reader_source, length(_H2_PREFACE))
         preface == _H2_PREFACE || throw(ProtocolError("invalid h2 client preface"))
@@ -1879,12 +1899,28 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 continue
             end
             if frame isa WindowUpdateFrame
-                _apply_h2_window_update!(send_state, frame::WindowUpdateFrame)
+                wu = frame::WindowUpdateFrame
+                wu.stream_id != UInt32(0) && _h2_server_stream_idle(wu.stream_id, max_stream_id) &&
+                    throw(ProtocolError("HTTP/2 WINDOW_UPDATE for idle stream $(wu.stream_id)"))
+                if _apply_h2_window_update!(send_state, wu)
+                    lock(states_lock)
+                    state = try
+                        get(states, wu.stream_id, nothing)
+                    finally
+                        unlock(states_lock)
+                    end
+                    state === nothing ||
+                        _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_FLOW_CONTROL)
+                end
                 continue
             end
+            # A client cannot push (RFC 9113 §8.4).
+            frame isa PushPromiseFrame && throw(ProtocolError("HTTP/2 clients must not send PUSH_PROMISE"))
             if frame isa RSTStreamFrame
                 rst = frame::RSTStreamFrame
                 rst.stream_id == UInt32(0) && throw(ProtocolError("RST_STREAM stream id must be non-zero"))
+                # RFC 9113 §6.4: resetting a stream that was never opened is a connection error.
+                _h2_server_stream_idle(rst.stream_id, max_stream_id) && throw(ProtocolError("HTTP/2 RST_STREAM for idle stream $(rst.stream_id)"))
                 lock(states_lock)
                 state = try
                     get(() -> nothing, states, rst.stream_id)
@@ -2112,7 +2148,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 # against the connection window, whatever becomes of the frame.
                 frame_bytes = length(df.data) + df.padding
                 (@atomic send_state.conn_recv_window -= frame_bytes) >= 0 ||
-                    throw(ProtocolError("HTTP/2 DATA exceeded the connection flow-control window"))
+                    throw(ProtocolError("HTTP/2 DATA exceeded the connection flow-control window", _PROTOCOL_ERROR_FLOW_CONTROL))
                 lock(states_lock)
                 state = try
                     get(states, df.stream_id, nothing)
@@ -2127,13 +2163,16 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     continue
                 end
                 stream_error = false
+                error_code = _H2_ERROR_PROTOCOL
                 # Set for DATA that is not buffered for the handler, whose credit goes back now.
                 dropped = false
                 lock(state.lock)
                 try
                     state.headers_complete || throw(ProtocolError("DATA frame received before END_HEADERS"))
                     if state.stream_done || state.trailers_complete
+                        # The client already ended the stream (RFC 9113 §6.1).
                         stream_error = true
+                        error_code = _H2_ERROR_STREAM_CLOSED
                         dropped = true
                     elseif state.aborted
                         dropped = true
@@ -2146,7 +2185,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                             dropped = true
                         else
                             available_after = _h2_server_available_bytes(state) + length(df.data)
-                            available_after <= state.max_buffered_bytes || throw(ProtocolError("HTTP/2 request body exceeded buffered server limit"))
+                            available_after <= state.max_buffered_bytes || throw(ProtocolError("HTTP/2 request body exceeded buffered server limit", _PROTOCOL_ERROR_FLOW_CONTROL))
                             append!(state.body, df.data)
                             state.received_body_bytes = new_received
                             if df.end_stream
@@ -2167,6 +2206,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(state.lock)
                 end
+                # The reset goes out before the returned credit.
+                stream_error && _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, error_code)
                 if dropped
                     _send_h2_server_window_updates!(conn, write_lock, send_state, df.stream_id, frame_bytes, false)
                 else
@@ -2174,20 +2215,17 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     # the stream level only while the stream can carry more DATA.
                     _send_h2_server_window_updates!(conn, write_lock, send_state, df.stream_id, df.padding, !df.end_stream && !stream_error)
                 end
-                if stream_error
-                    _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
-                elseif dropped
-                    _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
-                end
+                dropped && !stream_error && _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 continue
             end
         end
     catch err
         close_kind = _classify_h2_conn_close(err::Exception)
         close_kind == _H2_CONN_CLOSE_INTERNAL && rethrow(err)
+        goaway_code = _h2_goaway_error_code(err::Exception)
         return nothing
     finally
-        close_kind == _H2_CONN_CLOSE_PROTOCOL && _try_write_h2_goaway!(conn, write_lock, max_stream_id, UInt32(0x1), _server_write_deadline_ns(server))
+        close_kind == _H2_CONN_CLOSE_PROTOCOL && _try_write_h2_goaway!(conn, write_lock, max_stream_id, goaway_code, _server_write_deadline_ns(server))
         _fail_h2_send_window_state!(send_state)
         _fail_h2_server_streams!(states_lock, states, send_state)
         if close_kind == _H2_CONN_CLOSE_PROTOCOL
