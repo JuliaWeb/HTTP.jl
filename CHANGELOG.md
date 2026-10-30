@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP.jl server in the same process; it now allocates 0.2 MiB and 0.3 MiB.
   ([#1527])
 
+### Fixed
+- The error for a URL without `http://` or `https://`, such as
+  `//user:secret@host/`, and the trace URL for that request no longer include
+  the URL's user name and password. ([#1539])
+
 ## [v2.13.3] - 2026-10-29
 
 ### Fixed
@@ -1682,3 +1687,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1534]: https://github.com/JuliaWeb/HTTP.jl/issues/1534
 [#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
+[#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539

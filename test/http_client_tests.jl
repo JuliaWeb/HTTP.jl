@@ -1199,6 +1199,21 @@ end
     end
 end
 
+@testset "HTTP URL errors without a scheme leave out credentials" begin
+    for url in ("user:secret@host/x", "//user:secret@host/x", "http:user:secret@host/", "user:s@cret@host/")
+        err = try
+            HT._parse_http_url(url)
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+        @test !occursin("secret", sprint(showerror, err)) && !occursin("cret", sprint(showerror, err))
+        done = Ref{Any}(nothing)
+        @test_throws ArgumentError HT.get(url; trace = event -> (event isa HT.DoneEvent && (done[] = event); nothing))
+        @test done[] isa HT.DoneEvent && !occursin("cret", (done[]::HT.DoneEvent).url)
+    end
+end
+
 @testset "HTTP URL authority characters" begin
     # Each of these would dial a host other than the one a browser or URIs.jl
     # reads from the same URL, or put control bytes into the Host header.

@@ -359,7 +359,11 @@ end
 function _url_for_message(url::AbstractString)::String
     s = String(url)
     sep = findfirst("://", s)
-    sep === nothing && return s
+    if sep === nothing
+        # Where the authority is cannot be told, so drop everything up to the last `@`.
+        at = findprev(isequal('@'), s, lastindex(s))
+        return at === nothing ? s : String(SubString(s, nextind(s, at)))
+    end
     start = last(sep) + 1
     stop = something(findnext(c -> c == '/' || c == '?' || c == '#', s, start), ncodeunits(s) + 1)
     at = findprev('@', s, prevind(s, stop))
@@ -371,7 +375,7 @@ function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
     s = url isa String ? url : String(url)
     bytes = codeunits(s)
     scheme_idx = findfirst("://", s)
-    scheme_idx === nothing && throw(ArgumentError("URL must include http:// or https:// scheme: $s"))
+    scheme_idx === nothing && throw(ArgumentError("URL must include http:// or https:// scheme: $(_url_for_message(s))"))
     scheme_start = first(scheme_idx)
     scheme_end = last(scheme_idx)
     scheme_last = prevind(s, scheme_start)
