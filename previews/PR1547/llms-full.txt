@@ -1,6 +1,6 @@
 # HTTP.jl documentation
 
-> Complete documentation for HTTP.jl v2.14.0 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+> Complete documentation for HTTP.jl v2.14.1 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
 
 ---
 
@@ -2737,7 +2737,7 @@ instead of reused.
 
 ### `HTTP.peeraddr` — Function
 
-    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
+    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddrV4, Reseau.TCP.SocketAddrV6}
 
 Return the client's address for a server `stream`, or `nothing` when it is not
 known. `string(addr)` gives `"ip:port"`; `addr.ip` is a tuple of the address
