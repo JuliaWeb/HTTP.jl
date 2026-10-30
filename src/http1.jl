@@ -904,6 +904,28 @@ write_response!(io::IO, response::Response, request::Union{Nothing,Request}) =
 # which `juliac --trim` rejects.
 function _write_response!(io::IO, response::Response, response_to_head::Bool)
     head, use_chunked, trailer_values, allows_body = _response_head(response, response_to_head)
+    _write_response_parts!(io, head, response, use_chunked, trailer_values, allows_body)
+    return nothing
+end
+
+# Bound the extra copy when combining an HTTP/1 head with a buffered body.
+const _FIXED_BODY_COALESCE_BYTES = 4096
+const _RESPONSE_WRITE_BUFFER_BYTES = 2 * _FIXED_BODY_COALESCE_BYTES
+
+function _write_response_parts!(io::IO, head::Vector{UInt8}, response::Response, use_chunked::Bool, trailer_values::Headers, allows_body::Bool, buffer::Vector{UInt8}=head)::Nothing
+    body = response.body
+    if allows_body && !use_chunked && 0 < response.content_length <= _FIXED_BODY_COALESCE_BYTES &&
+       body isa Union{AbstractString,AbstractVector{UInt8}}
+        # Large response heads must not enlarge a connection's retained buffer.
+        if buffer !== head && length(head) + response.content_length <= _RESPONSE_WRITE_BUFFER_BYTES
+            empty!(buffer)
+            append!(buffer, head)
+            head = buffer
+        end
+        append!(head, body isa AbstractString ? codeunits(body) : body)
+        write(io, head) == length(head) || throw(ProtocolError("transport short write"))
+        return nothing
+    end
     write(io, head)
     allows_body && _write_response_body!(io, response, use_chunked, trailer_values)
     return nothing
