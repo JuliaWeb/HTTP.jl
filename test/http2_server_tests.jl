@@ -2861,6 +2861,98 @@ end
     end
 end
 
+# MadeYouReset (CVE-2025-8671): a client that forces the server to reset streams
+# itself — here by opening each with END_STREAM and a Content-Length it does not
+# fulfil, so the server resets it at dispatch before a handler starts and frees
+# the stream slot at once — is as abusive as the Rapid-Reset client that sends
+# RST_STREAM itself. The server must count these forced resets toward the same
+# budget and send GOAWAY(ENHANCE_YOUR_CALM).
+@testset "HTTP/2 server bounds server-forced stream resets (MadeYouReset)" begin
+    # `_note_h2_forced_reset!` trips the GOAWAY exactly past the budget, and only once.
+    control = HT._H2ServerConnControl()
+    listener = NC.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    client = ND.connect("tcp", ND.join_host_port("127.0.0.1", Int(laddr.port)))
+    server_conn = NC.accept(listener)
+    reader = HT._ConnReader(client)
+    write_lock = ReentrantLock()
+    try
+        count = 0
+        # Budget 3: the fourth forced reset sends the GOAWAY.
+        for _ in 1:3
+            count = HT._note_h2_forced_reset!(server_conn, write_lock, control, count, 3, UInt32(9), Int64(0))
+        end
+        @test count == 3
+        @test !(@atomic control.goaway_sent)
+        count = HT._note_h2_forced_reset!(server_conn, write_lock, control, count, 3, UInt32(9), Int64(0))
+        @test count == 4
+        @test (@atomic control.goaway_sent)
+        @test (@atomic control.shutdown_requested)
+        goaway = HT.read_frame!(reader)
+        @test goaway isa HT.GoAwayFrame
+        @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_ENHANCE_YOUR_CALM
+        # A second trip past the budget keeps `goaway_sent` set and writes nothing
+        # more: closing the server side then reading to EOF yields no extra frame.
+        count = HT._note_h2_forced_reset!(server_conn, write_lock, control, count, 3, UInt32(9), Int64(0))
+        @test count == 5
+        @test (@atomic control.goaway_sent)
+        HTTP.@try_ignore NC.close(server_conn)
+        @test isempty(read(client))
+    finally
+        HTTP.@try_ignore NC.close(client)
+        HTTP.@try_ignore NC.close(server_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # Live server: a stream of Content-Length-mismatch requests (each reset at
+    # dispatch, no handler, slot freed at once) trips GOAWAY(ENHANCE_YOUR_CALM).
+    served = Threads.Atomic{Int}(0)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_concurrent_streams = 2) do request
+        Threads.atomic_add!(served, 1)
+        return HT.Response(200, "ok"; proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        # Budget = max_concurrent_streams (2) + 100 = 102; send more than that.
+        goaway = nothing
+        sid = UInt32(1)
+        for _ in 1:400
+            fields = HT.HeaderField[
+                HT.HeaderField(":method", "POST", false),
+                HT.HeaderField(":scheme", "http", false),
+                HT.HeaderField(":authority", address, false),
+                HT.HeaderField(":path", "/", false),
+                HT.HeaderField("content-length", "5", false),  # promises a body it never sends
+            ]
+            ok = try
+                _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(sid, true, true, HT.encode_header_block(encoder, fields)))
+                true
+            catch
+                false
+            end
+            ok || break
+            sid += UInt32(2)
+        end
+        # The GOAWAY follows the per-stream RST_STREAMs (one per forced reset),
+        # more than `_read_h2_server_frame_until!` will scan, so read in a loop.
+        goaway = nothing
+        while goaway === nothing
+            frame = HT.read_frame!(reader)
+            frame isa HT.GoAwayFrame && (goaway = frame::HT.GoAwayFrame)
+        end
+        @test (goaway::HT.GoAwayFrame).error_code == HT._H2_ERROR_ENHANCE_YOUR_CALM
+        # No handler ever ran: the resets happened at dispatch.
+        @test served[] == 0
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server rejects reuse of highest closed stream id" begin
     # ANT-2026-7393V1MS: once stream N completes and is cleaned up, a HEADERS
     # frame reusing id N must be a connection error, not a fresh stream.

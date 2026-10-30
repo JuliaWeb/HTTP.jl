@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The HTTP/2 server now counts the streams a client makes it reset — by opening
+  a stream and then breaking it, for example with a body that contradicts its
+  `Content-Length`, so the server resets it before a handler starts and frees
+  the stream slot at once — toward the same Rapid-Reset budget as client-sent
+  RST_STREAM frames, and sends GOAWAY(ENHANCE_YOUR_CALM) once past it. Before,
+  such a client could churn streams without bound, evading both the
+  concurrent-stream cap and the Rapid-Reset defense (the MadeYouReset pattern,
+  CVE-2025-8671). ([#1544])
 - The HTTP/2 server now ends the connection with PROTOCOL_ERROR when a client
   sends RST_STREAM or WINDOW_UPDATE for a stream it never opened, or any
   PUSH_PROMISE (RFC 9113 §5.1, §6.4, §8.4); it ignored these frames. A
@@ -1708,3 +1716,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
 [#1540]: https://github.com/JuliaWeb/HTTP.jl/issues/1540
 [#1542]: https://github.com/JuliaWeb/HTTP.jl/issues/1542
+[#1544]: https://github.com/JuliaWeb/HTTP.jl/issues/1544
