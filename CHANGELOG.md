@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.13.4] - 2026-10-29
+
 ### Changed
 - HTTP/2 downloads no longer allocate per DATA frame: the client reads each
   payload into one buffer per connection before copying it into its stream,
@@ -1325,7 +1327,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.4...HEAD
+[v2.13.4]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...v2.13.4
 [v2.13.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.2...v2.13.3
 [v2.13.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.1...v2.13.2
 [v2.13.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.0...v2.13.1
