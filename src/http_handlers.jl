@@ -36,6 +36,7 @@ import ..peeraddr
 import .._stream_error_status
 import ..@_spawn_interactive
 import ..@try_ignore
+import ..URIs
 
 using Logging: Logging, AbstractLogger, LogLevel, with_logger, @logmsg
 
@@ -105,7 +106,28 @@ end
 Base.show(io::IO, x::Node) = print(io, "Node($(x.segment))")
 
 isvariable(x) = startswith(x, "{") && endswith(x, "}")
-segment(x) = isvariable(x) ? Variable(x) : String(x)
+segment(x) = isvariable(x) ? Variable(x) : _literal_segment(x)
+
+# Routes match percent-decoded segments, as handlers such as `fileserver` read
+# the path, so `/%61dmin` takes the route `/admin`. Decoding follows the split
+# on '/', so `%2F` stays inside its segment. A segment that does not decode is
+# matched as written. Path variables keep the segment as sent: OpenAPI-style
+# parameters split on delimiters such as `,` before decoding.
+function _decode_segment(s::SubString{String})::SubString{String}
+    occursin('%', s) || return s
+    return try
+        SubString(URIs.unescapeuri(s))
+    catch
+        s
+    end
+end
+
+function _literal_segment(x)::String
+    s = String(_decode_segment(SubString(String(x))))
+    # Only `*` and `**` as written are wildcards.
+    (s == "*" || s == "**") && s != x && throw(ArgumentError("route segment \"$x\" decodes to a wildcard"))
+    return s
+end
 
 Node(x) = Node(x, Node[], Node[], nothing, nothing, Leaf[])
 Node() = Node("*")
@@ -219,6 +241,12 @@ A route path is made of segments:
 - `*`, which matches any one segment
 - `**` at the end, which matches the rest of the path
 
+Each segment of the request path is percent-decoded before it is matched, so
+`/%61dmin` takes the route `/admin`: literal route segments are decoded the same
+way, and variable patterns see the decoded segment. An encoded slash (`%2F`)
+stays inside its segment. Path variables hold the segment as sent, still
+percent-encoded.
+
 A handler reads the matched route with [`getroute`](@ref) and its variables with
 [`getparams`](@ref) and [`getparam`](@ref).
 """
@@ -295,8 +323,10 @@ function _router_request_path(target::String)::String
 end
 
 function gethandler(r::Router, req::Request)
-    segments = split(_router_request_path(req.target), '/'; keepempty=false)
-    leaf = match(r.routes, req.method, segments, 1)
+    path = _router_request_path(req.target)
+    segments = split(path, '/'; keepempty=false)
+    decoded = occursin('%', path) ? map(_decode_segment, segments) : segments
+    leaf = match(r.routes, req.method, decoded, 1)
     params = Params()
     if leaf isa Leaf
         if !isempty(leaf.variables)
@@ -345,8 +375,8 @@ getroute(req) = get(req.context, :route, nothing)
 """
     HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
 
-Return the path variables of the route that matched `req`, or `nothing` when no
-route matched or it has no variables.
+Return the path variables of the route that matched `req`, as sent (still
+percent-encoded), or `nothing` when no route matched or it has no variables.
 """
 getparams(req) = get(req.context, :params, nothing)
 
