@@ -7,12 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.13.5] - 2026-10-29
+
 ### Fixed
 - The HTTP/2 server now counts the streams it resets because of a client's
   frames, such as a body that contradicts its `Content-Length`, toward the same
   limit as RST_STREAM frames sent by the client, and sends
   GOAWAY(ENHANCE_YOUR_CALM) past it. Before, a client could make it reset
   streams on one connection without limit (CVE-2025-8671). ([#1544])
+- With `read_header_timeout` set, the HTTP/2 server now applies it to a whole
+  header block, from its HEADERS frame to the CONTINUATION frame that ends it,
+  as the HTTP/1 server does for a request head. It restarted the timeout for
+  each CONTINUATION frame, so a client sending them slowly could keep a block
+  open far longer: with a 1 s timeout, a block that took 3.3 s was accepted.
+  ([#1543])
 - The HTTP/2 server now ends the connection with PROTOCOL_ERROR when a client
   sends RST_STREAM or WINDOW_UPDATE for a stream it never opened, or any
   PUSH_PROMISE (RFC 9113 §5.1, §6.4, §8.4); it ignored these frames. A
@@ -22,12 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FLOW_CONTROL_ERROR instead of PROTOCOL_ERROR, and DATA on a stream the client
   already ended is reset with STREAM_CLOSED instead of PROTOCOL_ERROR.
   ([#1542])
-- With `read_header_timeout` set, the HTTP/2 server now applies it to a whole
-  header block, from its HEADERS frame to the CONTINUATION frame that ends it,
-  as the HTTP/1 server does for a request head. It restarted the timeout for
-  each CONTINUATION frame, so a client sending them slowly could keep a block
-  open far longer: with a 1 s timeout, a block that took 3.3 s was accepted.
-  ([#1543])
 
 ## [v2.13.4] - 2026-10-29
 
@@ -1349,7 +1351,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.4...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.5...HEAD
+[v2.13.5]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.4...v2.13.5
 [v2.13.4]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.3...v2.13.4
 [v2.13.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.2...v2.13.3
 [v2.13.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.1...v2.13.2
@@ -1718,6 +1721,6 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
 [#1540]: https://github.com/JuliaWeb/HTTP.jl/issues/1540
-[#1543]: https://github.com/JuliaWeb/HTTP.jl/issues/1543
 [#1542]: https://github.com/JuliaWeb/HTTP.jl/issues/1542
+[#1543]: https://github.com/JuliaWeb/HTTP.jl/issues/1543
 [#1544]: https://github.com/JuliaWeb/HTTP.jl/issues/1544
