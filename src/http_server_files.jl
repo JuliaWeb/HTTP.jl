@@ -531,6 +531,9 @@ end
     (':' in segment) && return true
     # No file system allows NUL in a name; `stat` would throw on it.
     ('\0' in segment) && return true
+    # Windows drops a trailing dot or space from a name, so `admin.` would open
+    # `admin` although a route for `/admin/**` does not match it.
+    (endswith(segment, '.') || endswith(segment, ' ')) && return true
     # Absolute paths (POSIX or, when running on Windows, drive/UNC forms) cause
     # joinpath to discard the root. Guard against the host's own notion of an
     # absolute path as well as the cross-platform forms covered above.

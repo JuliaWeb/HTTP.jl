@@ -281,8 +281,8 @@ does not look like a file name, as a single-page app needs. It answers
 `If-Modified-Since` and single `Range` requests, and also `If-None-Match` when
 you pass `etag`.
 
-A path with a `..` segment, an encoded slash (`%2F`), or a backslash gets
-`400 Bad Request`. Routes are case-sensitive, but the default file systems on
+A path with a `..` segment, an encoded slash (`%2F`), a backslash, or a name
+that ends in a dot or space (which Windows drops) gets `400 Bad Request`. Routes are case-sensitive, but the default file systems on
 macOS and Windows are not, so there `/ADMIN/x` serves `admin/x` even when a
 route guards `/admin/**`; check access in the handler when that matters.
 

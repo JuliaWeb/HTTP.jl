@@ -734,7 +734,8 @@ end
         # Each other spelling of the guarded path takes the guarded route, or
         # the fileserver refuses it.
         for target in ("/%61dmin/secret.txt", "/%61dmin%2Fsecret.txt", "//admin/secret.txt",
-                       "/./admin/secret.txt", "/x/../admin/secret.txt", "/admin%2fsecret.txt")
+                       "/./admin/secret.txt", "/x/../admin/secret.txt", "/admin%2fsecret.txt",
+                       "/admin./secret.txt", "/admin%20/secret.txt", "/admin/secret.txt.")
             resp = router(HT.Request("GET", target))
             @test resp.status in (400, 403)
             HT.body_close!(resp.body)
