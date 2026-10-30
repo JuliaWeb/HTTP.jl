@@ -145,10 +145,11 @@ end
         @test router(HT.Request("GET", target)) == "admin"
     end
     @test router(HT.Request("GET", "/my%20%66iles/x")) == "files"
-    @test router(HT.Request("GET", "/users/a%20b")) == "user:a b"
-    @test router(HT.Request("GET", "/n/%31%32")) == "n:12"
+    # Patterns see the decoded segment; variables keep the text as sent.
+    @test router(HT.Request("GET", "/n/%31%32")) == "n:%31%32"
+    @test router(HT.Request("GET", "/users/a%20b,c%2Cd")) == "user:a%20b,c%2Cd"
     # An encoded slash stays inside its segment.
-    @test router(HT.Request("GET", "/users/a%2Fb")) == "user:a/b"
+    @test router(HT.Request("GET", "/users/a%2Fb")) == "user:a%2Fb"
     @test router(HT.Request("GET", "/admin%2Fx")) == "public"
     # A segment that does not decode is matched as written.
     @test router(HT.Request("GET", "/users/100%")) == "user:100%"

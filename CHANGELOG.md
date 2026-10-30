@@ -16,14 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP.jl server in the same process; it now allocates 0.2 MiB and 0.3 MiB.
   ([#1527])
 - `Router` percent-decodes each segment of the request path, and of each
-  route, before matching, so `/%61dmin` takes the route `/admin`, and
-  `getparam` and `getparams` return decoded text (`a%20b` is now `a b`). An
+  route, before matching, so `/%61dmin` takes the route `/admin`, and a
+  variable pattern such as `{id:[0-9]+}` is matched against the decoded
+  segment. `getparam` and `getparams` still return the segment as sent. An
   encoded slash (`%2F`) stays inside its segment. `fileserver` and `servefile`
   now split the path before decoding it, so a path with `%2F` gets `400`
-  instead of `%2F` acting as a separator, as does a name that ends in a dot or
-  space, which Windows drops (`/admin./x` opened `admin/x`). Routes compared the raw text while
-  `fileserver` read the decoded path, so a route that guarded `/admin/**` did
-  not cover other spellings of the same files. ([#1538])
+  instead of `%2F` acting as a separator; so does a name that ends in a dot or
+  space, which Windows drops (`/admin./x` would open `admin/x`). Routes
+  compared the raw text while `fileserver` read the decoded path, so a route
+  that guarded `/admin/**` did not cover other spellings of the same files.
+  ([#1538])
 
 ### Fixed
 - The error for a URL without `http://` or `https://`, such as
