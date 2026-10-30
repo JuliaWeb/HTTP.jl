@@ -2373,7 +2373,9 @@ end
 Send an HTTP request and return the [`Response`](@ref), with the whole body in
 `response.body` as a `Vector{UInt8}`.
 
-`url` is a string or `URI`. `headers` is anything [`Headers`](@ref) accepts.
+`url` is a string or `URI`. An IPv4 host must be in dotted-decimal form, such
+as `127.0.0.1`; other numeric hosts, such as `127.1`, `0x7f.1`, or `010.0.0.1`,
+throw an `ArgumentError`. `headers` is anything [`Headers`](@ref) accepts.
 `body` may be a `String`, a byte vector, an `IO`, a `Dict` or `NamedTuple` (sent
 as a URL-encoded form), a [`Form`](@ref), an iterable of string or byte chunks,
 or an [`AbstractBody`](@ref). `headers` and `body` can also be passed as

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- A URL host that ends in a number must be a dotted-decimal IPv4 address, such
+  as `127.0.0.1`. Other forms, such as `127.1`, `0x7f.1`, `2130706433`, `0`,
+  or `010.0.0.1`, now throw an `ArgumentError`, also as a redirect `Location`.
+  The system resolver read them as IPv4 addresses, differently on each
+  platform (macOS reads `010.0.0.1` as `10.0.0.1`, glibc as `8.0.0.1`), while
+  URL parsers such as URIs.jl read a host name (RFC 3986 §7.4). ([#1537])
 - HTTP/2 downloads no longer allocate per DATA frame: the client reads each
   payload into one buffer per connection before copying it into its stream,
   encodes WINDOW_UPDATE frames into a reused buffer, and the server reuses one
@@ -1687,4 +1693,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1534]: https://github.com/JuliaWeb/HTTP.jl/issues/1534
 [#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
+[#1537]: https://github.com/JuliaWeb/HTTP.jl/issues/1537
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
