@@ -32,6 +32,15 @@ function run_http_trim_websocket()::Nothing
         rf.fin || error("expected final websocket frame")
         rf.opcode == UInt8(HT.WebSockets.WsOpcode.TEXT) || error("unexpected websocket opcode")
         String(rf.payload) == "ping" || error("unexpected websocket payload")
+
+        # The client handshake: nothing listens on port 1, so the connection fails,
+        # but the build still verifies every path `open` can take.
+        try
+            W.open("ws://127.0.0.1:1/")
+            error("expected the websocket connection to fail")
+        catch err
+            err isa HT.ConnectError || rethrow()
+        end
     finally
         trim_shutdown_runtime()
     end
