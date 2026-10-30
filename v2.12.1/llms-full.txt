@@ -1,0 +1,3137 @@
+# HTTP.jl documentation
+
+> Complete documentation for HTTP.jl v2.12.1 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/ -->
+
+# HTTP.jl
+
+HTTP.jl is an HTTP client and server library for Julia. It speaks HTTP/1.1 and
+HTTP/2, streams request and response bodies, and supports WebSockets and
+server-sent events. [Reseau](https://github.com/JuliaServices/Reseau.jl)
+provides the TCP, DNS, and TLS layers.
+
+## Quick Start
+
+Start a server, send it a request, and read the response body:
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0) do req
+    return HTTP.Response(200; body = "hello from HTTP.jl")
+end
+
+resp = HTTP.get("http://127.0.0.1:$(HTTP.port(server))/hello")
+HTTP.forceclose(server)
+String(resp.body)  # "hello from HTTP.jl"
+```
+
+Port `0` asks the operating system for a free port; `HTTP.port(server)`
+returns the one it chose.
+
+## Where to Go Next
+
+- The [Client guide](https://juliaweb.github.io/HTTP.jl/stable/guides/client/) covers requests, streaming, reusable
+  clients, request bodies, retries, and timeouts.
+- The [Server guide](https://juliaweb.github.io/HTTP.jl/stable/guides/server/) covers request and stream handlers,
+  routing, static files, server-sent events, and server timeouts.
+- The [Protocols guide](https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/) covers WebSockets and HTTP/2.
+- The [Migration guide](https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/) explains how to update code
+  written for HTTP.jl 1.x.
+- The [API reference](https://juliaweb.github.io/HTTP.jl/stable/api/reference/) lists every public name with its
+  docstring.
+
+## Docs for LLMs
+
+The documentation is also published as plain Markdown for LLM tools, following
+the [llms.txt](https://llmstxt.org/) convention:
+
+- [llms.txt](https://juliaweb.github.io/HTTP.jl/stable/llms.txt): a short index of the pages.
+- [llms-full.txt](https://juliaweb.github.io/HTTP.jl/stable/llms-full.txt): every page, with all docstrings expanded, in one file.
+
+Give either file to an assistant when you ask it about HTTP.jl.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/client/ -->
+
+# Client Guide
+
+`HTTP.request` and the verb helpers such as `HTTP.get` and `HTTP.post` send a
+request and return an `HTTP.Response` with the whole body in memory.
+`HTTP.open` streams the response instead. An `HTTP.Client` holds
+connections and settings that you want to share across requests.
+
+## Making Requests
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 0) do req
+    return HTTP.Response(200; body = "$(req.method) $(req.target)")
+end
+url = "http://127.0.0.1:$(HTTP.port(server))"
+
+resp = HTTP.request("GET", url * "/hello")
+resp.status        # 200
+String(resp.body)  # "GET /hello"
+
+HTTP.forceclose(server)
+```
+
+`HTTP.get`, `HTTP.head`, `HTTP.post`, `HTTP.put`, `HTTP.patch`, `HTTP.delete`,
+`HTTP.options`, and `HTTP.query` call `HTTP.request` with a fixed method and
+accept the same keywords.
+
+A response with status 300 or above throws an `HTTP.StatusError`.
+Redirect responses (301, 302, 303, 307, and 308) are the exception. Pass
+`status_exception = false` to get the response instead.
+
+The client follows up to 10 redirects. Set `redirect = false` or
+`redirect_limit` to change that. A `Location` header is resolved against the
+current URL as [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-5.2)
+specifies: `.` and `..` segments are removed, while repeated slashes and
+percent-encoded bytes are kept. The path of the URL you pass is sent as written,
+and fragments are never sent.
+
+A redirect to another origin (a different scheme, host, or port) drops the
+`Authorization`, `Cookie`, and `Proxy-Authorization` headers and the URL's
+credentials. Other headers are sent again, including an API key in a custom
+header such as `X-Api-Key`, as in curl and Go. Pass `forwardheaders = false`, or
+give the client a `check_redirect` function, to avoid that.
+
+## Request Bodies
+
+Pass the body as the third positional argument or with the `body` keyword.
+Strings and byte vectors are sent as they are. Files and `IOBuffer`s are read
+into memory first. Other `IO` values, and iterables of strings or byte chunks,
+are streamed with chunked transfer encoding.
+
+HTTP.jl has no JSON dependency. Serialize the payload yourself, for example with
+[JSON.jl](https://github.com/JuliaIO/JSON.jl), and set the `Content-Type`
+header:
+
+```julia
+using HTTP, JSON
+
+resp = HTTP.post(
+    "https://api.example.com/users";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(Dict("name" => "alice", "age" => 30)),
+)
+user = JSON.parse(String(resp.body))
+```
+
+A `Dict` or `NamedTuple` body is sent as an HTML form
+(`application/x-www-form-urlencoded`), and the `Content-Type` header is set for
+you:
+
+```julia
+HTTP.post("https://example.com/login", [], Dict("user" => "alice", "pw" => "s3cret"))
+```
+
+Use `HTTP.Form` for `multipart/form-data`, such as file uploads. An open
+file is sent with its file name:
+
+```julia
+open("upload.bin") do file
+    HTTP.post("https://example.com/upload", [], HTTP.Form(Dict("file" => file, "kind" => "binary")))
+end
+```
+
+### QUERY requests
+
+[RFC 10008](https://www.rfc-editor.org/rfc/rfc10008) defines the `QUERY` method
+for safe, idempotent requests that carry a body. `HTTP.query` sends one:
+
+```julia
+HTTP.query(
+    "https://api.example.com/search";
+    headers = ["Content-Type" => "application/json"],
+    body = """{"select":["name","email"],"limit":10}""",
+)
+```
+
+## Query Parameters
+
+The `query` keyword URL-encodes a `Dict`, `NamedTuple`, or vector of pairs and
+appends it to the URL's query string:
+
+```julia
+HTTP.get("https://example.com/search"; query = Dict("page" => 2, "limit" => 10))
+# GET /search?limit=10&page=2
+```
+
+A `Dict` has no order. Use a vector of pairs to fix the order or to repeat a key:
+
+```julia
+HTTP.get("https://example.com/search"; query = ["tag" => "a", "tag" => "b"])
+# GET /search?tag=a&tag=b
+```
+
+`query` adds to a query string that is already in the URL:
+
+```julia
+HTTP.get("https://example.com/search?type=user"; query = ["page" => 2])
+# GET /search?type=user&page=2
+```
+
+## Reading the Response Body
+
+`resp.body` is a `Vector{UInt8}`. Convert it to text with `String`:
+
+```julia
+resp = HTTP.get("https://example.com")
+text = String(resp.body)
+```
+
+!!! warning "`String(resp.body)` empties `resp.body`"
+    `String(::Vector{UInt8})` takes over the vector's memory instead of copying
+    it, so `resp.body` is empty afterwards. Use `String(copy(resp.body))` if you
+    need the bytes again.
+
+## Streaming Responses
+
+`HTTP.open` sends the request and lets you read the response body as it
+arrives. It follows redirects and decompresses the body like `HTTP.request`, but
+without the `max_decompressed_size` limit: you decide how much to read.
+
+```julia
+resp = HTTP.open("GET", "https://example.com") do stream
+    while !eof(stream)
+        chunk = readavailable(stream)
+        # process chunk
+    end
+end
+```
+
+The `do` block form returns the final `HTTP.Response`, not the value of the
+block. Store anything you need from the block in a variable defined outside it.
+Call `HTTP.startread(stream)` inside the block to see the status and headers
+before you read the body.
+
+To copy the body into an `IO` instead, pass it as `response_stream`. The
+response's `body` is then `nothing`:
+
+```julia
+buf = IOBuffer()
+resp = HTTP.get("https://example.com"; response_stream = buf)
+text = String(take!(buf))
+```
+
+## Reusing a Client
+
+Calls without a `client` keyword share one default client, so they already reuse
+connections and share a cookie jar. Create your own `HTTP.Client` when a
+set of requests needs its own connection pool, cookies, or settings:
+
+```julia
+client = HTTP.Client(
+    transport = HTTP.Transport(max_idle_per_host = 4),
+    cookiejar = HTTP.CookieJar(),
+)
+resp = HTTP.get(client, "https://example.com")
+close(client)
+```
+
+Every request function accepts the client as its first argument or as the
+`client` keyword. A closed client throws `ArgumentError` when you use it;
+`isopen(client)` tells you whether it is still open.
+
+Settings are split between the two types:
+
+- `HTTP.Transport` owns connections: pool sizes (`max_idle_per_host`,
+  `max_idle_total`, `max_conns_per_host`), `idle_timeout_ns`, TLS settings
+  (`tls_config`), the proxy (`proxy`), the retry budget (`retry_bucket`), the
+  source address (`local_addr`), and the response header limits
+  (`max_line_bytes` and `max_header_bytes`).
+- `HTTP.Client` owns request policy: the transport, the cookie jar,
+  redirects (`max_redirects`, `check_redirect`), HTTP/2 (`prefer_http2`,
+  `http2_settings`), and per-request defaults.
+
+A `Client` created without a `transport` reads its proxy from the
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment variables
+when it is created. A `Transport` you create yourself connects directly unless
+you pass `proxy`.
+Proxy URLs may use `http://`, `socks5://`, or `socks5h://`.
+
+### Per-client defaults
+
+A client can carry defaults that apply to every request sent through it:
+
+```julia
+client = HTTP.Client(
+    default_headers = ["User-Agent" => "MyApp/1.0", "X-API-Version" => "v2"],
+    default_query = Dict("api_key" => "secret"),
+    default_basicauth = "alice" => "password",
+    connect_timeout = 5,
+    request_timeout = 30,
+)
+
+HTTP.get(client, "https://api.example.com/users")
+
+# Per-call values replace the defaults they overlap.
+HTTP.get(client, "https://api.example.com/users"; headers = ["X-API-Version" => "v1"])
+```
+
+- `default_headers` are added unless the call sets the same header.
+- `default_query` is merged with the call's `query`; keys in the call replace
+  the default values for the same key.
+- `default_basicauth` is used unless the call passes `basicauth` or an
+  `Authorization` header.
+- The timeouts (`connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`) apply when the call passes no value
+  or `0`.
+
+### Binding to a local address
+
+`local_addr` sets the source IP address of a client's connections, which picks
+the outgoing interface on a host with several. Pass an IP address string, or a
+`Reseau.TCP.SocketAddrV4` or `SocketAddrV6` to also fix the source port:
+
+```julia
+client = HTTP.Client(local_addr = "192.0.2.10")
+```
+
+The address must belong to a local interface. Interface names such as `"en0"`
+throw an `ArgumentError`. When you pass your own `transport`, set `local_addr` on
+the `Transport` instead.
+
+## Timeouts
+
+Each timeout keyword bounds one part of a request. All values are in seconds.
+
+- `connect_timeout` bounds DNS lookup, the TCP connect, the proxy `CONNECT` or
+  SOCKS5 handshake, the TLS handshake, and HTTP/2 connection setup. It
+  defaults to 30.
+- `request_timeout` bounds the whole call.
+- `response_header_timeout` bounds the wait for the response headers after the
+  request is sent.
+- `read_idle_timeout` bounds the time between reads, including the wait for the
+  response headers.
+- `write_idle_timeout` bounds the time between writes.
+- `expect_continue_timeout` sets how long an HTTP/1 upload with an
+  `Expect: 100-continue` header waits for `100 Continue` before it sends the
+  body anyway.
+
+`request_timeout`, `response_header_timeout`, `read_idle_timeout`, and
+`write_idle_timeout` are off unless you set them. A timeout throws
+`HTTP.TimeoutError`.
+
+```julia
+resp = HTTP.get(
+    "https://example.com";
+    connect_timeout = 2,
+    response_header_timeout = 5,
+    read_idle_timeout = 30,
+)
+```
+
+`HTTP.open` takes the same keywords. `HTTP.WebSockets.open` takes all of them
+except `expect_continue_timeout`.
+
+## Retries
+
+By default a request is retried up to 4 times (`retries = 4`) when all of these
+hold:
+
+- the method is `GET`, `HEAD`, `OPTIONS`, `TRACE`, `QUERY`, `PUT`, or `DELETE`,
+  or the request has an `Idempotency-Key` or `X-Idempotency-Key` header (pass
+  `retry_non_idempotent = true` to retry other requests)
+- the body can be sent again, which is true unless it is streamed from an `IO`
+  or an iterable
+- the attempt failed with a network error, such as a refused or reset
+  connection, or the response status is 408, 429, 500, 502, 503, or 504
+
+Retries wait a random, exponentially growing delay, or the delay that a 429 or
+503 response asks for in its `Retry-After` header, up to 20 seconds. Pass
+`retry = false` to turn retries off. Each `Transport` also has a
+`HTTP.RetryBucket` that limits how many retries a burst of failures can
+trigger.
+
+Pass `retry_if` to make your own decision:
+
+```julia
+function retry_if(attempt, err, req, resp)
+    err !== nothing && return attempt <= 2      # failed before a response
+    return resp.status in (429, 503) && attempt <= 3
+end
+
+HTTP.get("https://example.com"; retry_if = retry_if)
+```
+
+`retry_if(attempt, err, req, resp)` gets the one-based number of the attempt
+that just finished. For a failure before any response, `err` is an
+`HTTP.RequestRetryError` whose `err.err` field holds the underlying
+exception, and `resp` is `nothing`. For a response, `err` is `nothing` and `resp`
+is the response. Return `true` to retry, `false` to stop, or `nothing` to use the
+default rules. A body that cannot be sent again is never retried.
+
+## Cancellation and Deadlines
+
+Pass an `HTTP.RequestContext` as `context` to control a request from
+another task. `HTTP.cancel!(ctx)` aborts the request, which then throws
+`HTTP.CanceledError`:
+
+```julia
+ctx = HTTP.RequestContext()
+task = Threads.@spawn HTTP.get("https://example.com/slow"; context = ctx)
+HTTP.cancel!(ctx)
+fetch(task)  # throws a TaskFailedException wrapping an HTTP.CanceledError
+```
+
+A context can also carry an absolute deadline, set with
+`HTTP.RequestContext(deadline_ns = time_ns() + 5_000_000_000)` or
+`HTTP.set_deadline!`. A request still running at the deadline throws
+`HTTP.TimeoutError`. `HTTP.request`, the verb helpers, `HTTP.open`, and
+`HTTP.do!` all accept `context`.
+
+## Debugging Requests
+
+`verbose = 1` prints a line for each attempt, response, retry, and redirect,
+and one for the result. `verbose = 2` also prints the request and response
+heads:
+
+```julia
+HTTP.get("http://127.0.0.1:8080/v"; verbose = 2)
+```
+
+```
+[http] request attempt 1 GET http://127.0.0.1:8080/v via h1
+[http] request
+GET /v HTTP/1.1
+Host: 127.0.0.1:8080
+Accept-Encoding: gzip, deflate
+User-Agent: HTTP.jl/<version>
+[http] response attempt 1 200 for http://127.0.0.1:8080/v
+[http] response
+HTTP/1.1 200 OK
+Content-Length: 6
+[http] done 200 for http://127.0.0.1:8080/v
+```
+
+To collect the same information in code, pass a `trace` callback. It receives
+these events: `HTTP.RequestEvent`, `HTTP.ResponseHeadEvent`,
+`HTTP.RetryEvent`, `HTTP.RetrySkippedEvent`,
+`HTTP.RedirectEvent`, and `HTTP.DoneEvent`.
+
+## Avoiding Copies
+
+A byte vector or contiguous byte view passed as the body is sent without being
+copied, and retries send the same bytes again. Do not change the bytes until the
+call returns.
+
+Pass `copyheaders = false` with an `HTTP.Headers` collection to let
+`HTTP.request` or `HTTP.open` use it without copying it first. Do not touch the
+collection until the call returns, and do not share it between requests that run
+at the same time; its contents afterwards are unspecified. Other header inputs
+are always copied.
+
+```julia
+payload = read("upload.bin")
+headers = HTTP.Headers(["Content-Type" => "application/octet-stream"])
+resp = HTTP.put("https://example.com/upload", headers, payload; copyheaders = false)
+```
+
+A byte vector or writable byte view passed as `response_stream` receives the
+body directly. It must be large enough for the whole body, or the call throws
+`ArgumentError`. A `Vector{UInt8}` is resized to the body length. A response
+with status 300 or above, including a redirect that is not followed, leaves it
+untouched: up to 1 MiB of that body is returned in `resp.body` instead, so a
+`StatusError` still carries it.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/server/ -->
+
+# Server Guide
+
+`HTTP.serve!` calls your function with each `HTTP.Request` and sends
+the `HTTP.Response` it returns. `HTTP.listen!` calls your function with
+an `HTTP.Stream` instead, so it can read the request body and write the
+response in pieces. Both return an `HTTP.Server` right away; `HTTP.serve`
+and `HTTP.listen` take the same arguments and block until the server closes.
+
+## Request Handlers
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.Response(200; headers = ["Content-Type" => "text/plain"], body = "handled " * req.target)
+end
+
+resp = HTTP.get("http://127.0.0.1:8080/health")
+String(resp.body)  # "handled /health"
+HTTP.forceclose(server)
+```
+
+A handler that throws sends the client a `500 Internal Server Error`.
+
+### Reading the request
+
+`req.method` and `req.target` hold the request line, and `HTTP.header(req,
+"Content-Type")` reads a header. `String(req.body)` returns the body as text.
+
+`req.target` holds the path and the query string. Split them with `HTTP.URI`
+and decode the query with `HTTP.queryparams`, which returns a `Dict`, or
+`HTTP.queryparampairs`, which keeps the order and repeated keys. A form body
+(`application/x-www-form-urlencoded`) uses the same encoding, so
+`HTTP.queryparams` decodes it too:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    query = HTTP.queryparams(HTTP.URI(req.target).query)
+    form = HTTP.queryparams(String(req.body))
+    return HTTP.Response(200; body = "page $(get(query, "page", "1")), user $(get(form, "user", "?"))")
+end
+```
+
+Use `HTTP.parse_multipart_form` for a `multipart/form-data` body.
+
+`serve!` reads the whole request body into memory before it calls the handler.
+`max_body_bytes` limits the size, 64 MiB by default; a larger body gets
+`413 Content Too Large`. Pass `max_body_bytes = 0` for no limit, or use a
+stream handler to read large bodies in pieces.
+
+### Reusing responses
+
+A `Response` with a `String` or `Vector{UInt8}` body is not used up when it is
+sent, so a handler can return the same response object every time:
+
+```julia
+const HEALTH = HTTP.Response(200; headers = ["Content-Type" => "text/plain"], body = "ok")
+handler(req) = HEALTH
+```
+
+A streamed body, such as an `HTTP.CallbackBody`, can be sent only once.
+Sending it again gives the client a `500 Internal Server Error`.
+
+## Stream Handlers
+
+A stream handler reads the request and writes the response itself:
+
+```julia
+server = HTTP.listen!("127.0.0.1", 8080) do stream
+    req = HTTP.startread(stream)  # the request line and headers
+    body = read(stream)           # the request body
+    HTTP.setstatus(stream, 200)
+    HTTP.setheader(stream, "Content-Type" => "text/plain")
+    write(stream, "got $(length(body)) bytes for $(req.target)")
+end
+```
+
+Set the status and headers before the first `write`. A response without a
+`Content-Length` header is sent with chunked encoding, and
+`HTTP.addtrailer` adds trailers to it. `HTTP.streamhandler(f)` turns a
+request handler `f` into a stream handler.
+
+### Fixed-length responses
+
+A stream handler that sets `Content-Length` on an HTTP/1 response and writes
+without calling `HTTP.startwrite` has its body held in memory until it
+returns or calls `closewrite`. Until then nothing is sent, so if the handler
+throws or writes the wrong number of bytes, the client gets an error response
+instead.
+
+To stream a large body, call `HTTP.startwrite` first. The server still holds
+the first 4 KiB, so a small response goes out in one write with its head. Once
+the body passes 4 KiB, the head and the held bytes are sent, and each later
+`write` goes straight to the connection:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    HTTP.setheader(stream, "Content-Length" => string(filesize(path)))
+    HTTP.startwrite(stream)
+    open(io -> write(stream, io), path)
+end
+```
+
+Once the head is sent, a failure can only close the connection. Either way,
+writing more than `Content-Length` bytes throws. `HTTP.streamhandler` streams
+a response body this way when it is not already in memory, such as a
+`fileserver` file.
+
+## Interactive Thread Pool
+
+HTTP.jl runs its server tasks, including your handlers, on Julia's
+`:interactive` thread pool. That keeps the server answering requests, health
+checks included, while compute-heavy tasks keep the `:default` pool busy.
+
+Start a production server with at least one interactive thread. This command
+starts four default threads and one interactive thread:
+
+```sh
+julia --threads=4,1 --project=. server.jl
+```
+
+`JULIA_NUM_THREADS=4,1` does the same. Without an interactive thread, Julia runs
+these tasks on the default pool, where tasks that never yield can stall the
+server.
+
+Do not run long computations directly in a handler: they hold an interactive
+thread. Run them on the default pool and wait for the result:
+
+```julia
+result = fetch(Threads.@spawn :default expensive_work())
+```
+
+## Server Lifecycle
+
+Keep the `Server` that `serve!` or `listen!` returns:
+
+- `HTTP.port(server)` returns the bound port, which is useful with port `0`.
+- `wait(server)` blocks until the server stops accepting connections.
+- `close(server)` stops accepting connections and waits for the requests in
+  progress to finish.
+- `HTTP.forceclose(server)` stops at once and closes every connection.
+
+### Timeouts
+
+All server timeouts are off by default. Each keyword takes seconds, and a
+variant ending in `_ns`, such as `read_timeout_ns`, takes nanoseconds:
+
+```julia
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_header_timeout = 5,
+    read_timeout = 30,
+    write_timeout = 30,
+    idle_timeout = 120,
+)
+```
+
+For HTTP/1 connections, `read_header_timeout` limits reading the request line
+and headers. After the headers, `read_timeout` starts a fresh limit for reading
+the body. Between requests on a kept-alive connection, `idle_timeout` applies
+until the next request starts to arrive; the header limit starts then. When the
+header or idle setting is `0`, it falls back to `read_timeout`.
+
+When a header or body read times out, the server answers
+`408 Request Timeout` and closes the connection. An idle timeout closes the
+connection without a response.
+
+### TLS
+
+To serve HTTPS, pass `serve!` or `listen!` a TLS listener from Reseau. List
+`"h2"` in `alpn_protocols` to offer HTTP/2 to clients:
+
+```julia
+using HTTP, Reseau
+
+config = Reseau.TLS.Config(;
+    cert_file = "cert.pem",
+    key_file = "key.pem",
+    alpn_protocols = ["h2", "http/1.1"],
+)
+server = HTTP.serve!(handler, Reseau.TLS.listen("tcp", "127.0.0.1:8443", config))
+```
+
+See the [Protocols guide](https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/) for HTTP/2 on plain connections.
+
+## Routing and Middleware
+
+`HTTP.Router` matches a request's method and path
+against registered routes:
+
+```julia
+using HTTP
+
+router = HTTP.Router()
+
+HTTP.register!(router, "GET", "/users/{id}") do req
+    id = HTTP.getparam(req, "id")
+    return HTTP.Response(200; body = "user " * id)
+end
+
+server = HTTP.serve!(router, "127.0.0.1", 8080)
+```
+
+Read the matched route and its path variables with `HTTP.getroute`,
+`HTTP.getparams`, and `HTTP.getparam`. A path that matches no route gets
+`404 Not Found`, and a path that matches with another method gets
+`405 Method Not Allowed`.
+
+Middleware is a function that takes a handler and returns a new handler. The
+third argument of `Router` wraps every route registered on it. This router
+gives each handler 5 seconds:
+
+```julia
+timeout = HTTP.Handlers.handlertimeout(5.0; status = 503)
+router = HTTP.Router(
+    req -> HTTP.Response(404),
+    req -> HTTP.Response(405),
+    timeout,
+)
+```
+
+### Request logging
+
+`HTTP.Handlers.logging_middleware` wraps a handler and logs one record per
+request through Julia's logging system:
+
+```julia
+using HTTP, Logging
+
+server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
+```
+
+With the default `ConsoleLogger`, each request prints a record like:
+
+```
+┌ Info: GET /users/42 200 0.412ms
+│   method = "GET"
+│   target = "/users/42"
+│   status = 200
+│   elapsed_ms = 0.412
+└   length = 7
+```
+
+`length` is the response body length when it is known without reading the
+body. A handler that throws is logged at `Logging.Error` with the exception,
+which is then rethrown, so the client still gets an error response. Pass
+`level` to log successful requests at another level, and `logger` to send the
+records to a specific logger:
+
+```julia
+access_log = HTTP.Handlers.logging_middleware(router; level = Logging.Debug)
+```
+
+The middleware also wraps stream handlers; their records add the client's
+`peer` address. Every record is in the `:access` log group, so it is easy to
+filter or route with a package such as LoggingExtras.jl.
+
+## Static Files
+
+`HTTP.fileserver(root)` returns a request handler that serves the files under
+the directory `root`:
+
+```julia
+using HTTP
+
+handler = HTTP.fileserver("public"; spa_fallback = "index.html")
+server = HTTP.serve!(handler, "127.0.0.1", 8080)
+```
+
+It serves `index.html` for a directory and redirects to the canonical path of a
+file or directory. `spa_fallback` serves the given file for a missing path that
+does not look like a file name, as a single-page app needs. It answers
+`If-Modified-Since` and single `Range` requests, and also `If-None-Match` when
+you pass `etag`.
+
+`HTTP.servefile` serves one file for a request, and
+`HTTP.servecontent` serves bytes or a seekable `IO` that you already
+have, with the same conditional and range handling. For a string, pass
+`codeunits(str)`.
+
+## Server-Sent Events
+
+`HTTP.sse_stream` builds a `text/event-stream` response. Write
+`HTTP.SSEEvent` values in its `do` block, which runs on its own task;
+the stream ends when the block returns:
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.sse_stream(200) do stream
+        write(stream, HTTP.SSEEvent("ready"; event = "status", id = "1"))
+    end
+end
+```
+
+A client reads the events with the `sse_callback` keyword of `HTTP.request`.
+
+## HTTP/2
+
+`serve!` and `listen!` speak HTTP/2 to clients that ask for it, through TLS
+(see [TLS](#TLS)) or cleartext prior knowledge. The [Protocols
+guide](https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/#HTTP/2) covers the details and the `http2_settings`
+keyword.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/protocols/ -->
+
+# Protocols Guide
+
+This page covers WebSockets and HTTP/2. HTTP/2 needs no separate API: the
+client and server functions from the other guides use it when both sides
+support it.
+
+## WebSockets
+
+The WebSocket API lives in the `HTTP.WebSockets` submodule. `using HTTP` also
+exports the name `WebSockets`; these docs write `HTTP.WebSockets` so that
+another package's `WebSockets` cannot shadow it.
+
+`HTTP.WebSockets.listen!` starts a server that calls your function with each
+new connection. `HTTP.WebSockets.open` connects to a `ws://` or `wss://` URL:
+
+```julia
+using HTTP
+
+server = HTTP.WebSockets.listen!("127.0.0.1", 0) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, uppercase(msg))
+    end
+end
+
+url = "ws://" * HTTP.WebSockets.server_addr(server)
+reply = HTTP.WebSockets.open(url) do ws
+    HTTP.WebSockets.send(ws, "hello")
+    HTTP.WebSockets.receive(ws)
+end
+HTTP.WebSockets.forceclose(server)
+reply  # "HELLO"
+```
+
+Iterating over a WebSocket yields each message until the peer closes the
+connection. `receive` returns a `String` for a text message and a
+`Vector{UInt8}` for a binary one. The `do` block form of `open` returns the
+block's value and closes the connection when the block ends.
+
+To serve WebSockets and ordinary HTTP routes from one server, upgrade requests
+by hand inside an `HTTP.listen!` handler; see `HTTP.WebSockets.upgrade`.
+
+`HTTP.WebSockets.open` also accepts an `IO` that is already connected, such as a
+`TCPSocket` or a TLS stream, instead of a URL. Pass the request `target` and
+`host` as keywords. `open` never closes that `IO`:
+
+```julia
+ws = HTTP.WebSockets.open(io; target = "/echo", host = "example.com")
+```
+
+### Limits and timeouts
+
+`maxframesize` limits the size of one incoming frame, and `maxfragmentation`
+the number of frames in one message. They default to 16 MiB and 1024 on clients
+and servers; pass larger values if your protocol needs them. A peer that goes
+over a limit gets a close frame with status 1009.
+
+`HTTP.WebSockets.open` with a URL accepts the client timeouts
+`connect_timeout`, `request_timeout`, `response_header_timeout`,
+`read_idle_timeout`, and `write_idle_timeout`. `read_idle_timeout` keeps
+applying after the handshake: if nothing arrives for that long, the connection
+closes and `receive` throws a `WebSocketError`.
+
+### Compression
+
+Pass `compress = true` to use the permessage-deflate extension
+([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)), which compresses each
+message. Both sides must ask for it; otherwise messages are sent uncompressed.
+`HTTP.WebSockets.listen!`, `HTTP.WebSockets.upgrade`, and
+`HTTP.WebSockets.open` accept the keyword:
+
+```julia
+server = HTTP.WebSockets.listen!("127.0.0.1", 0; compress = true) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, msg)
+    end
+end
+
+HTTP.WebSockets.open("ws://" * HTTP.WebSockets.server_addr(server); compress = true) do ws
+    HTTP.WebSockets.send(ws, repeat("compress me ", 1000))
+    HTTP.WebSockets.receive(ws)
+end
+```
+
+Compression helps most with large, repetitive text such as JSON. The
+`maxframesize` limit applies to the decompressed message.
+
+## HTTP/2
+
+The client asks for HTTP/2 when it connects to an `https://` URL, and uses it
+when the server agrees. Pass `prefer_http2 = false` to `HTTP.Client`, or
+`protocol = :h1` to a single request, to use HTTP/1.1 instead.
+`protocol = :h2` with an `http://` URL sends cleartext HTTP/2 without first
+asking the server, which works with servers that accept it, including HTTP.jl's.
+
+```julia
+h1_only = HTTP.Client(prefer_http2 = false)
+resp = HTTP.get(h1_only, "https://example.com")
+close(h1_only)
+```
+
+Servers started with `HTTP.serve!` or `HTTP.listen!` speak HTTP/2 too. Over TLS,
+the client and server agree on HTTP/2 during the TLS handshake, which is what
+browsers require. On a plain listener, a client that opens with the HTTP/2
+connection preface gets HTTP/2; pass `allow_h2c = false` to turn that off.
+Requests with an `Upgrade: h2c` header are answered with HTTP/1.1.
+
+### Flow-control windows
+
+HTTP/2 flow control limits how many bytes can be in flight on a stream before
+the receiver acknowledges them. With the protocol default window of 65,535
+bytes, one stream can move at most about `window / round-trip time` per second,
+which slows large transfers on high-latency links. Pass an
+`HTTP.HTTP2Settings` as `http2_settings` to raise the receive windows.
+The server's setting affects uploads and the client's affects downloads:
+
+```julia
+settings = HTTP.HTTP2Settings(
+    initial_window_size = 1 << 20,     # 1 MiB per stream
+    connection_window_size = 1 << 21,  # 2 MiB per connection
+)
+
+client = HTTP.Client(http2_settings = settings)
+server = HTTP.serve!("127.0.0.1", 8080; http2_settings = settings) do req
+    return HTTP.Response(200; body = "ok")
+end
+```
+
+Both windows default to 65,535 bytes.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/guides/migration-1x/ -->
+
+# Migration From HTTP.jl 1.x
+
+HTTP.jl 2.0 is a breaking release with a new HTTP stack underneath. Code that
+calls `HTTP.get`, `HTTP.post`, `HTTP.request`, `HTTP.serve!`, `HTTP.Router`, and
+`HTTP.WebSockets` usually needs only small changes. Code that used parser,
+connection-pool, layer-stack, or other internal APIs has to move to the public
+API. HTTP.jl 2.0 requires Julia 1.10 or later.
+
+The snippets below assume `using HTTP` and an existing `url`.
+
+## Checklist
+
+- Read data written with `response_stream = io` from `io`; `resp.body` is
+  `nothing`.
+- Replace `HTTP.download` with `Downloads.download` or a `response_stream`
+  file.
+- Read text from a server request with `String(req.body)`.
+- Use `HTTP.get_request_context(req)` for cancellation and deadlines.
+- Replace `pool` with a long-lived `HTTP.Client`.
+- Replace `retry_delays` and `retry_check` with `retries`, `retry_if`, and
+  `HTTP.RetryBucket`.
+- Replace `readtimeout` with the timeout keyword you need.
+- Replace `sslconfig` with a `Transport`'s `tls_config`.
+- Replace `HTTP.Exceptions.StatusError` and friends with the top-level names,
+  and `HTTP.RequestError` with the underlying exception.
+- Replace `Sockets.getpeername(stream)` with `HTTP.peeraddr(stream)`.
+- Start servers with an interactive thread, such as `julia --threads=4,1`.
+- Re-test redirects, retries, proxies, cookies, streaming, WebSockets,
+  server-sent events, and HTTP/2.
+
+## Response Bodies
+
+`HTTP.request` and the verb helpers still return the whole body as a
+`Vector{UInt8}` in `resp.body`. With `response_stream = io`, 1.x also stored
+`io` in `resp.body`. In 2.0 `resp.body` is `nothing`; read the data from the
+`io` you passed:
+
+```julia
+open("payload.bin", "w") do io
+    resp = HTTP.get(url; response_stream = io)
+    @assert resp.body === nothing
+end
+```
+
+## `HTTP.download`
+
+HTTP.jl 2.0 has no `download` function. `HTTP.download(url, path)` still runs,
+because every module can see `Base.download`, but it calls `Base.download`,
+which uses the Downloads standard library. It accepts none of HTTP.jl's
+keywords; passing one throws a `MethodError`.
+
+Use `Downloads.download` to copy a URL to a file:
+
+```julia
+using Downloads
+
+Downloads.download(url, "payload.bin")
+```
+
+Stream the response into a file when you need HTTP.jl options such as headers,
+retries, proxies, or a `Client`:
+
+```julia
+open("payload.bin", "w") do io
+    HTTP.get(url; response_stream = io)
+end
+```
+
+## Requests, Responses, and Headers
+
+The 1.x positional constructors still work:
+
+```julia
+req = HTTP.Request("POST", "/widgets", ["Content-Type" => "text/plain"], "hello")
+resp = HTTP.Response(201, ["Location" => "/widgets/1"], "created")
+```
+
+The keyword forms take the same values plus trailers, protocol version, and a
+context:
+
+```julia
+req = HTTP.Request("POST", "/widgets"; headers = ["Content-Type" => "text/plain"], body = "hello")
+```
+
+`req.headers` and `resp.headers` are `HTTP.Headers`, an ordered vector of
+`String => String` pairs; in 1.x they were a `Vector` of `SubString` pairs.
+Header names keep the spelling you give them, and lookups such as
+`HTTP.header(resp, "content-type")` ignore case. Headers received from the
+network use `Content-Type` spelling, while 1.x kept the spelling from the wire.
+Pass `canonicalize_headers = true` to send every request header name in that
+form, as in 1.x. HTTP/2, which 2.0 uses for HTTPS when the server supports it,
+always sends names in lowercase; pass `protocol = :h1` to a server that needs
+exact spelling. Places that take headers still accept vectors of pairs.
+
+## Request Context
+
+`req.context` is still a `Dict{Symbol,Any}` for application data:
+
+```julia
+req.context[:request_id] = request_id
+request_id = get(req.context, :request_id, nothing)
+```
+
+Cancellation and deadlines live on the `HTTP.RequestContext` returned by
+`HTTP.get_request_context(req)`:
+
+```julia
+ctx = HTTP.get_request_context(req)
+HTTP.set_deadline!(ctx, time_ns() + 5_000_000_000)
+HTTP.canceled(ctx) && throw(HTTP.CanceledError("request canceled"))
+```
+
+## Clients, Proxies, and TLS
+
+The `pool` keyword is ignored. Create a long-lived `HTTP.Client`
+instead; it keeps connections, cookies, and settings across requests:
+
+```julia
+client = HTTP.Client(transport = HTTP.Transport(max_idle_per_host = 4))
+try
+    resp = HTTP.get(url; client = client)
+finally
+    close(client)
+end
+```
+
+As in 1.x, requests without a `client` use proxies from the `HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment variables. 2.0 reads them
+once, when the first such request runs, instead of on every request. The
+`proxy` keyword accepts a proxy URL or an `HTTP.ProxyConfig`, and
+`socks5://` and `socks5h://` proxies are supported:
+
+```julia
+HTTP.get(url; proxy = HTTP.ProxyURL("http://proxy.internal:8080"; no_proxy = "localhost"))
+HTTP.get(url; proxy = HTTP.ProxyURL("socks5h://proxy.internal:1080"))
+HTTP.get(url; proxy = nothing)  # connect directly
+```
+
+The `sslconfig` and `socket_type_tls` keywords are ignored. Configure TLS with a
+`Reseau.TLS.Config` on the `Transport`:
+
+```julia
+using Reseau
+
+client = HTTP.Client(transport = HTTP.Transport(tls_config = Reseau.TLS.Config(ca_file = "ca.pem")))
+```
+
+`require_ssl_verification = false` still turns off certificate checks for one
+call.
+
+HTTP.jl 2 does not read the `JULIA_SSL_NO_VERIFY_HOSTS` and
+`JULIA_NO_VERIFY_HOSTS` environment variables: hosts listed there are verified
+like any other. Pass `require_ssl_verification = false`, or give their client a
+`Transport` with `Reseau.TLS.Config(verify_peer = false)`.
+
+## Retries
+
+The `retry_delays` and `retry_check` keywords are ignored. A `retry_if`
+function replaces `retry_check`. Return `true` to retry and `nothing` to fall
+back to the default rules:
+
+Before:
+
+```julia
+resp = HTTP.get(url; retries = 3, retry_delays = [0.1, 0.5, 1.0],
+    retry_check = (s, ex, req, resp, resp_body) -> resp !== nothing && resp.status == 409)
+```
+
+After:
+
+```julia
+resp = HTTP.get(url; retries = 3, retry_if = (attempt, err, req, resp) ->
+    resp !== nothing && resp.status == 409 ? true : nothing)
+```
+
+There is no list of delays. Retries wait a random, exponentially growing delay;
+pass `retry_bucket = HTTP.RetryBucket(backoff_scale_factor_ms = 100)` to change
+its scale. 2.0 retries 408, 429, 500, 502, 503, and 504 responses by default,
+where 1.x also retried 403, 409, and every other 5xx status. See
+[Retries](https://juliaweb.github.io/HTTP.jl/stable/guides/client/#Retries) in the client guide for the full default policy.
+
+## Timeouts
+
+`readtimeout` still works but is deprecated. It sets `read_idle_timeout`, the
+longest wait between reads. Pick the timeout you mean:
+
+```julia
+resp = HTTP.get(url; connect_timeout = 5, request_timeout = 60, read_idle_timeout = 30)
+```
+
+[Timeouts](https://juliaweb.github.io/HTTP.jl/stable/guides/client/#Timeouts) in the client guide describes each keyword.
+A timeout throws `HTTP.TimeoutError`, also available as `HTTP.HTTPTimeoutError`.
+
+## Exceptions
+
+The exception types live at the top level: `HTTP.StatusError`,
+`HTTP.ConnectError`, `HTTP.TimeoutError`, and their supertype `HTTP.HTTPError`.
+The 1.x names `HTTP.Exceptions.StatusError`, `ConnectError`, `TimeoutError`, and
+`HTTPError` still resolve to them, with a deprecation warning under
+`--depwarn=yes`. `@try` and `current_exceptions_to_string` are gone.
+
+`HTTP.RequestError` is gone. Failures throw the underlying exception instead,
+and `HTTP.isrecoverable` tells you whether a failure is worth retrying:
+
+```julia
+try
+    HTTP.get(url)
+catch e
+    HTTP.isrecoverable(e) || rethrow()
+    # a transient network failure; retry later
+end
+```
+
+## `HTTP.@client`
+
+`HTTP.@client` accepts one middleware or a tuple of them in each position. The
+first middleware in a tuple is the outermost:
+
+```julia
+HTTP.@client request_middleware
+HTTP.@client request_middleware stream_middleware
+HTTP.@client (outer_request, inner_request) (outer_stream, inner_stream)
+```
+
+Request middleware wraps `request` and the verb helpers. Stream middleware wraps
+`open`.
+
+## Servers
+
+`HTTP.serve!`, `HTTP.serve`, `HTTP.listen!`, `HTTP.listen`, and `HTTP.Router`
+keep their 1.x shapes. Some details changed:
+
+- Server tasks run on Julia's `:interactive` thread pool. Start Julia with at
+  least one interactive thread; see the [server guide](https://juliaweb.github.io/HTTP.jl/stable/guides/server/).
+- In a `serve!` handler, `req.body` is a body object rather than a
+  `Vector{UInt8}`. Use `String(req.body)` to read it as text.
+- `HTTP.peeraddr(stream)` replaces `Sockets.getpeername(stream)`. It returns
+  the client address, or `nothing`; `string(addr)` gives `"ip:port"`.
+- The server `readtimeout` keyword still works and sets `read_timeout`. Each
+  server timeout has a seconds keyword (`read_timeout`) and a nanoseconds
+  keyword (`read_timeout_ns`).
+
+Before:
+
+```julia
+HTTP.listen("127.0.0.1", 8080) do stream
+    ip, port = Sockets.getpeername(stream)
+end
+```
+
+After:
+
+```julia
+HTTP.listen("127.0.0.1", 8080) do stream
+    addr = HTTP.peeraddr(stream)
+end
+```
+
+## WebSockets
+
+The `HTTP.WebSockets` API keeps its 1.x shape: `open`, `listen!`, `listen`,
+`upgrade`, `isupgrade`, `send`, `receive`, and iteration over a socket. Two
+differences:
+
+- `maxframesize` defaults to 16 MiB instead of no limit. Pass a larger value if
+  your messages are bigger.
+- `HTTP.WebSockets.upgrade` works only on HTTP/1.1 connections.
+
+## Server-Sent Events
+
+Clients still use the `sse_callback` keyword:
+
+```julia
+events = HTTP.SSEEvent[]
+HTTP.request("GET", url; sse_callback = event -> push!(events, event))
+```
+
+Servers return the response that `HTTP.sse_stream` builds and write events in
+its `do` block:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.sse_stream(200) do stream
+        write(stream, HTTP.SSEEvent("ready"; event = "status", id = "1"))
+    end
+end
+```
+
+## Ignored 1.x Keywords
+
+The client accepts these 1.x keywords so old calls do not fail, but they have no
+effect and log a warning: `pool`, `retry_delays`, `retry_check`, `sslconfig`,
+`socket_type_tls`, `detect_content_type`, `observelayers`, `logerrors`, and
+`logtag`. `readtimeout` sets `read_idle_timeout`, and `canonicalize_headers`
+keeps its 1.x meaning.
+
+## Internal APIs
+
+The 1.x layer stack, connection pool, parser, and socket/TLS extension points
+have no 2.0 equivalent. Move that code to `Client`, `Transport`, `Stream`, the
+server functions, `Router`, `HTTP.WebSockets`, or the SSE functions. If a use
+case cannot be expressed with the public API, open an issue that describes it
+instead of depending on 2.0 internals.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/reference/ -->
+
+# API Reference
+
+These pages hold the docstrings of HTTP.jl's public API. The guides explain how
+the pieces fit together.
+
+## Module
+
+### `HTTP` — Module
+
+    HTTP
+
+An HTTP client and server library for HTTP/1.1 and HTTP/2, with WebSockets and
+server-sent events. Reseau provides the TCP, DNS, and TLS layers.
+
+- `request`, and `get`, `post`, `put`, `patch`, `delete`, `head`, `options`,
+  and `query`, send a request and return the response.
+- `open` streams a request and its response.
+- `serve!` and `serve` run a server whose handler maps a `Request` to a
+  `Response`.
+- `listen!` and `listen` run a server whose handler reads and writes a
+  `Stream`.
+- `WebSockets` has the WebSocket client and server.
+- `SSEEvent` and `sse_stream` send server-sent events.
+
+## Reference Map
+
+- [Core API](https://juliaweb.github.io/HTTP.jl/stable/api/core/): requests, responses, headers, errors, bodies, cookies, forms, proxies, and HTTP/2 settings.
+- [Client API](https://juliaweb.github.io/HTTP.jl/stable/api/client/): `Client`, `Transport`, the request functions, streaming, retries, and trace events.
+- [Server API](https://juliaweb.github.io/HTTP.jl/stable/api/server/): `Server`, `Stream`, routing, middleware, static files, and server-sent events.
+- [WebSockets API](https://juliaweb.github.io/HTTP.jl/stable/api/websockets/): WebSocket clients, servers, and messages.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/core/ -->
+
+# Core API
+
+## Core Messages and Errors
+
+### `HTTP.Request` — Type
+
+    Request(method, target; headers=Headers(), body=nothing, trailers=Headers(),
+            host=nothing, content_length=-1, proto_major=1, proto_minor=1,
+            close=false, context=RequestContext(), copyheaders=true)
+    Request(method, target, headers[, body])
+
+An HTTP request: what a server handler receives, and what the client sends.
+
+- `headers`, `trailers`: anything `Headers` accepts. They are copied
+  unless `copyheaders = false` and they are `Headers` collections; the request
+  then uses them directly, so do not touch them while the request is in use.
+- `body`: a `String`, a byte vector, an `AbstractBody`, or `nothing`.
+- `host`: the authority sent as the HTTP/1 `Host` header or HTTP/2
+  `:authority`.
+- `content_length`: the body length in bytes. `-1` computes it for a
+  `String`, byte-vector, or empty body, and means unknown for other bodies.
+- `proto_major`, `proto_minor`: the HTTP version.
+- `close`: close the connection after this request.
+- `context`: the request's `RequestContext`.
+
+`req.context` returns the context's application data as a `Dict{Symbol,Any}`;
+use `get_request_context` for the `RequestContext` itself.
+
+### `HTTP.Response` — Type
+
+    Response(status, [body]; headers=Headers(), reason="", trailers=Headers(),
+             content_length=-1, proto_major=1, proto_minor=1, close=false,
+             request=nothing)
+    Response(status, headers, body)
+    Response(body)
+
+An HTTP response: what a server handler returns, and what the client returns.
+
+`body`, passed by position or as a keyword, may be a `String`, a byte vector,
+an `AbstractBody`, or `nothing`. A `String` or byte vector is stored as
+is, so one `Response` can be returned for many requests. `content_length`
+defaults to the length of such a body. `request` is the request that produced
+the response. `Response(body)` uses status 200.
+
+A client response also has `response.url`, the final URL after redirects.
+
+### `HTTP.Headers` — Type
+
+    Headers()
+    Headers(items)
+    Headers(pairs...; kwargs...)
+
+An ordered vector of `String => String` header pairs.
+
+Header names match in any case (RFC 9110 §5.1): `header`, `setheader`,
+`removeheader`, `haskey`, and the other lookups ignore case, and each name keeps
+the spelling it was stored with. HTTP/1 sends names in that spelling; HTTP/2
+sends them in lowercase. Headers read from the network are stored in
+`canonical_header_key` form, such as `Content-Type`, so a response looks
+the same over HTTP/1 and HTTP/2.
+
+`items` may be a vector, dictionary, or tuple of pairs, and keyword arguments
+add more headers. The input is copied, and a header with the same name as the
+one before it is joined onto it, as in `appendheader`.
+`Headers(n::Integer)` returns an empty collection with room for `n` headers.
+
+### `HTTP.RequestContext` — Type
+
+    RequestContext(; deadline_ns=0)
+
+Cancellation, deadline, and application data for one request. Pass one to a
+client call with the `context` keyword; `get_request_context` returns
+the context of a request a server is handling.
+
+`deadline_ns` is an absolute `time_ns()` value, or `0` for no deadline. A client
+request still running at the deadline throws `TimeoutError`, and
+`cancel!` makes it throw `CanceledError`.
+
+Application data is stored under `Symbol` keys:
+
+```julia
+ctx = HTTP.RequestContext()
+ctx[:request_id] = "abc"
+get(ctx, :request_id, nothing)
+```
+
+### `HTTP.HTTPError` — Type
+
+    HTTPError
+
+Abstract supertype for HTTP-specific exceptions raised by HTTP.jl.
+
+### `HTTP.ParseError` — Type
+
+    ParseError
+
+Raised when byte-level HTTP syntax cannot be parsed. This is used for malformed
+request/status lines, invalid header syntax, truncated framed bodies, and other
+wire-format failures where the peer did not send valid HTTP.
+
+### `HTTP.ProtocolError` — Type
+
+    ProtocolError
+
+Raised when the bytes are syntactically valid but violate higher-level HTTP
+rules. Examples include mismatched `Content-Length` values, impossible frame
+ordering, or unsupported control-flow states in the client/server stacks.
+
+### `HTTP.CanceledError` — Type
+
+    CanceledError
+
+Raised when request processing is canceled explicitly through `RequestContext`.
+Unlike `ParseError` and `ProtocolError`, this usually reflects local control
+flow rather than a bad peer.
+
+### `HTTP.TimeoutError` — Type
+
+    TimeoutError
+
+Raised when a client timeout or deadline expires.
+
+Fields:
+
+- `operation::String`: `"connect"` or `"tls_handshake"` when `connect_timeout`
+  expired, `"websocket handshake"` for a WebSocket handshake, and `"request"`
+  for the other timeouts and for deadlines.
+- `timeout_ns::Int64`: the timeout that expired, in nanoseconds, or `0` when it
+  is not known.
+- `elapsed_ns::Int64`: the time spent before it expired, in nanoseconds, or `0`
+  when it is not known.
+
+### `HTTP.HTTPTimeoutError` — Type
+
+    HTTPTimeoutError
+
+Another name for `TimeoutError`.
+
+### `HTTP.StatusError` — Type
+
+    StatusError
+
+Raised by `request` and the verb helpers for a response with status 300 or
+above that is not a redirect, unless `status_exception = false`.
+
+Fields:
+
+- `status::Int16`: the response status.
+- `response::Response`: the response, including its body.
+
+### `HTTP.TooManyRedirectsError` — Type
+
+    TooManyRedirectsError
+
+Raised when a request reaches its redirect limit and gets another redirect.
+`limit` is the limit and `response` is the last redirect response.
+
+### `HTTP.ConnectError` — Type
+
+    ConnectError(address, cause)
+
+Raised when the client cannot connect to `address` (`host:port`). `cause` is
+the underlying exception.
+
+### `HTTP.DNSError` — Type
+
+    DNSError(hostname, cause)
+
+Raised when the client cannot resolve `hostname`. `cause` is the underlying
+exception.
+
+### `HTTP.TLSHandshakeError` — Type
+
+    TLSHandshakeError(cause)
+
+Raised when a TLS handshake fails (other than a handshake timeout, which
+surfaces as `TimeoutError` with `operation = "tls_handshake"`). TLS
+failures after connection setup surface as `TLSTransportError` instead.
+
+### `HTTP.TLSTransportError` — Type
+
+    TLSTransportError(cause)
+
+Raised when TLS-level I/O fails on an established connection during a request
+— for example a connection reset or a truncated TLS stream while writing the
+request or reading the response. `cause` is the underlying
+`Reseau.TLS.TLSError`. TLS failures during connection setup surface as
+`TLSHandshakeError` (or `TimeoutError` for handshake timeouts)
+instead.
+
+### `HTTP.AddressInUseError` — Type
+
+    AddressInUseError(address)
+
+Raised when a server cannot bind because the requested address is already in
+use. `address` records the bind target (host:port).
+
+## Header and Context Helpers
+
+### `HTTP.canonical_header_key` — Function
+
+    canonical_header_key(key) -> String
+
+Return the header name `key` in canonical form, such as `Content-Type`: the
+first letter and every letter after a `-` are uppercase, and the other ASCII
+letters are lowercase. `key` is not checked for validity.
+
+### `HTTP.header` — Function
+
+    header(headers, key, default="")
+    header(message, key, default="")
+
+Return the first value of header `key`, or `default` if there is none. `key`
+matches in any case. `message` is a `Request` or `Response`.
+
+### `HTTP.headers` — Function
+
+    headers(headers, key) -> Vector{String}
+    headers(message, key) -> Vector{String}
+
+Return every value of header `key`, in order, or `String[]` if there is none.
+
+### `HTTP.hasheader` — Function
+
+    hasheader(headers, key) -> Bool
+    hasheader(message, key) -> Bool
+
+Return `true` when header `key` is present and its first value is not empty.
+
+    hasheader(headers, key, value) -> Bool
+
+Return `true` when any stored header value for `key` matches `value`
+case-insensitively.
+
+### `HTTP.headercontains` — Function
+
+    headercontains(headers, key, token) -> Bool
+    headercontains(message, key, token) -> Bool
+
+Return `true` when a value of header `key`, read as a comma-separated list,
+contains `token`. Both the name and the token match in any case. Use it for
+list-valued headers such as `Connection` and `Transfer-Encoding`.
+
+### `HTTP.setheader` — Function
+
+    setheader(headers, key => value) -> headers
+    setheader(headers, key, value) -> headers
+    setheader(message, key => value) -> message
+
+Replace every value of header `key` with `value`. The header keeps the position
+of its first occurrence and takes the spelling of `key`; a new header goes at
+the end. `setheader!` is the same function.
+
+    setheader(stream, key, value) -> nothing
+    setheader(stream, key => value) -> nothing
+
+Set a header of the response on a server `stream`. Call it before the first
+write; after that it throws `ArgumentError`.
+
+### `HTTP.setheader!` — Function
+
+    setheader!(headers, key => value) -> headers
+    setheader!(headers, key, value) -> headers
+    setheader!(message, key => value) -> message
+
+The same function as `setheader`.
+
+### `HTTP.defaultheader!` — Function
+
+    defaultheader!(headers, key => value) -> headers
+    defaultheader!(message, key => value) -> message
+
+Add `key => value` unless header `key` is already present.
+
+### `HTTP.appendheader` — Function
+
+    appendheader(headers, key => value) -> headers
+    appendheader(headers, key, value) -> headers
+    appendheader(message, key => value) -> message
+
+Add a header value. When the last header has the same name, in any case, the
+value is joined onto it instead: with `"; "` for `Cookie` (RFC 6265 §5.4) and
+with `","` for other names (RFC 9110 §5.3). `Set-Cookie` values always become
+separate headers. `appendheader!` is the same function.
+
+### `HTTP.appendheader!` — Function
+
+    appendheader!(headers, key => value) -> headers
+    appendheader!(headers, key, value) -> headers
+    appendheader!(message, key => value) -> message
+
+The same function as `appendheader`.
+
+### `HTTP.removeheader` — Function
+
+    removeheader(headers, key) -> headers
+    removeheader(message, key) -> message
+
+Remove every value of header `key`. `removeheader!` is the same
+function.
+
+### `HTTP.removeheader!` — Function
+
+    removeheader!(headers, key) -> headers
+    removeheader!(message, key) -> message
+
+The same function as `removeheader`.
+
+### `HTTP.mkheaders` — Function
+
+    mkheaders(headers_input) -> Headers
+
+Convert `headers_input` to `Headers`. It may be `nothing`, a pair or 2-tuple, a
+dictionary, or an iterable of pairs or 2-tuples. A `Headers` is returned as is,
+without a copy. Each value, including each element of a vector value, is added
+with `appendheader`, which joins it onto the previous header when the
+names match.
+
+### `HTTP.get_request_context` — Function
+
+    get_request_context(request) -> RequestContext
+
+Return the `RequestContext` of `request`, which holds its cancellation
+state and deadline. `request.context` returns only the context's application
+data.
+
+### `HTTP.set_deadline!` — Function
+
+    set_deadline!(ctx, deadline_ns) -> ctx
+
+Set the deadline of `ctx` to `deadline_ns`, an absolute `time_ns()` value. `0`
+removes the deadline.
+
+### `HTTP.cancel!` — Function
+
+    cancel!(ctx; message="request canceled") -> ctx
+
+Cancel the request that uses `ctx`. Its current read or write stops, and the
+request throws a `CanceledError` carrying `message`. `cancel!` does not
+throw itself.
+
+### `HTTP.canceled` — Function
+
+    canceled(ctx) -> Bool
+
+Return `true` once `cancel!` has been called on `ctx`.
+
+### `HTTP.expired` — Function
+
+    expired(ctx, now_ns=time_ns()) -> Bool
+
+Return `true` when `ctx` has a deadline and `now_ns` has reached it.
+
+## Body Types and Streamed Payloads
+
+### `HTTP.AbstractBody` — Type
+
+    AbstractBody
+
+Supertype of request and response bodies that are read as a stream.
+
+A subtype implements `body_read!`, `body_close!`, and
+`body_closed`.
+
+### `HTTP.CallbackBody` — Type
+
+    CallbackBody(read_cb, close_cb)
+
+A body produced by a function. `read_cb(dst::Vector{UInt8})` fills the start of
+`dst` and returns the number of bytes written, or `0` at the end of the body.
+`close_cb()` runs once, when the body is closed. A `CallbackBody` can be read
+only once.
+
+### `HTTP.nobody` — Constant
+
+An empty `Vector{UInt8}` to pass as a body that has no bytes. It is shared, so do not modify it.
+
+### `HTTP.body_read!` — Function
+
+    body_read!(body, dst) -> Int
+
+Read up to `length(dst)` bytes of `body` into `dst` and return how many were
+read, or `0` at the end of the body.
+
+### `HTTP.body_close!` — Function
+
+    body_close!(body)
+
+Close `body` and release what it holds. Closing a closed body does nothing, so
+it is safe to call in a `finally` block.
+
+### `HTTP.body_closed` — Function
+
+    body_closed(body) -> Bool
+
+Return `true` once `body_close!` has closed `body`. Reading a body to
+the end does not close it.
+
+### `HTTP.read_request` — Function
+
+    read_request(io; max_line_bytes=64*1024, max_header_bytes=1024*1024) -> Request
+
+Read one HTTP/1 request head from `io` and return it as a `Request` whose body
+reads the rest of the request from `io`. `max_line_bytes` limits each line and
+`max_header_bytes` the whole head. Throws `ParseError` or
+`ProtocolError` for an invalid request.
+
+### `HTTP.write_request!` — Function
+
+    write_request!(io, request)
+
+Write `request` to `io` in HTTP/1.1 format, with its body.
+
+The `Host` header comes first (RFC 9110 §7.2), taken from the request's `Host`
+header or else from `request.host`. A body of known length is sent with
+`Content-Length`, and any other body with chunked encoding, the only framing
+that carries trailers.
+
+### `HTTP.write_response!` — Function
+
+    write_response!(io, response, request=response.request)
+
+Write `response` to `io` in HTTP/1.1 format, with its body. No body is written
+for `1xx`, `204`, and `304` responses, or when `request` is a `HEAD` request.
+
+### `HTTP.trailers` — Function
+
+    trailers(body)
+
+Return a copy of the trailers that ended a chunked `body`, or empty `Headers`
+for other bodies. Read the body to the end first.
+
+## Cookies, Forms, and Request Bodies
+
+### `HTTP.Cookie` — Type
+
+    Cookie(name, value; kwargs...)
+
+A cookie, as sent in a request's `Cookie` header or a response's `Set-Cookie`
+header. Set its other fields, such as `path`, `domain`, `expires`, `maxage`,
+`secure`, `httponly`, and `samesite` (`:lax`, `:strict`, or `:none`), with
+keywords.
+
+### `HTTP.CookieJar` — Type
+
+    CookieJar()
+    CookieJar(entries::Dict{String, Dict{String, Cookie}})
+
+An in-memory cookie store for a `Client` or the `cookiejar` keyword of
+a request. It stores cookies from responses and picks the ones to send by their
+domain, path, expiry, and `Secure` flag.
+
+`jar.entries` holds the cookies, keyed by host. To keep cookies across
+sessions, save `jar.entries` and later pass it to `CookieJar(entries)`, which
+uses the `Dict` without copying it.
+
+### `HTTP.cookies` — Function
+
+    cookies(request_or_response) -> Vector{Cookie}
+
+Return the cookies in a request's `Cookie` header or a response's `Set-Cookie`
+headers.
+
+### `HTTP.stringify` — Function
+
+    stringify(cookie, isrequest=true) -> String
+    stringify(prefix, cookies, isrequest=true) -> String
+
+Format cookies as header text. With `isrequest = true` the result is
+`name=value`, as in a `Cookie` header; with `false` it also has the attributes
+of a `Set-Cookie` header, such as `Path`, `Domain`, and `HttpOnly`. The second
+form appends `cookies` to the header text `prefix`, separated by `"; "`.
+
+### `HTTP.getcookies!` — Function
+
+    getcookies!(jar, scheme, host, path[, now]) -> Vector{Cookie}
+
+Return the cookies from `jar` to send with a request to `scheme://host/path`.
+
+### `HTTP.setcookies!` — Function
+
+    setcookies!(jar, scheme, host, path, headers) -> nothing
+
+Store the `Set-Cookie` headers of a response from `scheme://host/path` in `jar`.
+
+### `HTTP.addcookie!` — Function
+
+    addcookie!(message, cookie) -> message
+
+Add `cookie` to the `Cookie` header of a `Request`, or as a new `Set-Cookie`
+header of a `Response`.
+
+### `HTTP.Form` — Type
+
+    Form(parts; boundary, type=:formdata) <: IO
+
+A multipart request body. `parts` is a collection of `name => value` pairs. An
+`IO` value is streamed (an open file is sent with its file name, and a
+`Multipart` with its own name and content type); any other value is
+sent as `string(value)`. `type = :mixed` builds a `multipart/mixed` body
+instead of `multipart/form-data`. A request with a `Form` body gets the
+matching `Content-Type` header from `content_type`.
+
+    Form(parts::Vector{<:Multipart}; boundary)
+
+Build a `multipart/mixed` body from `parts`.
+
+### `HTTP.Multipart` — Type
+
+    Multipart(filename, data, contenttype="", contenttransferencoding="", name="") <: IO
+
+One part of a multipart body, with its content in the `IO` `data`. `filename`
+may be `nothing`, and an empty `contenttype` is detected from the data when the
+part is sent. The `parse_multipart` functions return `Multipart`s, and
+`Form` accepts them as values.
+
+### `HTTP.Batch` — Function
+
+    Batch(parts; boundary) -> Form
+
+Build a `multipart/mixed` body, the format of batch APIs such as OData
+`$batch`. `parts` is a vector of `Multipart`s or a collection of
+`name => value` pairs, as for `Form` with `type = :mixed`.
+
+```julia
+parts = [
+    HTTP.Multipart(nothing, IOBuffer("GET /users/1 HTTP/1.1\r\n\r\n"), "application/http"),
+    HTTP.Multipart(nothing, IOBuffer("GET /users/2 HTTP/1.1\r\n\r\n"), "application/http"),
+]
+response = HTTP.post(url, [], HTTP.Batch(parts))
+```
+
+### `HTTP.content_type` — Function
+
+    content_type(form) -> String
+
+Return the `Content-Type` header value for `form`: `multipart/form-data` or
+`multipart/mixed`, with the boundary.
+
+### `HTTP.parse_multipart_form` — Function
+
+    parse_multipart_form(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_form(message) -> Union{Vector{Multipart}, Nothing}
+
+Parse a `multipart/form-data` body, using the boundary in
+`content_type_header`. The `message` form reads the `Content-Type` header and
+body of a `Request` or `Response`, such as the request in a `serve!` handler.
+
+Returns `nothing` when the content type is not `multipart/form-data` or there
+is no body. Each `Multipart` has the part's `name`, `filename` (or
+`nothing`), `contenttype`, and its content as the `IO` `data`.
+
+#### Examples
+```jldoctest
+julia> body = Vector{UInt8}(
+           "--boundary\r\n" *
+           "Content-Disposition: form-data; name=\"greeting\"\r\n\r\n" *
+           "hello\r\n" *
+           "--boundary\r\n" *
+           "Content-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n" *
+           "Content-Type: text/plain\r\n\r\n" *
+           "file contents\r\n" *
+           "--boundary--\r\n");
+
+julia> parts = HTTP.parse_multipart_form("multipart/form-data; boundary=boundary", body);
+
+julia> length(parts)
+2
+
+julia> parts[1].name, String(read(parts[1].data))
+("greeting", "hello")
+
+julia> parts[2].name, parts[2].filename, parts[2].contenttype
+("file", "a.txt", "text/plain")
+
+julia> String(read(parts[2].data))
+"file contents"
+```
+
+Inside a server handler, pass the request directly:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do request
+    parts = HTTP.parse_multipart_form(request)
+    parts === nothing && return HTTP.Response(415, "expected multipart/form-data")
+    return HTTP.Response(200, "received $(length(parts)) part(s)")
+end
+```
+
+### `HTTP.parse_multipart` — Function
+
+    parse_multipart(content_type_header, body, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart(message, required_type=nothing) -> Union{Vector{Multipart}, Nothing}
+
+Parse a multipart body of any subtype, such as `multipart/form-data` or
+`multipart/mixed`, using the boundary in `content_type_header`. The `message`
+form reads the header and body of a `Request` or `Response`.
+
+`required_type` (`:formdata` or `:mixed`) accepts only that subtype. Returns
+`nothing` when the content type does not match or there is no body.
+
+### `HTTP.parse_multipart_mixed` — Function
+
+    parse_multipart_mixed(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_mixed(message) -> Union{Vector{Multipart}, Nothing}
+
+Parse a `multipart/mixed` body; see `parse_multipart`.
+
+## Proxy Configuration
+
+### `HTTP.ProxyConfig` — Type
+
+    ProxyConfig(url; no_proxy=nothing)
+    ProxyConfig(; http=nothing, https=nothing, all=nothing, no_proxy=nothing, env=false)
+
+The proxy settings of a `Transport` or a request. `ProxyConfig()`
+connects directly.
+
+`http` is the proxy for `http://` URLs, `https` the proxy for `https://` URLs,
+and `all` the proxy for either when the other is not set; `ProxyConfig(url)`
+sets `all`. `no_proxy` is a `NoProxy`, or anything it accepts, naming
+hosts to reach directly. With `env = true`, settings that are not given come
+from the `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment
+variables, in upper or lower case.
+
+Proxy URLs may use `http://`, `socks5://`, or `socks5h://`; with either SOCKS
+scheme, the proxy resolves host names. An `https://` proxy URL is accepted, but
+a request through it throws `ArgumentError`.
+
+### `HTTP.ProxyURL` — Function
+
+    ProxyURL(url; no_proxy=nothing) -> ProxyConfig
+
+Return a `ProxyConfig` that sends every request through the proxy at
+`url`, except requests to the hosts in `no_proxy`.
+
+### `HTTP.ProxyFromEnvironment` — Function
+
+    ProxyFromEnvironment() -> ProxyConfig
+
+Return a `ProxyConfig` read from the `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`, and `NO_PROXY` environment variables, in upper or lower case. The
+variables are read once, when it is called. Requests to `localhost` and
+loopback addresses never use these proxies.
+
+### `HTTP.NoProxy` — Type
+
+    NoProxy(spec)
+    NoProxy()
+
+The hosts that a `ProxyConfig` reaches without its proxy, in the format
+of the `NO_PROXY` environment variable. `spec` is a comma-separated string or a
+vector of entries: host names, domain suffixes, IP addresses, CIDR ranges, or
+any of these with a `:port`. `"*"` matches every host. `localhost` and loopback
+addresses always match.
+
+## HTTP/2 Configuration
+
+### `HTTP.HTTP2Settings` — Type
+
+    HTTP2Settings(; initial_window_size=65535, connection_window_size=65535)
+
+HTTP/2 receive windows, passed as `http2_settings` to a `Client` or to
+`serve!` and `listen!`.
+
+- `initial_window_size`: the receive window of each stream, sent as
+  `SETTINGS_INITIAL_WINDOW_SIZE` (RFC 9113 §6.5.2). Values from 1 to 2^31 - 1
+  are allowed, so it can also be lowered to slow down senders.
+- `connection_window_size`: the receive window shared by all streams on a
+  connection, from 65535 to 2^31 - 1.
+
+Both default to 65535, the protocol default. One stream can move at most about
+`window / round-trip time` bytes per second, so raise them for large transfers
+over links with high latency.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/client/ -->
+
+# Client API
+
+## Client Types and Operations
+
+### `HTTP.Transport` — Type
+
+    Transport(; tls_config=nothing, proxy=nothing, retry_bucket=RetryBucket(),
+              max_idle_per_host=2, max_idle_total=64, max_conns_per_host=0,
+              idle_timeout_ns=90_000_000_000, max_header_bytes=1024*1024,
+              max_line_bytes=64*1024, local_addr=nothing)
+
+The connection pool of a `Client`, with the settings for opening
+connections.
+
+- `tls_config`: a `Reseau.TLS.Config` for `https://` connections.
+- `proxy`: a `ProxyConfig`, a proxy URL, or `nothing` to connect
+  directly. A `Client` created without a `transport` uses
+  `ProxyFromEnvironment` instead.
+- `retry_bucket`: the `RetryBucket` that limits retries, or `nothing`.
+- `max_idle_per_host`, `max_idle_total`: how many idle HTTP/1 connections to
+  keep for one host and in all.
+- `max_conns_per_host`: the most HTTP/1 connections to one host, counting idle,
+  busy, and opening ones; further requests wait for one. `0` means no limit.
+- `idle_timeout_ns`: how long, in nanoseconds, an idle HTTP/1 or HTTP/2
+  connection stays reusable; `0` means no limit. Keep it below the idle timeout
+  of NATs and load balancers on the path, often a few minutes, so that requests
+  are not sent on connections they dropped. A response header
+  `Keep-Alive: timeout=N` shortens it to `N - 1` seconds for that connection.
+- `max_line_bytes`, `max_header_bytes`: the longest HTTP/1 response line and the
+  largest response head (and chunked trailers); a longer one fails the request
+  with a `ProtocolError`. `max_line_bytes` defaults to the smaller of
+  64 KiB and `max_header_bytes`. Raise it for servers that send very long
+  header lines, such as large `Content-Security-Policy` values.
+- `local_addr`: the source IP address of connections, as a string or a
+  `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`.
+
+### `HTTP.Client` — Type
+
+    Client(; transport=Transport(proxy=ProxyFromEnvironment()), cookiejar=CookieJar(),
+           max_redirects=10, check_redirect=nothing, prefer_http2=true,
+           http2_settings=HTTP2Settings(), default_headers=[], default_query=nothing,
+           default_basicauth=nothing, connect_timeout=0, request_timeout=0,
+           response_header_timeout=0, read_idle_timeout=0, write_idle_timeout=0,
+           local_addr=nothing)
+
+An HTTP client: a connection pool plus the settings and cookies that requests
+sent through it share. Pass it to `request`, the verb helpers, or `open` as the
+first argument or as the `client` keyword. Calls without a client use a shared
+default `Client`. `close(client)` closes its connections; using a closed client
+throws `ArgumentError`.
+
+- `transport`: the `Transport` that owns the connections. The default
+  one takes its proxy from the environment.
+- `cookiejar`: the `CookieJar` for this client, or `nothing` for no
+  cookies.
+- `max_redirects`: the most redirects one request follows.
+- `check_redirect`: a function `(response, request, location) -> Bool`; return
+  `false` to stop at a redirect and return it.
+- `prefer_http2`: try HTTP/2 for `https://` URLs. When an origin turns out to
+  speak only HTTP/1.1, the client remembers that until
+  `close_idle_connections!`. `protocol = :h2` on a call always tries
+  HTTP/2.
+- `http2_settings`: the `HTTP2Settings` for HTTP/2 connections.
+- `default_headers`: headers added to each request that does not set them.
+- `default_query`: query parameters added to each URL; the call's `query`
+  replaces those with the same key.
+- `default_basicauth`: `user => password` used unless the call passes
+  `basicauth` or an `Authorization` header.
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: timeouts in seconds, used when the
+  call passes no value or `0`. `0` here means no default.
+- `local_addr`: the source IP address for connections, as a string or a
+  `Reseau.TCP.SocketAddrV4`/`SocketAddrV6`. With your own `transport`, set it on
+  the `Transport` instead.
+
+### `HTTP.RetryBucket` — Type
+
+    RetryBucket(; backoff_scale_factor_ms=25, max_backoff_secs=20, capacity=500)
+
+A retry budget shared by the requests of a `Transport`, so that a burst
+of failures does not become a burst of retries. Each host has its own budget of
+`capacity`. A retry reserves part of it; the reservation comes back when the
+retried attempt gets a response that is not worth retrying, and is kept, in
+whole or in part, when the attempt fails again. Each request that succeeds
+without a retry earns back one unit. When a host's budget runs out, failures
+are not retried, and a `RetrySkippedEvent` with reason `:retry_bucket`
+reports it.
+
+Retries wait a random time of up to `backoff_scale_factor_ms * 2^(attempt - 1)`
+milliseconds, and at most `max_backoff_secs` seconds.
+
+### `HTTP.RequestRetryError` — Type
+
+    RequestRetryError(err)
+
+What a `retry_if` function receives as `err` when an attempt failed without a
+response. `err.err` is the exception.
+
+### `HTTP.retry_attempts` — Function
+
+    retry_attempts(request) -> Int
+    retry_attempts(response) -> Int
+
+Return how many times the client retried the request, `0` when the first
+attempt was the only one. The count is also stored as
+`request.context[:retryattempt]`.
+
+### `HTTP.isrecoverable` — Function
+
+    isrecoverable(err::Exception) -> Bool
+
+Return `true` when `err` is a transient failure that the client's default retry
+rules retry: a connection that was reset or closed early, a socket error, a
+malformed response, a connect or TLS handshake timeout, or an HTTP/2 stream the
+server refused. An expired deadline and other errors return `false`. `err` may
+also be the `RequestRetryError` that a `retry_if` function receives.
+
+### `HTTP.roundtrip!` — Function
+
+    roundtrip!(transport, address, request; secure=false, server_name=nothing) -> Response
+
+Send `request` to `address` (`"host:port"`) over one HTTP/1 connection from
+`transport`, without redirects, cookies, or the client's retry rules.
+`secure = true` uses TLS,
+with `server_name` for SNI and certificate checks. The response body is a
+stream; read it with `body_read!` and close it with
+`body_close!`.
+
+### `HTTP.request` — Function
+
+    request(method, url, headers=[], body=nothing; kwargs...) -> Response
+    request(trace, method, url, headers=[], body=nothing; kwargs...) -> Response
+
+Send an HTTP request and return the `Response`, with the whole body in
+`response.body` as a `Vector{UInt8}`.
+
+`url` is a string or `URI`. `headers` is anything `Headers` accepts.
+`body` may be a `String`, a byte vector, an `IO`, a `Dict` or `NamedTuple` (sent
+as a URL-encoded form), a `Form`, an iterable of string or byte chunks,
+or an `AbstractBody`. `headers` and `body` can also be passed as
+keywords. Unless the request sets them, HTTP.jl sends
+`User-Agent: HTTP.jl/<version>` and `Accept-Encoding: gzip, deflate`.
+
+A response with status 300 or above throws a `StatusError`, except for
+redirect responses (301, 302, 303, 307, and 308). A timeout throws a
+`TimeoutError`, and a failure to connect throws an error such as
+`ConnectError` or `DNSError`.
+
+!!! warning "`String(response.body)` empties `response.body`"
+    `String(::Vector{UInt8})` takes over the vector's memory instead of copying
+    it, so `response.body` is empty afterwards. Use `String(copy(response.body))`
+    if you need the bytes again.
+
+#### Keywords
+
+Request and response:
+- `query`: a `Dict`, `NamedTuple`, vector of pairs, or string to add to the
+  URL's query string.
+- `basicauth`: credentials as `user => password` or `(user, password)`. An
+  `Authorization` header takes precedence; credentials in the URL are used when
+  neither is given. In a URL, percent-encode characters such as `/`, `?`, `#`,
+  space, and ``, as in `https://user:p%2Fss@host/`.
+- `status_exception = true`: throw `StatusError` for a failing response.
+- `response_stream`: an `IO` or byte vector that receives the body instead of
+  `response.body`, which is then `nothing` for an `IO` and the filled vector or
+  view otherwise. A byte vector must be large enough for the body, and is
+  resized to it if it is a `Vector{UInt8}`. A response with status 300 or
+  above, including a redirect that is not followed, leaves a byte vector
+  untouched and puts up to 1 MiB of its body (or `max_decompressed_size`, if
+  smaller) in `response.body`.
+- `decompress = true`: decompress gzip and deflate responses. `false` returns
+  the body as sent and does not send `Accept-Encoding`.
+- `max_decompressed_size = 64 MiB`: the largest decompressed body; a larger one
+  throws `DecompressionLimitError`. `0` means no limit.
+- `sse_callback`: for a server-sent event stream, call `f(event)` or
+  `f(stream, event)` with each `SSEEvent` instead of reading the body.
+  `max_sse_line_bytes = 1 MiB` and `max_sse_event_bytes = 16 MiB` limit the
+  size of a line and an event; `0` means no limit.
+- `copyheaders = true`: `false` lets the request use an `HTTP.Headers`
+  collection without copying it. Do not touch it until the call returns; its
+  contents afterwards are unspecified.
+- `canonicalize_headers = false`: `true` sends header names in
+  `canonical_header_key` form. Otherwise names are sent as given, and
+  HTTP/2 sends them in lowercase.
+
+Redirects:
+- `redirect = true`: follow redirects.
+- `redirect_limit`: the most redirects to follow; defaults to the client's
+  `max_redirects`, 10 by default. With `0`, the redirect response is returned.
+- `redirect_method`: the method for following a 301 or 302 redirect, or
+  `:same` to keep the original method. By default `GET` is used, except that
+  `HEAD` and `QUERY` are kept. A 303 always uses `GET`, and 307 and 308 keep the
+  method.
+- `forwardheaders = true`: send the request's headers again when following a
+  redirect. `Authorization`, `Cookie`, and `Proxy-Authorization` are dropped when
+  the redirect goes to another origin; other headers, such as `X-Api-Key`, are
+  sent there too.
+
+Retries (see the client guide for the default rules):
+- `retry = true`: retry failed attempts. An idempotent request that fails on a
+  reused connection the server already closed is resent either way.
+- `retries = 4`: the most retries after the first attempt.
+- `retry_non_idempotent = false`: also retry methods other than `GET`, `HEAD`,
+  `OPTIONS`, `TRACE`, `QUERY`, `PUT`, and `DELETE`.
+- `retry_if`: a function `(attempt, err, req, resp)` that returns `true` to
+  retry, `false` to stop, or `nothing` for the default rules. For a failure
+  without a response, `err` is a `RequestRetryError` and `resp` is
+  `nothing`; for a response, `err` is `nothing`. A body that cannot be sent again
+  is never retried.
+- `respect_retry_after = true`: wait as long as a 429 or 503 response's
+  `Retry-After` header asks.
+- `retry_bucket = true`: use the transport's `RetryBucket` to limit
+  retries; pass `false` to skip it, or another `RetryBucket`.
+
+Timeouts, in seconds:
+- `connect_timeout`: DNS lookup, TCP connect, proxy handshake, TLS handshake,
+  and HTTP/2 setup. Defaults to the client's `connect_timeout`, or 30.
+- `request_timeout`: the whole call.
+- `response_header_timeout`: the wait for the response headers.
+- `read_idle_timeout`: the time between reads, including the wait for the
+  response headers.
+- `write_idle_timeout`: the time between writes.
+- `expect_continue_timeout`: how long a request with an
+  `Expect: 100-continue` header waits for `100 Continue` before it sends the
+  body anyway, 1 second by default. `0` sends the body without waiting.
+- `context`: a `RequestContext` for cancellation and an absolute
+  deadline.
+
+Connections:
+- `client`: the `Client` to use; defaults to a shared client.
+- `proxy`: a proxy URL, a `ProxyConfig`, or `nothing` to connect
+  directly. Cannot be combined with `client`; set the proxy on its `Transport`.
+- `cookies = true`: send and store cookies with the cookie jar. `false` turns
+  cookies off, and a `Dict` adds name/value pairs. Cookies from the jar are
+  merged into a `Cookie` header set on the request.
+- `cookiejar`: the `CookieJar` to use; defaults to the client's jar, or
+  `HTTP.COOKIEJAR` for calls without a client.
+- `require_ssl_verification = true`: `false` skips certificate checks, for
+  testing only. Cannot be combined with `client`.
+- `protocol = :auto`: `:h1` or `:h2` to force HTTP/1.1 or HTTP/2.
+
+Debugging:
+- `verbose`: `1` (or `true`) prints a line for each attempt, response, retry,
+  redirect, and the result; `2` also prints the request and response heads.
+- `trace`: a function called with each `RequestEvent`,
+  `ResponseHeadEvent`, `RetryEvent`,
+  `RetrySkippedEvent`, `RedirectEvent`, and
+  `DoneEvent`.
+
+#### Extended help
+
+These HTTP.jl 1.x keywords are accepted but have no effect, and log a warning:
+`pool`, `retry_delays`, `retry_check`, `sslconfig`, `socket_type_tls`,
+`detect_content_type`, `observelayers`, `logerrors`, and `logtag`. The
+deprecated `readtimeout` sets `read_idle_timeout`.
+
+### `HTTP.get` — Function
+
+    get(headers, key, default)
+
+Dict-style `get` on `Headers`. Returns the first value for `key`, including
+an empty value, or `default` if the header is absent.
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.head` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.query` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.post` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.put` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.patch` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.delete` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.options` — Function
+
+    get(url, headers=[]; kwargs...) -> Response
+    head(url, headers=[]; kwargs...) -> Response
+    options(url, headers=[]; kwargs...) -> Response
+    post(url, [headers], [body]; kwargs...) -> Response
+    put(url, [headers], [body]; kwargs...) -> Response
+    patch(url, [headers], [body]; kwargs...) -> Response
+    delete(url, [headers], [body]; kwargs...) -> Response
+    query(url, [headers], [body]; kwargs...) -> Response
+
+Send a request with the method in the function's name: `HTTP.get(url)` is
+`HTTP.request("GET", url)`. Each takes the keywords of `request`,
+including `headers` and `body`, and also accepts a `Client` as its first
+argument.
+
+### `HTTP.open` — Function
+
+    open(method, url, headers=[]; kwargs...) -> Stream
+    open(f, method, url, headers=[]; status_exception=true, kwargs...) -> Response
+
+Send a request and stream its body and response through a `Stream`.
+Write the request body to the stream, call `startread` to finish the
+request and get the response status and headers, then read the response body
+from the stream like any `IO`.
+
+With a function `f`, `open` calls `f(stream)`, finishes the exchange, and
+returns the final `Response`, not the value of `f`. It throws a
+`StatusError` for a failing response unless `status_exception = false`.
+Without `f`, close the stream with `closewrite` and `closeread` when you
+are done.
+
+`open` follows redirects, retries, decompresses, and applies timeouts like
+`request`, and takes its keywords except `body`, `response_stream`,
+`sse_callback`, `trace`, `verbose`, and the size limits.
+
+```julia
+buf = IOBuffer()
+response = HTTP.open("GET", "https://example.com") do stream
+    write(buf, stream)  # copy the body as it arrives
+end
+```
+
+### `HTTP.do!` — Function
+
+    do!(client, address, request; secure=false, server_name=nothing, protocol=:auto,
+        redirect_limit=nothing, redirect_method=nothing, forwardheaders=true,
+        cookies=true, cookiejar=nothing, context=nothing) -> Response
+
+Send a prepared `request` to `address` (`"host:port"`) through `client`,
+following redirects and using cookies like `request`, but without
+retries or status errors. `secure = true` connects with TLS.
+
+The response body is a stream: read it with `body_read!` and close it
+with `body_close!`.
+
+### `HTTP.get!` — Function
+
+    get!(client, address, target; secure=false, protocol=:auto, kwargs...) -> Response
+
+Send a `GET` request for `target` to `address` with `do!`.
+
+### `HTTP.@client` — Macro
+
+    HTTP.@client request_middleware
+    HTTP.@client request_middleware stream_middleware
+
+Define `request`, the verb helpers (`get`, `post`, ...), and `open` in the
+calling module so that they pass through middleware before reaching HTTP.jl.
+
+A middleware is a function `mw(next) -> f`. Request middleware returns
+`f(method, url, headers, body; kwargs...)`, which handles `request` and the verb
+helpers. Stream middleware returns `f(method, url, headers; kwargs...)`, which
+handles `open`. Each position takes one middleware or a tuple of them; in
+`(outer, inner)`, `outer` runs first.
+
+### `HTTP.close_idle_connections!` — Function
+
+    close_idle_connections!()
+    close_idle_connections!(client::HTTP.Client)
+    close_idle_connections!(transport::HTTP.Transport)
+
+Close the idle connections in a pool; requests in progress are not affected.
+Without an argument, it uses the shared client of calls that pass no `client`.
+
+The `Client` and no-argument forms also close idle HTTP/2 connections, and
+forget which origins answered with HTTP/1.1, so later requests try HTTP/2 with
+them again. The `Transport` form covers only its HTTP/1 connections.
+
+### `HTTP.idle_connection_count` — Function
+
+    idle_connection_count(transport; key=nothing) -> Int
+
+Return the number of idle HTTP/1 connections in `transport`, or only those for
+`key`, a scheme and address such as `"https://example.com:443"`.
+
+### `HTTP.isaborted` — Function
+
+    isaborted(stream) -> Bool
+
+Return `true` when the response on a client `stream` ended in an error, so its
+connection cannot be reused.
+
+## Request Trace Events
+
+### `HTTP.RequestEvent` — Type
+
+    RequestEvent
+
+Trace event emitted immediately before a high-level request attempt is sent.
+
+Fields:
+- `request`: request head/body metadata for the attempt
+- `url`: absolute request URL for the attempt
+- `attempt`: 1-based request attempt number
+- `redirect_count`: number of redirects already followed before this attempt
+- `protocol`: `:h1` or `:h2` for the selected wire protocol
+
+### `HTTP.ResponseHeadEvent` — Type
+
+    ResponseHeadEvent
+
+Trace event emitted after response headers are available for a successful
+request attempt and before the body is fully consumed.
+
+Fields:
+- `response`: response head metadata for the attempt
+- `url`: absolute request URL for the attempt
+- `attempt`: 1-based request attempt number
+- `redirect_count`: number of redirects followed before this response
+
+### `HTTP.RetryEvent` — Type
+
+    RetryEvent
+
+Trace event emitted when the high-level request path schedules another attempt.
+
+Fields:
+- `request`: request metadata that will be retried
+- `url`: absolute request URL for the attempt being retried
+- `attempt`: current 1-based attempt number
+- `next_attempt`: next 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `delay_ns`: delay before the next attempt in nanoseconds
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+
+### `HTTP.RetrySkippedEvent` — Type
+
+    RetrySkippedEvent
+
+Trace event emitted when the retry policy wanted to retry an attempt but the
+retry was not armed, so the attempt's failure becomes the request's outcome.
+Without this event a denied retry is indistinguishable from a non-retryable
+failure.
+
+Fields:
+- `request`: request metadata for the attempt that will not be retried
+- `url`: absolute request URL for the attempt
+- `attempt`: current 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `reason`: `:retry_bucket` when the transport's `RetryBucket` denied
+  retry capacity; `:deadline` when the request deadline preempted the retry
+  backoff
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+
+### `HTTP.RedirectEvent` — Type
+
+    RedirectEvent
+
+Trace event emitted when a redirect response is accepted and a follow-up request
+is about to be issued.
+
+Fields:
+- `request`: original request metadata that produced the redirect response
+- `response`: redirect response head
+- `from_url`: original absolute request URL
+- `to_url`: resolved redirect target URL
+- `redirect_count`: 1-based redirect count after accepting this redirect
+
+### `HTTP.DoneEvent` — Type
+
+    DoneEvent
+
+Trace event emitted when a high-level request call finishes, either with a
+final response or an exception.
+
+Fields:
+- `response`: final response, or `nothing` if the request failed before one was produced
+- `err`: terminal exception, or `nothing` when the request completed successfully
+- `url`: absolute request URL for the overall call
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/server/ -->
+
+# Server API
+
+## Server Lifecycle and Request Handlers
+
+### `HTTP.Server` — Type
+
+    Server(; network="tcp", address="127.0.0.1:0", handler, stream=false, ...)
+
+An HTTP server, returned by `serve!` and `listen!`.
+`port` returns its port. `close(server)` stops accepting connections and
+waits for the requests in progress to finish, `forceclose` closes every
+connection at once, and `wait(server)` returns when the server stops accepting
+connections.
+
+Server tasks, including handlers, run on Julia's `:interactive` thread pool.
+Start Julia with at least one interactive thread, such as `--threads=4,1`, so
+that tasks on the default pool that never yield cannot stall the server.
+Without an interactive thread, these tasks run on the default pool.
+
+When accepting a connection fails with an OS error, such as when the process
+has no file descriptors left, the server logs the error and tries again after
+a wait that grows from 5 ms to 1 s.
+
+On a plain TCP listener, a connection that starts with the HTTP/2 connection
+preface is served as cleartext HTTP/2; `allow_h2c = false` turns that off. A
+TLS listener offers HTTP/2 when its `TLS.Config` lists `"h2"` in
+`alpn_protocols`.
+
+The constructor takes the keywords of `serve!` with timeouts in nanoseconds
+only; `stream = true` marks `handler` as a stream handler. Start the server with
+`listen!(server)`.
+
+### `HTTP.Stream` — Type
+
+    Stream
+
+One HTTP exchange, read and written as an `IO`. A server passes one to each
+stream handler, and the client's `open` returns one.
+
+On a server stream, `startread` returns the request, reading the stream
+reads the request body, and `setstatus`, `setheader`, and
+writes build the response. On a client stream, writes send the request body,
+and after `startread` reading the stream reads the response body.
+
+### `HTTP.listen!` — Function
+
+    listen!(server) -> Server
+
+Start `server`, made with the `Server` constructor, in the background
+and return it.
+
+    listen!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
+    listen!(handler, port; kwargs...) -> Server
+    listen!(handler, listener; kwargs...) -> Server
+
+Start an HTTP server in the background and return its `Server`.
+`handler(stream::Stream)` reads each request from the `Stream` and
+writes the response to it. `listen!` takes the keywords of `serve!`
+except `max_body_bytes`, since a stream handler reads the body itself.
+
+### `HTTP.listen` — Function
+
+    listen(handler, args...; kwargs...) -> Server
+
+Like `listen!`, but block until the server is closed.
+
+### `HTTP.serve!` — Function
+
+    serve!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
+    serve!(handler, port; kwargs...) -> Server
+    serve!(handler, listener; kwargs...) -> Server
+
+Start an HTTP server in the background and return its `Server`.
+`handler(req::Request)` returns the `Response` for each request; a
+handler that throws sends `500 Internal Server Error`. Port `0` picks a free
+port. `listener` is a listener from `Reseau.TCP.listen` or
+`Reseau.TLS.listen`; pass a TLS listener to serve HTTPS. Server tasks run on
+Julia's `:interactive` thread pool; see `Server`.
+
+#### Keywords
+
+- `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`:
+  timeouts in seconds, all off by default. Each also has a nanosecond form
+  ending in `_ns`, such as `read_timeout_ns`. `read_header_timeout` limits
+  reading a request's head, `read_timeout` then limits reading its body, and
+  `idle_timeout` limits the wait for the next request on a kept-alive
+  connection. The header and idle timeouts fall back to `read_timeout` when
+  they are `0`. A request whose head or body times out gets
+  `408 Request Timeout`.
+- `max_body_bytes = 64 MiB`: the largest request body `serve!` reads into
+  memory; a larger one gets `413 Content Too Large`. `0` means no limit.
+- `max_header_bytes = 1 MiB`: the largest request head.
+- `http2_settings`: the `HTTP2Settings` for HTTP/2 connections.
+- `max_concurrent_streams = 100`: the most HTTP/2 streams a connection may
+  have open; `0` means no limit.
+- `allow_h2c = true`: serve cleartext HTTP/2 to clients that send the HTTP/2
+  connection preface.
+- `listenany = false`: `true` ignores `port` and listens on a free port.
+- `reuseaddr = true`, `backlog = 128`: options for the listener that `serve!`
+  creates; they do not apply to a `listener` argument.
+
+#### Extended help
+
+`readtimeout` is a deprecated name for `read_timeout`.
+
+### `HTTP.serve` — Function
+
+    serve(handler, args...; kwargs...) -> Server
+
+Like `serve!`, but block until the server is closed.
+
+### `HTTP.streamhandler` — Function
+
+    streamhandler(request_handler; max_body_bytes=64 MiB) -> stream handler
+
+Return a stream handler, for `listen!`, that reads each request into memory,
+calls `request_handler(req)`, and writes the response it returns. A request
+body larger than `max_body_bytes` gets `413 Content Too Large`, as with
+`serve!`; `0` means no limit. A response body that is not in memory,
+such as a file from `fileserver`, is streamed.
+
+### `HTTP.servefile` — Function
+
+    servefile(request, path; index_file="index.html", redirect_canonical=true,
+              etag=nothing, cache_control=nothing) -> Response
+
+Build the response to `request` for the file or directory at `path`, with the
+conditional and range handling of `servecontent`. A directory is served
+by its `index_file`. With `redirect_canonical`, a request for a directory
+without a trailing slash, a file with one, or the index file itself is
+redirected to the canonical path. Methods other than `GET` and `HEAD` get
+`405`, a missing file `404`, and an unsafe request path, such as one with
+`..`, `400`.
+
+`etag` may be `:weak_stat`, for an ETag made from the file's size and
+modification time, a function `(path, stat) -> String`, or a string; by default
+no ETag is sent. `cache_control` sets the `Cache-Control` header.
+
+### `HTTP.fileserver` — Function
+
+    fileserver(root; index_file="index.html", redirect_canonical=true, etag=nothing,
+               cache_control=nothing, spa_fallback=nothing) -> handler
+
+Return a request handler that serves the files under the directory `root` with
+`servefile`, which describes the keywords. With `spa_fallback`, a
+missing path whose last segment does not look like a file name, such as
+`/users/42`, gets the file `spa_fallback` from `root`, as a single-page app
+needs; a missing path such as `/app.js` still gets `404`. Throws
+`ArgumentError` when `root` is not an existing directory.
+
+Symbolic links under `root` are followed, also when they point outside it.
+
+### `HTTP.servecontent` — Function
+
+    servecontent(request, source; name="", size=nothing, modtime=nothing,
+                 content_type=nothing, etag=nothing, headers=Headers(),
+                 allow_ranges=true) -> Response
+
+Build the response to `request` for `source`, an `AbstractVector{UInt8}` or a
+seekable `IO`; pass `codeunits(str)` for a string. Conditional requests
+(`If-None-Match`, `If-Modified-Since`, `If-Match`, `If-Unmodified-Since`) get
+`304` or `412` when they apply. A `GET` or `HEAD` request for one byte range
+gets `206 Partial Content`, and an unsatisfiable range gets `416`. Any other
+`Range`, such as several ranges or another unit, is ignored and the whole
+content is sent.
+
+- `name`: a file name whose extension sets the `Content-Type` when
+  `content_type` is not given. Without either, the type is detected from the
+  content.
+- `size`: the length of `source`, needed when it cannot be found by seeking.
+- `modtime`: a `DateTime` sent as `Last-Modified`.
+- `etag`: the `ETag` value.
+- `headers`: more response headers.
+- `allow_ranges`: answer `Range` requests.
+
+### `HTTP.forceclose` — Function
+
+    forceclose(server)
+
+Stop `server` at once: stop accepting connections and close every open
+connection, including those with requests in progress.
+
+### `HTTP.port` — Function
+
+    port(server) -> Int
+
+Return the port `server` listens on, or the configured port before it starts
+listening.
+
+### `HTTP.startread` — Function
+
+    startread(stream)
+
+Start reading from `stream` and return the message head.
+
+On a client stream from `open`, this finishes sending the request and
+returns the `Response` with its status and headers. On a server stream,
+it returns the `Request`. Either way, read the body from `stream`
+itself, with `read(stream)` or `readbytes!(stream, buf)`.
+
+### `HTTP.startwrite` — Function
+
+    startwrite(stream) -> Response
+
+Start the response of a server-side `Stream` and return the response metadata.
+`write(stream, data)` starts it too.
+
+Chunked and HTTP/2 responses send their head here. A fixed-length
+(`Content-Length`) HTTP/1 response holds its head and body so that a small
+response goes out in one write. Without an explicit `startwrite`, the whole
+body is held until `closewrite`, so the server can still send an error response
+if the handler throws or writes the wrong number of bytes. After `startwrite`,
+a body that grows past 4 KiB is sent as it is written, and a later failure
+closes the connection instead.
+
+### `HTTP.setstatus` — Function
+
+    setstatus(stream, status) -> nothing
+
+Set the status of the response on a server `stream`. Call it before the first
+write; after that it throws `ArgumentError`.
+
+### `HTTP.addtrailer` — Function
+
+    addtrailer(stream, key => value) -> nothing
+    addtrailer(stream, headers) -> nothing
+
+Add trailers to the response on a server `stream`. They are sent after the body,
+so add them before `closewrite(stream)`. Only chunked HTTP/1 and HTTP/2
+responses carry trailers; an HTTP/1 response with a `Content-Length` drops them.
+
+### `HTTP.closeread` — Function
+
+    closeread(stream) -> Response
+
+Stop reading from `stream` and return its `Response`: the response
+received on a client stream, or the response being written on a server stream.
+Body bytes that were not read are discarded, and the connection is then closed
+instead of reused.
+
+### `HTTP.peeraddr` — Function
+
+    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
+
+Return the client's address for a server `stream`, or `nothing` when it is not
+known. `string(addr)` gives `"ip:port"`; `addr.ip` is a tuple of the address
+bytes and `addr.port` is the port. Works over HTTP/1 and HTTP/2, with or without
+TLS. Throws `ArgumentError` for a client stream.
+
+## Routing and Middleware
+
+The router and middleware live in `HTTP.Handlers`. Except for `handlertimeout`
+and `logging_middleware`, the names below are also available from `HTTP`
+directly, as in `HTTP.Router` and `HTTP.register!`.
+
+### `HTTP.Handlers.Handler` — Type
+
+    Handler
+
+The name of the handler interface. Nothing subtypes or dispatches on it.
+
+A handler is a function `f(req::HTTP.Request) -> HTTP.Response`, run with
+`serve!`. A stream handler is a function `f(stream::HTTP.Stream)`, run with
+`listen!`. Middleware used with stream handlers must take and return stream
+handlers.
+
+### `HTTP.Handlers.Middleware` — Type
+
+    Middleware
+
+The name of the middleware interface. Nothing subtypes or dispatches on it.
+Middleware is a function that takes a `Handler` and returns a new one.
+
+### `HTTP.Handlers.Router` — Type
+
+    HTTP.Router([_404], [_405], [middleware])
+
+A handler that calls the handler `register!`ed for the request's method
+and path. `_404` handles a path with no route, and `_405` a path whose routes
+do not accept the method; by default they return empty 404 and 405 responses.
+`middleware`, if given, wraps each handler as it is registered. A router works
+with request handlers (`serve!`) and with stream handlers (`listen!`).
+
+A route path is made of segments:
+
+- exact segments, such as `/users`
+- variables, such as `/users/{id}`
+- variables with a regular expression, such as `/files/{name:\w+}`
+- `*`, which matches any one segment
+- `**` at the end, which matches the rest of the path
+
+A handler reads the matched route with `getroute` and its variables with
+`getparams` and `getparam`.
+
+### `HTTP.Handlers.Node` — Type
+
+    Node
+
+Internal trie node used by `Router` to store exact, wildcard, and parameterized
+path segments.
+
+### `HTTP.Handlers.register!` — Function
+
+    register!(router, method, path, handler) -> Nothing
+    register!(router, path, handler) -> Nothing
+    register!(handler, router, method, path) -> Nothing
+    register!(handler, router, path) -> Nothing
+
+Add a route to `router`: requests with `method` and a path matching `path` go to
+`handler`. Without `method`, the route accepts every method. See
+`Router` for the path syntax.
+
+The handler-first forms allow `do` blocks:
+
+```julia
+HTTP.register!(router, "GET", "/users/{id}") do req
+    return HTTP.Response(200; body = HTTP.getparam(req, "id"))
+end
+```
+
+### `HTTP.Handlers.getroute` — Function
+
+    HTTP.getroute(req) -> Union{Nothing, String}
+
+Return the registered path, such as `"/users/{id}"`, of the route that matched
+`req`, or `nothing`.
+
+### `HTTP.Handlers.getparams` — Function
+
+    HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
+
+Return the path variables of the route that matched `req`, or `nothing` when no
+route matched or it has no variables.
+
+### `HTTP.Handlers.getparam` — Function
+
+    HTTP.getparam(req, name, default=nothing)
+
+Return the path variable `name` of the route that matched `req`, or `default`.
+
+### `HTTP.Handlers.getcookies` — Function
+
+    HTTP.getcookies(req) -> Vector{Cookie}
+
+Return the cookies in the `Cookie` header of `req`.
+
+### `HTTP.Handlers.handlertimeout` — Function
+
+    handlertimeout(timeout_s; status=503, body="handler timed out", content_type="text/plain; charset=utf-8")
+        -> middleware
+
+Return middleware that answers with `status`, `body`, and `content_type` when a
+request handler takes longer than `timeout_s` seconds. The handler runs with a
+child `RequestContext` whose deadline is the earlier of the timeout and
+the request's own deadline. At the timeout that context is canceled, but the
+handler keeps running until it returns or checks the context. Only request
+handlers are supported.
+
+### `HTTP.Handlers.logging_middleware` — Function
+
+    logging_middleware(handler; logger=nothing, level=Logging.Info) -> handler
+
+Wrap `handler` so that each request it handles logs one record, an access log.
+
+The message reads like `GET /users/1 200 0.412ms`. The record has the request
+`method` and `target`, the response `status`, the handler's time in
+`elapsed_ms`, and the response body `length` in bytes when it is known without
+reading the body (`nothing` otherwise). Records are in the `:access` log group
+and logged at `level`, to `logger` when given and to the current logger
+otherwise. When the handler throws, the record is logged at `Logging.Error`
+with the exception and the status the server sends, and the exception is
+rethrown.
+
+It wraps request handlers and stream handlers. Stream handler records also have
+the client's `peer` address from `peeraddr`. For a stream handler, the
+middleware finishes the response (`closewrite`) before logging, so a response
+that fails then, such as a body shorter than its `Content-Length`, is logged as
+that failure.
+
+```julia
+server = HTTP.serve!(HTTP.Handlers.logging_middleware(router), "127.0.0.1", 8080)
+```
+
+## Server-Sent Events
+
+### `HTTP.SSEEvent` — Type
+
+    SSEEvent(data; event=nothing, id=nothing, retry=nothing)
+
+One server-sent event: what a server writes to an `SSEStream`, and what
+the client passes to an `sse_callback`.
+
+Fields:
+- `data`: the event data; several `data:` lines are joined with `"\n"`
+- `event`: the event type, or `nothing`
+- `id`: the last event ID received, or `nothing`
+- `retry`: the last reconnection time received, in milliseconds, or `nothing`
+- `fields`: the event's fields by name
+
+### `HTTP.SSEStream` — Type
+
+    SSEStream(; max_len=16*1024*1024)
+
+The body of a server-sent event response from `sse_stream`.
+`write(stream, event::SSEEvent)` sends an event and `close(stream)` ends the
+response. `max_len` limits the size of one event, in bytes. Events the client
+has not read yet may hold up to four times `max_len` bytes, and at least
+16 MiB: a `write` past that closes the stream and throws `IOError`, as it does
+once the client has gone.
+
+### `HTTP.sse_stream` — Function
+
+    sse_stream(status=200; max_len=16*1024*1024, kwargs...) -> Response
+    sse_stream(f, status; max_len=16*1024*1024, kwargs...) -> Response
+    sse_stream(response[, f]) -> SSEStream
+
+Build a server-sent event response for a `serve!` handler to return. It has an
+`SSEStream` body and the headers `Content-Type: text/event-stream` and
+`Cache-Control: no-cache`. The other keywords are those of
+`Response`.
+
+With a function `f`, usually a `do` block as in `sse_stream(200) do stream`,
+`f(stream)` runs on its own task and writes `SSEEvent`s to the stream;
+the response ends when `f` returns.
+Without `f`, write events to `response.body` and close it to end the response.
+
+The `response` forms take a `Response` whose body is already an `SSEStream`,
+set its headers, start `f` if given, and return the stream.
+
+---
+
+<!-- Page: https://juliaweb.github.io/HTTP.jl/stable/api/websockets/ -->
+
+# WebSockets API
+
+## Module and Core Types
+
+### `HTTP.WebSockets` — Module
+
+    HTTP.WebSockets
+
+WebSocket clients and servers. `open` connects to a server, and
+`listen!` starts one; `upgrade` serves WebSockets from an
+`HTTP.listen!` handler. Each connection is a `WebSocket`.
+
+### `HTTP.WebSockets.Conn` — Type
+
+    Conn
+
+Low-level WebSocket codec connection state.
+
+This is primarily useful for advanced integrations that need direct access to
+frame-level state. Most client and server code should work with
+`WebSocket` instead.
+
+### `HTTP.WebSockets.CloseFrameBody` — Type
+
+    CloseFrameBody(code, reason="")
+
+Structured close payload carrying the WebSocket close status code and optional
+UTF-8 reason text.
+
+### `HTTP.WebSockets.WebSocketError` — Type
+
+    WebSocketError
+
+Raised when a WebSocket is closed or breaks the protocol. `err.message` is the
+`CloseFrameBody`: codes 1000, 1001, and 1005 mean a normal close.
+
+### `HTTP.WebSockets.WebSocket` — Type
+
+    WebSocket
+
+One WebSocket connection, returned by `open` and passed to the handler
+of a WebSocket server. Use `send`, `receive`, `ping`,
+`pong`, and `close(ws)`. Iterating over it yields each message until
+the peer closes the connection.
+
+## Client Operations
+
+### `HTTP.WebSockets.open` — Function
+
+    open(url; kwargs...) -> WebSocket
+    open(f, url; kwargs...)
+
+Connect to the WebSocket server at `url`, a `ws://` or `wss://` URL, and return
+the `WebSocket`. With a function `f`, `open` calls `f(ws)`, closes the
+connection with status 1000 when `f` returns, and returns the value of `f`.
+
+- `headers`, `query`, `subprotocols`: the handshake's headers, query
+  parameters, and offered subprotocols.
+- `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
+  frame, and the most frames in one message. Messages that have arrived but
+  not been received may hold up to four times `maxframesize` bytes; past that
+  the connection is closed with status 1008.
+- `compress = false`: offer permessage-deflate compression
+  ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)), used when the server
+  accepts it.
+- `connect_timeout = 30`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: handshake timeouts in seconds, as
+  for `HTTP.request`. `read_idle_timeout` keeps applying after the handshake:
+  if nothing arrives for that long, the connection closes.
+- `client`, `proxy`, `redirect`, `redirect_limit`, `redirect_method`,
+  `forwardheaders`, `cookies`, `cookiejar`, `require_ssl_verification`: as for
+  `HTTP.request`.
+
+    open(io::IO; target="/", host="", headers=[], subprotocols=String[],
+         maxframesize=16 MiB, maxfragmentation=1024) -> WebSocket
+    open(f, io::IO; kwargs...)
+
+Do the client handshake over `io`, a stream that is already connected, such as
+a `TCPSocket` or a TLS stream, instead of connecting to a URL. `target` is the
+request path, and `host` the `Host` header, which is left out when empty.
+`open` never closes `io`; with `f`, it sends a close frame over `io` when `f`
+returns.
+
+### `HTTP.WebSockets.send` — Function
+
+    send(ws, message) -> Int
+
+Send one text or binary message on `ws`.
+
+`message` may be an `AbstractString`, an `AbstractVector{UInt8}`, or an
+iterable of chunks. Iterable inputs are sent as one fragmented message and the
+returned value is the total payload bytes sent.
+
+### `HTTP.WebSockets.receive` — Function
+
+    receive(ws) -> Union{String, Vector{UInt8}}
+
+Receive the next complete message from `ws`.
+
+Text messages are returned as `String`; binary messages are returned as
+`Vector{UInt8}`. Throws `WebSocketError` once the connection has closed.
+
+### `HTTP.WebSockets.ping` — Function
+
+    ping(ws, data=UInt8[]) -> nothing
+
+Send a WebSocket ping control frame with optional payload bytes.
+
+### `HTTP.WebSockets.pong` — Function
+
+    pong(ws, data=UInt8[]) -> nothing
+
+Send a WebSocket pong control frame with optional payload bytes.
+
+## Server Operations
+
+### `HTTP.WebSockets.Server` — Type
+
+    Server(; network="tcp", address="127.0.0.1:0", handler, tls_config=nothing, ...)
+
+WebSocket server handle returned by `listen!` and `serve!`.
+
+Hold onto the returned value so you can inspect its bound address with
+`server_addr`, wait on it with `wait(server)`, or stop it with
+`forceclose`.
+
+### `HTTP.WebSockets.listen!` — Function
+
+    listen!(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
+
+Start a WebSocket server in the background and return its `Server`.
+`handler(ws::WebSocket)` runs for each connection. Port `0`, or
+`listenany = true`, picks a free port; `server_addr` returns the
+address.
+
+- `tls_config`: a `Reseau.TLS.Config` to serve `wss://`.
+- `subprotocols`: the subprotocols the server accepts.
+- `check_origin`: a function `(request)` or `(request, origin)` that returns
+  `true` to accept a handshake. By default a handshake with an `Origin` header
+  is accepted only when the origin's scheme, host, and port match the server.
+- `compress = false`: accept permessage-deflate compression
+  ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)) from clients that offer
+  it.
+- `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
+  frame, and the most frames in one message. Messages that have arrived but
+  not been received may hold up to four times `maxframesize` bytes; past that
+  the connection is closed with status 1008.
+- `read_header_timeout`, `read_timeout`, `idle_timeout`: timeouts in seconds,
+  all off by default, as for `HTTP.serve!`; each also has a nanosecond form
+  ending in `_ns`. `read_header_timeout` limits the handshake, from accepting
+  the connection to the end of the upgrade request, and `idle_timeout` closes
+  a connection on which nothing arrives for that long. Both fall back to
+  `read_timeout` when they are `0`.
+
+WebSocket server tasks use Julia's `:interactive` thread pool. Start Julia with
+at least one interactive thread, such as `--threads=4,1`, to isolate server work
+from non-yielding tasks on the default pool. Without an interactive thread,
+Julia falls back to the default pool.
+
+### `HTTP.WebSockets.listen` — Function
+
+    listen(handler, host="127.0.0.1", port=8080; kwargs...) -> Server
+
+Start a WebSocket server and block until it exits.
+
+### `HTTP.WebSockets.serve!` — Function
+
+`serve!` is another name for `listen!`.
+
+### `HTTP.WebSockets.upgrade` — Function
+
+    upgrade(f, stream::HTTP.Stream; subprotocols=String[], check_origin=nothing,
+            maxframesize=16 MiB, maxfragmentation=1024, compress=false)
+
+Answer a WebSocket handshake on an HTTP/1.1 server `stream` and call
+`f(ws::WebSocket)`. Use it in an `HTTP.listen!` handler to serve WebSockets and
+ordinary HTTP routes from one server. Check the request with
+`isupgrade` first, and call `upgrade` before writing to the stream:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    if HTTP.WebSockets.isupgrade(stream.message)
+        HTTP.WebSockets.upgrade(stream) do ws
+            for msg in ws
+                HTTP.WebSockets.send(ws, msg)
+            end
+        end
+    else
+        HTTP.setstatus(stream, 200)
+        HTTP.startwrite(stream)
+        write(stream, "ok")
+    end
+end
+```
+
+`upgrade` returns when `f` does, and the connection is then closed. The
+keywords work as for `listen!`. A stream on an HTTP/2 connection
+throws `WebSocketError`.
+
+### `HTTP.WebSockets.isupgrade` — Function
+
+    isupgrade(message) -> Bool
+
+Return `true` when `message` is a WebSocket upgrade. For a request this checks
+for a valid client upgrade handshake — use it to guard `upgrade` inside
+an `HTTP.listen!` stream handler. For a response it checks for a `101 Switching
+Protocols` handshake response.
+
+### `HTTP.WebSockets.server_addr` — Function
+
+    server_addr(server) -> String
+
+Return the host:port address currently bound by `server`.
+
+### `HTTP.WebSockets.forceclose` — Function
+
+    forceclose(server) -> nothing
+
+Immediately stop accepting new WebSocket connections and close active sessions.
