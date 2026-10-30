@@ -173,7 +173,7 @@ end
 # `stream_id`        : the id carried by the HEADERS frame.
 # `max_stream_id`    : the highest client stream id seen so far on the conn.
 # `open_streams`     : number of currently-tracked streams (in `states`).
-# `reset_streams`    : number of streams the peer has opened then RST_STREAM'd.
+# `reset_streams`    : number of streams the peer has reset or made the server reset.
 # `max_concurrent`   : advertised SETTINGS_MAX_CONCURRENT_STREAMS (<=0 disables).
 # `reset_budget`     : reset count beyond which the connection is abusive.
 @inline function _h2_server_new_stream_decision(
@@ -1664,6 +1664,9 @@ function _handle_h2_stream!(
     return nothing
 end
 
+# Starts the handler for a stream whose header block is complete. Returns `true`
+# when the client's request was malformed and the stream was reset instead
+# (so the caller can count the reset), `false` otherwise.
 function _dispatch_h2_stream!(
     server::Server,
     tracked::_ServerConn,
@@ -1673,13 +1676,13 @@ function _dispatch_h2_stream!(
     states_lock::ReentrantLock,
     states::Dict{UInt32,_H2ServerStreamState},
     state::_H2ServerStreamState,
-)::Nothing
+)::Bool
     decoded_headers = nothing
     body_end_error = false
     lock(state.lock)
     try
-        state.handler_started && return nothing
-        state.headers_complete || return nothing
+        state.handler_started && return false
+        state.headers_complete || return false
         state.decoded_headers === nothing && throw(ProtocolError("HTTP/2 request missing decoded headers"))
         decoded_headers = copy(state.decoded_headers::Vector{HeaderField})
     finally
@@ -1689,7 +1692,7 @@ function _dispatch_h2_stream!(
     declared_body_bytes = _parse_content_length(request_headers)
     lock(state.lock)
     try
-        state.handler_started && return nothing
+        state.handler_started && return false
         state.declared_body_bytes = declared_body_bytes
         if state.stream_done
             try
@@ -1708,13 +1711,47 @@ function _dispatch_h2_stream!(
     end
     if body_end_error
         _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
-        return nothing
+        return true
     end
     @_spawn_interactive _handle_h2_stream!(
         server, tracked, conn, write_lock, send_state, states_lock, states,
         state.stream_id, state, decoded_headers::Vector{HeaderField},
     )
-    return nothing
+    return false
+end
+
+# Count a reset the client forced — its own RST_STREAM, or a reset the server
+# sends because the client's frames broke the stream (the MadeYouReset pattern,
+# CVE-2025-8671) — toward the Rapid-Reset budget. Both drive the same unbounded
+# stream churn while the client keeps its own concurrent-stream count low. Once
+# the count passes the budget the connection is abusive: send
+# GOAWAY(ENHANCE_YOUR_CALM) once and stop accepting new streams. Returns the
+# updated count.
+function _note_h2_forced_reset!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    conn_control::_H2ServerConnControl,
+    reset_stream_count::Int,
+    rapid_reset_budget::Int,
+    max_stream_id::UInt32,
+    write_deadline_ns::Int64,
+)::Int
+    reset_stream_count += 1
+    if rapid_reset_budget > 0 && reset_stream_count > rapid_reset_budget &&
+        !(@atomic :acquire conn_control.goaway_sent)
+        @try_ignore begin
+            _write_frame_h2_server_threadsafe!(
+                write_lock,
+                conn,
+                GoAwayFrame(max_stream_id, _H2_ERROR_ENHANCE_YOUR_CALM, UInt8[]),
+                write_deadline_ns,
+            )
+        end
+        @atomic :release conn_control.goaway_sent = true
+        @atomic :release conn_control.shutdown_requested = true
+        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
+    end
+    return reset_stream_count
 end
 
 function _try_write_h2_goaway!(
@@ -1828,7 +1865,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     peer_goaway_last_stream_id = typemax(UInt32)
     # Per-connection stream-flood limits.
     max_concurrent_streams = server.max_concurrent_streams
-    # Number of streams the peer has opened and then reset/closed via RST_STREAM.
+    # Number of streams the peer has reset with RST_STREAM or made the server
+    # reset (see `_note_h2_forced_reset!`).
     # Tracked to detect the CVE-2023-44487 "Rapid Reset" pattern, where the peer
     # keeps its own concurrent-stream count low by immediately cancelling each
     # stream it opens.
@@ -1909,8 +1947,12 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     finally
                         unlock(states_lock)
                     end
-                    state === nothing ||
+                    if state !== nothing
                         _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_FLOW_CONTROL)
+                        reset_stream_count = _note_h2_forced_reset!(
+                            conn, write_lock, conn_control, reset_stream_count,
+                            rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server))
+                    end
                 end
                 continue
             end
@@ -1942,28 +1984,12 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 _unregister_h2_send_window!(send_state, rst.stream_id)
                 _send_h2_server_window_updates!(conn, write_lock, send_state, rst.stream_id, discarded, false)
                 _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
-                if first_reset
-                    reset_stream_count += 1
-                    # Rapid Reset (CVE-2023-44487): a peer that keeps opening and
-                    # immediately resetting streams drives unbounded handler/task
-                    # creation while keeping its own concurrent-stream count low.
-                    # Past the budget, send GOAWAY(ENHANCE_YOUR_CALM) and refuse
-                    # any further new streams by draining the connection.
-                    if rapid_reset_budget > 0 && reset_stream_count > rapid_reset_budget &&
-                        !(@atomic :acquire conn_control.goaway_sent)
-                        @try_ignore begin
-                            _write_frame_h2_server_threadsafe!(
-                                write_lock,
-                                conn,
-                                GoAwayFrame(max_stream_id, _H2_ERROR_ENHANCE_YOUR_CALM, UInt8[]),
-                                _server_write_deadline_ns(server),
-                            )
-                        end
-                        @atomic :release conn_control.goaway_sent = true
-                        @atomic :release conn_control.shutdown_requested = true
-                        @atomic :release conn_control.graceful_last_stream_id = max_stream_id
-                    end
-                end
+                # Rapid Reset (CVE-2023-44487): a peer that keeps opening and
+                # immediately resetting streams drives unbounded handler/task
+                # creation while keeping its own concurrent-stream count low.
+                first_reset && (reset_stream_count = _note_h2_forced_reset!(
+                    conn, write_lock, conn_control, reset_stream_count,
+                    rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server)))
                 continue
             end
             if frame isa GoAwayFrame
@@ -2089,11 +2115,18 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 _update_h2_server_conn_state!(tracked, states_lock, states)
                 if stream_error
                     _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
+                    reset_stream_count = _note_h2_forced_reset!(
+                        conn, write_lock, conn_control, reset_stream_count,
+                        rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server))
                     continue
                 end
                 if hf.end_headers
                     continuation_stream = UInt32(0)
-                    !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
+                    if !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
+                        reset_stream_count = _note_h2_forced_reset!(
+                            conn, write_lock, conn_control, reset_stream_count,
+                            rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server))
+                    end
                 end
                 continue
             end
@@ -2135,9 +2168,16 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 if stream_error
                     _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
+                    reset_stream_count = _note_h2_forced_reset!(
+                        conn, write_lock, conn_control, reset_stream_count,
+                        rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server))
                     continue
                 end
-                cf.end_headers && !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
+                if cf.end_headers && !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
+                    reset_stream_count = _note_h2_forced_reset!(
+                        conn, write_lock, conn_control, reset_stream_count,
+                        rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server))
+                end
                 continue
             end
             if frame isa DataFrame
@@ -2207,7 +2247,15 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     unlock(state.lock)
                 end
                 # The reset goes out before the returned credit.
-                stream_error && _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, error_code)
+                if stream_error
+                    _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, error_code)
+                    # MadeYouReset (CVE-2025-8671): a client whose DATA keeps
+                    # forcing the server to reset streams is as abusive as one
+                    # that resets them itself.
+                    reset_stream_count = _note_h2_forced_reset!(
+                        conn, write_lock, conn_control, reset_stream_count,
+                        rapid_reset_budget, max_stream_id, _server_write_deadline_ns(server))
+                end
                 if dropped
                     _send_h2_server_window_updates!(conn, write_lock, send_state, df.stream_id, frame_bytes, false)
                 else
