@@ -1233,6 +1233,19 @@ end
                 "http://u\r\n@h/", "http://a|b/", "http://a\"b/")
         @test_throws ArgumentError HT._parse_http_url(url)
     end
+    # System resolvers read a host that ends in a number as an IPv4 address,
+    # each platform its own way (macOS reads 010.0.0.1 as 10.0.0.1; glibc and
+    # browsers read it as 8.0.0.1), while URIs.jl reads a host name.
+    for host in ("127.1", "0x7f.1", "0x7f000001", "2130706433", "0", "010.0.0.1", "192.168.001.010",
+                 "127.0.0.1.", "1.2.3.4.5", "256.0.0.1", "a.123", "a.0x1F", "0x")
+        @test_throws "invalid IPv4 address" HT._parse_http_url("http://$host:8080/")
+        @test_throws "invalid IPv4 address" HT._parse_http_url(HT.URI("http://$host/"))
+    end
+    @test_throws "invalid IPv4 address" HT.get("http://127.1:1/"; retry = false)
+    @test_throws HT.ProtocolError HT._resolve_redirect_target("a:80", false, "http://0x7f.1/", "/", "a")
+    for host in ("127.0.0.1", "0.0.0.0", "1a.example", "a.1b", "a.0x1g", "0xg", "a1")
+        @test HT._parse_http_url("http://$host/").server_name == host
+    end
     @test_throws "invalid character '\\\\' in URL userinfo" HT.get("http://allowed.com\\@127.0.0.1:1/"; retry = false)
     # URIs 1.7.2 and later already reject this authority when building the URI.
     @test_throws Union{ArgumentError,HT.URIs.ParseError} HT._parse_http_url(HT.URI("http://[::1]evil.com/"))

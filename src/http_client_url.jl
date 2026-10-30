@@ -352,7 +352,37 @@ function _check_url_host(host::AbstractString, bracketed::Bool)::Nothing
         (b >= 0x80 || _is_unreserved_form_byte(b) || _is_url_sub_delim(b)) ||
             throw(ArgumentError("invalid character $(repr(Char(b))) in URL host $(repr(host))"))
     end
+    # RFC 3986 §7.4: system resolvers read other numeric forms (`127.1`,
+    # `0x7f.1`, `2130706433`, `010.0.0.1`) as IPv4 addresses, differently on
+    # each platform, while URL parsers such as URIs.jl see a host name.
+    _host_ends_in_number(bytes) && !_is_dotted_decimal_ipv4(host) &&
+        throw(ArgumentError("invalid IPv4 address in URL host $(repr(host)); only dotted-decimal form is allowed"))
     return nothing
+end
+
+# RFC 3986 §3.2.2 IPv4address: four decimal octets without leading zeros.
+# `inet_pton` cannot decide this: macOS accepts `010.0.0.1` as 10.0.0.1.
+function _is_dotted_decimal_ipv4(host::AbstractString)::Bool
+    parts = split(host, '.')
+    length(parts) == 4 || return false
+    return all(p -> 1 <= ncodeunits(p) <= 3 && all(isdigit, p) && (p == "0" || p[1] != '0') &&
+        parse(Int, p) <= 255, parts)
+end
+
+# Whether the last label, ignoring one trailing dot, is decimal digits or
+# `0x` hex: a host the WHATWG URL parser reads as an IPv4 address.
+function _host_ends_in_number(bytes::AbstractVector{UInt8})::Bool
+    hi = lastindex(bytes)
+    hi >= 1 && bytes[hi] == UInt8('.') && (hi -= 1)
+    lo = hi
+    while lo >= 1 && bytes[lo] != UInt8('.')
+        lo -= 1
+    end
+    label = @view bytes[(lo + 1):hi]
+    isempty(label) && return false
+    all(b -> UInt8('0') <= b <= UInt8('9'), label) && return true
+    return length(label) >= 2 && label[1] == UInt8('0') && (label[2] | 0x20) == UInt8('x') &&
+        all(_is_url_hex, @view label[3:end])
 end
 
 # `url` with any userinfo left out, for error messages.
