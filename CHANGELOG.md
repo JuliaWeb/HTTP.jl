@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The error for a URL without `http://` or `https://`, such as
   `//user:secret@host/`, and the trace URL for that request no longer include
   the URL's user name and password. ([#1539])
+- A URL whose port is followed by another `:`, such as `http://host:8080:/`,
+  now throws an `ArgumentError`; it was read as `host:8080`, while URIs.jl
+  rejects it and Go reads the host as `host:8080` with the default port.
+  ([#1540])
 
 ## [v2.13.3] - 2026-10-29
 
@@ -1688,3 +1692,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1535]: https://github.com/JuliaWeb/HTTP.jl/issues/1535
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
+[#1540]: https://github.com/JuliaWeb/HTTP.jl/issues/1540
