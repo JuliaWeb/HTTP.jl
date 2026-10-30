@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FLOW_CONTROL_ERROR instead of PROTOCOL_ERROR, and DATA on a stream the client
   already ended is reset with STREAM_CLOSED instead of PROTOCOL_ERROR.
   ([#1542])
+- With `read_header_timeout` set, the HTTP/2 server now applies it to a whole
+  header block, from its HEADERS frame to the CONTINUATION frame that ends it,
+  as the HTTP/1 server does for a request head. It restarted the timeout for
+  each CONTINUATION frame, so a client sending them slowly could keep a block
+  open far longer: with a 1 s timeout, a block that took 3.3 s was accepted.
+  ([#1543])
 
 ## [v2.13.4] - 2026-10-29
 
@@ -1707,4 +1713,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1527]: https://github.com/JuliaWeb/HTTP.jl/issues/1527
 [#1539]: https://github.com/JuliaWeb/HTTP.jl/issues/1539
 [#1540]: https://github.com/JuliaWeb/HTTP.jl/issues/1540
+[#1543]: https://github.com/JuliaWeb/HTTP.jl/issues/1543
 [#1542]: https://github.com/JuliaWeb/HTTP.jl/issues/1542
