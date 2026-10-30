@@ -66,6 +66,7 @@ test_files = [
     "http_core_tests.jl",
     "transfer_ownership_tests.jl",
     "http1_wire_tests.jl",
+    "http_response_coalesce_tests.jl",
     "http_cookie_tests.jl",
     "http_forms_tests.jl",
     "http_multipart_tests.jl",
