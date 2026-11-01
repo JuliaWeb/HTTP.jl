@@ -1258,6 +1258,7 @@ end
 
 function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, header_deadline_armed::Bool=false)::Nothing
     reader = _ConnReader(reader_source)
+    write_buffer = UInt8[]
     try
         while true
             _server_shutting_down(server) && return nothing
@@ -1382,8 +1383,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 end
                 _set_write_deadline!(server, tracked.conn)
                 try
-                    write(tracked.conn, head)
-                    allows_body && _write_response_body!(tracked.conn, response_obj, use_chunked, trailer_values)
+                    _write_response_parts!(tracked.conn, head, response_obj, use_chunked, trailer_values, allows_body, write_buffer)
                 catch err
                     # The head may be out, so close the connection and leave the
                     # body unfinished. An error that is not the connection's came

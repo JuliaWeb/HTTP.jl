@@ -381,9 +381,6 @@ function _server_startwrite!(stream::Stream)::Nothing
     return nothing
 end
 
-# A fixed-length HTTP/1 body up to this size is sent in one write with its head.
-const _FIXED_BODY_COALESCE_BYTES = 4096
-
 function _write_buffered_fixed_head!(stream::Stream)::Nothing
     body_bytes = take!(stream.request_buffer)
     # Bound the extra copy: large buffered bodies keep separate writes.
