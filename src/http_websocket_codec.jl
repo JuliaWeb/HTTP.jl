@@ -280,7 +280,9 @@ end
     throw(WebSocketInvalidPayloadError(String(message)))
 end
 
-function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::AbstractVector{UInt8}, datalen::Int=lastindex(data); on_frame_header=nothing)::Vector{WsFrame{Vector{UInt8}}}
+# `f::F`: Julia does not specialize on a function that a method only passes along,
+# and `juliac --trim` cannot resolve calls made with the unspecialized `Function`.
+function ws_decoder_process!(f::F, dec::WsDecoder, data::AbstractVector{UInt8}, datalen::Int=lastindex(data); on_frame_header=nothing)::Vector{WsFrame{Vector{UInt8}}} where {F<:Union{Nothing,Function}}
     frames = dec.frames_scratch
     empty!(frames)
     pos = firstindex(data)
@@ -660,7 +662,7 @@ function (g::_WsMaxLengthGuard)(opcode::UInt8, fin::Bool, payload_length::UInt64
     return nothing
 end
 
-function ws_on_incoming_data!(f::Union{Nothing,Function}, ws::WSConn, data::AbstractVector{UInt8}, datalen::Int=lastindex(data))::Vector{WsFrame{Vector{UInt8}}}
+function ws_on_incoming_data!(f::F, ws::WSConn, data::AbstractVector{UInt8}, datalen::Int=lastindex(data))::Vector{WsFrame{Vector{UInt8}}} where {F<:Union{Nothing,Function}}
     frames = if ws.max_incoming_payload_length > 0
         ws_decoder_process!(
             f,

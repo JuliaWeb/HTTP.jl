@@ -78,10 +78,49 @@ function run_http_trim_stream_body_reads()::Nothing
     return nothing
 end
 
+# `streamhandler` adapts a request handler for `listen!`, as frameworks that need
+# the client's address do. Requests with and without a body, two response body
+# types, and formatting the peer address must all stay statically dispatched.
+function run_http_trim_streamhandler()::Nothing
+    server = nothing
+    try
+        server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            peer = HT.peeraddr(stream)
+            peerip = peer === nothing ? "" : string(peer)
+            handler = HT.streamhandler() do request
+                request.method == "POST" || return HT.Response(200, "hello")
+                return HT.Response(200, collect(codeunits(peerip)))
+            end
+            return handler(stream)
+        end
+        port = HT.port(server)
+        response = trim_raw_http_exchange(port,
+            "GET /hello HTTP/1.1\r\n" *
+            "Host: 127.0.0.1:$(port)\r\n" *
+            "Connection: close\r\n" *
+            "\r\n",
+        )
+        endswith(response, "\r\n\r\nhello") || error("unexpected GET response: $(repr(response))")
+        response = trim_raw_http_exchange(port,
+            "POST /peer HTTP/1.1\r\n" *
+            "Host: 127.0.0.1:$(port)\r\n" *
+            "Content-Length: 4\r\n" *
+            "Connection: close\r\n" *
+            "\r\n" *
+            "ping",
+        )
+        occursin("\r\n\r\n127.0.0.1:", response) || error("peer address not echoed: $(repr(response))")
+    finally
+        server === nothing || close(server::HT.Server)
+    end
+    return nothing
+end
+
 function @main(args::Vector{String})::Cint
     _ = args
     # Before the client/server run, which shuts the Reseau runtime down.
     run_http_trim_stream_body_reads()
+    run_http_trim_streamhandler()
     run_http_trim_client_server()
     return 0
 end

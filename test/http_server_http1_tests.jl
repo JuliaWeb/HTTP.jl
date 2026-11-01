@@ -475,6 +475,11 @@ end
     # A server stream with no live connection (e.g. one built from a buffered
     # request) reports no peer address rather than throwing.
     @test HT.peeraddr(HT.Stream(HT.Request("GET", "/"))) === nothing
+
+    # Connections report IPv4 or IPv6 endpoints; anything else is not an address.
+    v6 = NC.SocketAddrV6(ntuple(i -> i == 16 ? 0x01 : 0x00, 16), 8080)
+    @test HT._ip_addr(v6) === v6
+    @test HT._ip_addr(nothing) === nothing
 end
 
 @testset "HTTP server peeraddr exposes the client socket address over TLS" begin
