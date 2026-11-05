@@ -66,7 +66,7 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
         return nothing
     end
     try
-        _set_write_deadline!(stream.server, stream.tracked.conn)
+        _set_write_deadline!(stream.server::Server, stream.tracked.conn)
         total = 0
         while total < length(data)
             chunk = total == 0 ? data : data[(total+1):end]

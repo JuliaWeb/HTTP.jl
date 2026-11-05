@@ -144,6 +144,15 @@ Keep the `Server` that `serve!` or `listen!` returns:
   progress to finish.
 - `HTTP.forceclose(server)` stops at once and closes every connection.
 
+A server compiles its connection handling for the type of its handler, so a new
+process answers its first request slowly when no package image has that code.
+A package that serves its own handler type can keep the code in its package
+image by calling [`HTTP.precompile_server`](@ref) in its precompile workload:
+
+```julia
+HTTP.precompile_server(typeof(handler))
+```
+
 ### Timeouts
 
 All server timeouts are off by default. Each keyword takes seconds, and a
