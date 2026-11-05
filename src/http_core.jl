@@ -1314,6 +1314,12 @@ the context of a request a server is handling.
 request still running at the deadline throws [`TimeoutError`](@ref), and
 [`cancel!`](@ref) makes it throw [`CanceledError`](@ref).
 
+A server cancels the context of an HTTP/2 request when the request's stream is
+reset, as when the client cancels the request, or when its connection closes. A
+handler can check [`canceled`](@ref) to stop work that no client will receive.
+An HTTP/1 server does not watch the connection while a handler runs; the handler
+learns that the client has gone when a write to it fails.
+
 Application data is stored under `Symbol` keys:
 
 ```julia
@@ -1367,7 +1373,10 @@ function cancel!(ctx::RequestContext; message::AbstractString="request canceled"
     end
     for cb in callbacks
         try
-            cb()
+            # A runtime call: `juliac --trim` rejects a call on an abstract
+            # `Function`. `_on_cancel!` calls each callback type it registers,
+            # so trimmed programs compile them.
+            ccall(:jl_apply_generic, Any, (Any, Ptr{Any}, UInt32), cb, C_NULL, UInt32(0))
         catch
             # callbacks must not propagate errors back into cancel!
         end

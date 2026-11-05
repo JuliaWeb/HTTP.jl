@@ -28,7 +28,8 @@ import ..serve!
 import ..streamhandler
 import ..IOPoll
 import ..cancel!
-import ..canceled
+import .._cancel_message
+import .._on_cancel!
 import ..body_close!
 import ..get_request_context
 import .._request_with_context
@@ -542,9 +543,9 @@ function _timeout_child_context(parent::RequestContext, timeout_ns::Int64)::Requ
     if parent.metadata !== nothing
         child.metadata = copy(parent.metadata)
     end
-    if canceled(parent)
-        cancel!(child; message=parent.cancel_message === nothing ? "request canceled" : parent.cancel_message::String)
-    end
+    # Canceling the request, as a server does when the client goes away, also
+    # cancels the handler's context, now or later.
+    _on_cancel!(parent, () -> cancel!(child; message=_cancel_message(parent)))
     return child
 end
 
@@ -613,8 +614,9 @@ Return middleware that answers with `status`, `body`, and `content_type` when a
 request handler takes longer than `timeout_s` seconds. The handler runs with a
 child [`RequestContext`](@ref) whose deadline is the earlier of the timeout and
 the request's own deadline. At the timeout that context is canceled, but the
-handler keeps running until it returns or checks the context. Only request
-handlers are supported.
+handler keeps running until it returns or checks the context. The context is
+also canceled when the request's own context is. Only request handlers are
+supported.
 """
 function handlertimeout(
     timeout_s::Real;
