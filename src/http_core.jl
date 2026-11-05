@@ -1407,7 +1407,8 @@ function _on_cancel!(ctx::RequestContext, callback::Function)
     if (@atomic :acquire ctx.canceled_flag)
         try
             # Not inlined, so a trimmed program compiles a method for this
-            # callback type that `cancel!` can call at run time.
+            # callback type that `cancel!` can call at run time. One such call
+            # in `_on_cancel!` is enough.
             @noinline callback()
         catch
         end
@@ -1417,7 +1418,7 @@ function _on_cancel!(ctx::RequestContext, callback::Function)
     try
         if (@atomic :acquire ctx.canceled_flag)
             try
-                @noinline callback()
+                callback()
             catch
             end
         else
