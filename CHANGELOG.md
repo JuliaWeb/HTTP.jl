@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection closes, so a handler can check `HTTP.canceled` to stop work no
   client will receive. A handler behind `HTTP.Handlers.handlertimeout` sees
   that cancellation too. An HTTP/1 server still learns that a client has gone
-  only when a write fails. `HTTP.cancel!` now compiles under
+  only when a write fails. Only the first `HTTP.cancel!` of a context takes
+  effect, so a handler that cancels its own context keeps its message when the
+  client then resets the stream. `HTTP.cancel!` now compiles under
   `juliac --trim=safe`. ([#1549])
 
 ## [v2.14.2] - 2026-11-01

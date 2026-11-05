@@ -1359,14 +1359,17 @@ end
     cancel!(ctx; message="request canceled") -> ctx
 
 Cancel the request that uses `ctx`. Its current read or write stops, and the
-request throws a [`CanceledError`](@ref) carrying `message`. `cancel!` does not
+request throws a [`CanceledError`](@ref) carrying `message`. Only the first call
+takes effect, so a later call does not replace its `message`. `cancel!` does not
 throw itself.
 """
 function cancel!(ctx::RequestContext; message::AbstractString="request canceled")
-    @atomic :release ctx.canceled_flag = true
-    ctx.cancel_message = String(message)
     lock(ctx.cancel_callbacks_lock)
     callbacks = try
+        canceled(ctx) && return ctx
+        # Set the message before the flag, so a task that sees the flag sees the message.
+        ctx.cancel_message = String(message)
+        @atomic :release ctx.canceled_flag = true
         copy(ctx.cancel_callbacks)
     finally
         unlock(ctx.cancel_callbacks_lock)
@@ -1396,9 +1399,9 @@ end
 """
     _on_cancel!(ctx, callback) -> ctx
 
-Register `callback` (a zero-argument function) to run when `cancel!(ctx)` fires.
-If `ctx` is already canceled, `callback` runs immediately. Internal helper used
-by the transport layer to interrupt in-flight reads/writes.
+Register `callback` (a zero-argument function) to run once, when `ctx` is first
+canceled. If `ctx` is already canceled, `callback` runs immediately. Internal
+helper used by the transport layer to interrupt in-flight reads/writes.
 """
 function _on_cancel!(ctx::RequestContext, callback::Function)
     if (@atomic :acquire ctx.canceled_flag)
