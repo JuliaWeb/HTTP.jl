@@ -218,6 +218,19 @@ end
     @test HT.canceled(handler_context)
     put!(finish, nothing)
     @test fetch(watched_task).status == 200
+
+    # A request canceled before the middleware runs starts its handler canceled.
+    gone = HT.Request("GET", "/")
+    HT.cancel!(HT.get_request_context(gone); message = "client gone")
+    gone_context = Channel{HT.RequestContext}(1)
+    late = HT.Handlers.handlertimeout(60.0)(req -> begin
+        put!(gone_context, HT.get_request_context(req))
+        return _response_with_text("done")
+    end)
+    @test late(gone).status == 200
+    late_context = take!(gone_context)
+    @test HT.canceled(late_context)
+    @test HT._cancel_message(late_context) == "client gone"
 end
 
 function _logging_stream_request(stream)
