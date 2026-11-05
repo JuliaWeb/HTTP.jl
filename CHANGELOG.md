@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HTTP.precompile_server(F)` compiles a server's connection handling for
   handler type `F`, over HTTP/1.1 and HTTP/2, without running anything. A
   package that calls it in its precompile workload keeps that code in its
-  package image, so a new process answers its first request without compiling
-  it. In a benchmark with a fresh Julia 1.13 process, a server's first request
+  package image, so a new process's first request compiles nothing on Julia
+  1.13 and only a task wrapper, about 10 ms, on Julia 1.10 and 1.12. In a
+  benchmark with a fresh Julia 1.13 process, a server's first request
   took more than a second without it and under 0.2 s with it. ([#1553])
 
 ### Fixed
