@@ -1978,3 +1978,41 @@ function serve(
     end
     return server
 end
+
+"""
+    HTTP.precompile_server(F::Type) -> Bool
+
+Compile the code that a server whose handler has type `F` runs to accept
+connections and answer requests, for [`serve!`](@ref) and [`listen!`](@ref)
+alike, over HTTP/1.1 and HTTP/2, with or without TLS. Nothing runs and no
+socket opens. Like `precompile`, it returns `false` when some of that code
+cannot be compiled.
+
+Without it, a new process compiles this code for its handler type when the
+server starts and when the first connection and the first HTTP/2 request
+arrive, which can take more than a second. Call `precompile_server` in a
+package's precompile workload, with the type of the handler the package serves,
+so that the package image keeps the code:
+
+```julia
+handler(req::HTTP.Request) = HTTP.Response(200, "ok")
+HTTP.precompile_server(typeof(handler))
+```
+"""
+function precompile_server(::Type{F}) where {F}
+    S = Server{F}
+    # The accept loop, each connection, and each HTTP/2 stream run in tasks of
+    # their own, so compiling one does not compile the next.
+    ok = true
+    for L in (TCP.Listener, TLS.Listener)
+        ok &= precompile(_serve_listener!, (S, L, Threads.Event))
+    end
+    ok &= precompile(_serve_conn!, (S, _ServerConn))
+    for C in (TCP.Conn, TLS.Conn)
+        ok &= precompile(_handle_h2_stream!, (
+            S, _ServerConn, C, ReentrantLock, _H2SendWindowState, ReentrantLock,
+            Dict{UInt32,_H2ServerStreamState}, UInt32, _H2ServerStreamState, Vector{HeaderField},
+        ))
+    end
+    return ok
+end

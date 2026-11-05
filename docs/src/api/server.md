@@ -30,6 +30,7 @@ HTTP.setstatus
 HTTP.addtrailer
 HTTP.closeread
 HTTP.peeraddr
+HTTP.precompile_server
 ```
 
 ## Routing and Middleware

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `HTTP.precompile_server(F)` compiles a server's connection handling for
+  handler type `F`, over HTTP/1.1 and HTTP/2, without running anything. A
+  package that calls it in its precompile workload keeps that code in its
+  package image, so a new process's first request compiles nothing on Julia
+  1.13 and only a task wrapper, about 10 ms, on Julia 1.10 and 1.12. In a
+  benchmark with a fresh Julia 1.13 process, a server's first request
+  took more than a second without it and under 0.2 s with it. ([#1553])
+
 ### Fixed
 - An HTTP/2 server now cancels a request's `RequestContext` when the
   request's stream is reset, as when the client cancels it, or when the
@@ -1786,3 +1795,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1522]: https://github.com/JuliaWeb/HTTP.jl/issues/1522
 [#1547]: https://github.com/JuliaWeb/HTTP.jl/issues/1547
 [#1549]: https://github.com/JuliaWeb/HTTP.jl/issues/1549
+[#1553]: https://github.com/JuliaWeb/HTTP.jl/issues/1553
