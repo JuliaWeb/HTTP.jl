@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- An HTTP/2 server now cancels a request's `RequestContext` when the
+  request's stream is reset, as when the client cancels it, or when the
+  connection closes, so a handler can check `HTTP.canceled` to stop work no
+  client will receive. A handler behind `HTTP.Handlers.handlertimeout` sees
+  that cancellation too. An HTTP/1 server still learns that a client has gone
+  only when a write fails. `HTTP.cancel!` now compiles under
+  `juliac --trim=safe`. ([#1549])
+
 ## [v2.14.2] - 2026-11-01
 
 ### Changed
@@ -1774,3 +1783,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1544]: https://github.com/JuliaWeb/HTTP.jl/issues/1544
 [#1522]: https://github.com/JuliaWeb/HTTP.jl/issues/1522
 [#1547]: https://github.com/JuliaWeb/HTTP.jl/issues/1547
+[#1549]: https://github.com/JuliaWeb/HTTP.jl/issues/1549
