@@ -1402,6 +1402,8 @@ end
 Register `callback` (a zero-argument function) to run once, when `ctx` is first
 canceled. If `ctx` is already canceled, `callback` runs immediately. Internal
 helper used by the transport layer to interrupt in-flight reads/writes.
+`cancel!` can run callbacks on an HTTP/2 server connection's frame reader, so a
+callback must not wait for I/O or for a lock that I/O can hold.
 """
 function _on_cancel!(ctx::RequestContext, callback::Function)
     if (@atomic :acquire ctx.canceled_flag)
