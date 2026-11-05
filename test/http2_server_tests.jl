@@ -604,6 +604,38 @@ end
     end
 end
 
+@testset "HTTP/2 stream reset keeps a handler's own earlier cancel" begin
+    contexts = Channel{HT.RequestContext}(1)
+    release = Channel{Nothing}(1)
+    callback_runs = Threads.Atomic{Int}(0)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        context = HT.get_request_context(request)
+        HT._on_cancel!(context, () -> (Threads.atomic_add!(callback_runs, 1); nothing))
+        HT.cancel!(context; message = "handler gave up")
+        put!(contexts, context)
+        take!(release)
+        return HT.Response(200)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/give-up")
+        context = take!(contexts)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.RSTStreamFrame(UInt32(1), HT._H2_ERROR_CANCEL))
+        # The server handles frames in order, so this ACK follows the reset.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        @test HT._cancel_message(context) == "handler gave up"
+        @test callback_runs[] == 1
+    finally
+        put!(release, nothing)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 ordinary handlers reject oversized buffered request bodies" begin
     called = Channel{Bool}(1)
     server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request
