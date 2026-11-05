@@ -1376,9 +1376,9 @@ function cancel!(ctx::RequestContext; message::AbstractString="request canceled"
     end
     for cb in callbacks
         try
-            # A runtime call: `juliac --trim` rejects a call on an abstract
-            # `Function`. `_on_cancel!` calls each callback type it registers,
-            # so trimmed programs compile them.
+            # A runtime call, because `juliac --trim` rejects a call on an
+            # abstract `Function`. A trimmed program can run only methods
+            # compiled into it, and `_on_cancel!` compiles one per callback type.
             ccall(:jl_apply_generic, Any, (Any, Ptr{Any}, UInt32), cb, C_NULL, UInt32(0))
         catch
             # callbacks must not propagate errors back into cancel!
@@ -1406,7 +1406,9 @@ helper used by the transport layer to interrupt in-flight reads/writes.
 function _on_cancel!(ctx::RequestContext, callback::Function)
     if (@atomic :acquire ctx.canceled_flag)
         try
-            callback()
+            # Not inlined, so a trimmed program compiles a method for this
+            # callback type that `cancel!` can call at run time.
+            @noinline callback()
         catch
         end
         return ctx
@@ -1415,7 +1417,7 @@ function _on_cancel!(ctx::RequestContext, callback::Function)
     try
         if (@atomic :acquire ctx.canceled_flag)
             try
-                callback()
+                @noinline callback()
             catch
             end
         else
