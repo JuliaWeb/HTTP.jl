@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.15.0] - 2026-11-05
+
 ### Added
 - `HTTP.precompile_server(F)` compiles a server's connection handling for
   handler type `F`, over HTTP/1.1 and HTTP/2, without running anything. A
@@ -1414,7 +1416,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.2...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.0...HEAD
+[v2.15.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.2...v2.15.0
 [v2.14.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.1...v2.14.2
 [v2.14.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.0...v2.14.1
 [v2.14.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.13.5...v2.14.0
