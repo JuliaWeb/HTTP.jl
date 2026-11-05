@@ -565,6 +565,136 @@ end
     end
 end
 
+@testset "HTTP/2 server cancels the request context of a reset or disconnected stream" begin
+    contexts = Channel{HT.RequestContext}(2)
+    release = Channel{Nothing}(2)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        put!(contexts, HT.get_request_context(request))
+        take!(release)
+        return HT.Response(200)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/reset")
+        reset_context = take!(contexts)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.RSTStreamFrame(UInt32(1), HT._H2_ERROR_CANCEL))
+        # The server handles frames in order, so this ACK follows the reset.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        @test HT.canceled(reset_context)
+
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/disconnect")
+        closed_context = take!(contexts)
+        @test !HT.canceled(closed_context)
+        NC.close(conn::NC.Conn)
+        # The server stops tracking the connection after it fails its streams.
+        while !isempty(HT._server_conns(server))
+            yield()
+        end
+        @test HT.canceled(closed_context)
+    finally
+        put!(release, nothing)
+        put!(release, nothing)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+@testset "HTTP/2 stream reset keeps a handler's own earlier cancel" begin
+    contexts = Channel{HT.RequestContext}(1)
+    release = Channel{Nothing}(1)
+    callback_runs = Threads.Atomic{Int}(0)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        context = HT.get_request_context(request)
+        HT._on_cancel!(context, () -> (Threads.atomic_add!(callback_runs, 1); nothing))
+        HT.cancel!(context; message = "handler gave up")
+        put!(contexts, context)
+        take!(release)
+        return HT.Response(200)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/give-up")
+        context = take!(contexts)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.RSTStreamFrame(UInt32(1), HT._H2_ERROR_CANCEL))
+        # The server handles frames in order, so this ACK follows the reset.
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        @test HT._cancel_message(context) == "handler gave up"
+        @test callback_runs[] == 1
+    finally
+        put!(release, nothing)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
+@testset "HTTP/2 stream reset does not wait on a proxied request's upstream writes" begin
+    # The upstream answers the handshake, then reports the RST_STREAM that the
+    # proxied request sends it once canceled.
+    upstream_listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    upstream_address = ND.join_host_port("127.0.0.1", Int((NC.addr(upstream_listener)::NC.SocketAddrV4).port))
+    upstream_reset = Channel{UInt32}(1)
+    upstream_task = errormonitor(Threads.@spawn begin
+        upstream = NC.accept(upstream_listener)
+        try
+            upstream_reader = HT._ConnReader(upstream)
+            readbytes!(upstream_reader, Vector{UInt8}(undef, length(HT._H2_PREFACE)))
+            _write_frame_h2_server_raw!(upstream, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            reset = _read_h2_server_frame_until!(upstream, upstream_reader, f -> f isa HT.RSTStreamFrame)
+            put!(upstream_reset, (reset::HT.RSTStreamFrame).error_code)
+        finally
+            NC.close(upstream)
+        end
+    end)
+    client = HT.Client()
+    contexts = Channel{HT.RequestContext}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        context = HT.get_request_context(request)
+        put!(contexts, context)
+        HTTP.@try_ignore HT.get("http://$(upstream_address)/proxied"; protocol = :h2, client = client, retry = false, context = context)
+        return HT.Response(200)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    upstream_conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/proxy")
+        context = take!(contexts)
+        # The proxied request is in flight once it registers its cancel callback.
+        while lock(() -> isempty(context.cancel_callbacks), context.cancel_callbacks_lock)
+            yield()
+        end
+        upstream_conn = lock(() -> only(only(values(client.h2_conns))), client.h2_lock)
+        # Holding the upstream write lock stands in for an upload stuck on a full socket.
+        lock((upstream_conn::HT.H2Connection).write_lock)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.RSTStreamFrame(UInt32(1), HT._H2_ERROR_CANCEL))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.PingFrame(false, ntuple(UInt8, 8)))
+        # The server handles frames in order, so this ACK follows the reset.
+        _read_h2_server_frame_until!(conn::NC.Conn, reader, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+        @test HT.canceled(context)
+        unlock((upstream_conn::HT.H2Connection).write_lock)
+        upstream_conn = nothing
+        @test take!(upstream_reset) == HT._H2_ERROR_CANCEL
+    finally
+        upstream_conn === nothing || unlock((upstream_conn::HT.H2Connection).write_lock)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        close(client)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+        HTTP.@try_ignore NC.close(upstream_listener)
+        HTTP.@try_ignore wait(upstream_task)
+    end
+end
+
 @testset "HTTP/2 ordinary handlers reject oversized buffered request bodies" begin
     called = Channel{Bool}(1)
     server = HT.serve!("127.0.0.1", 0; listenany = true, max_body_bytes = 4) do request

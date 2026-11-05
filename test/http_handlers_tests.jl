@@ -200,6 +200,37 @@ end
     slow_context = take!(slow_started)
     @test HT.canceled(slow_context)
     put!(release_slow, nothing)
+
+    # Canceling the request, as the server does when the client goes away,
+    # reaches a handler that is already running.
+    request = HT.Request("GET", "/")
+    running = Channel{HT.RequestContext}(1)
+    finish = Channel{Nothing}(1)
+    watched = HT.Handlers.handlertimeout(60.0)(req -> begin
+        put!(running, HT.get_request_context(req))
+        take!(finish)
+        return _response_with_text("done")
+    end)
+    watched_task = errormonitor(Threads.@spawn watched(request))
+    handler_context = take!(running)
+    @test !HT.canceled(handler_context)
+    HT.cancel!(HT.get_request_context(request))
+    @test HT.canceled(handler_context)
+    put!(finish, nothing)
+    @test fetch(watched_task).status == 200
+
+    # A request canceled before the middleware runs starts its handler canceled.
+    gone = HT.Request("GET", "/")
+    HT.cancel!(HT.get_request_context(gone); message = "client gone")
+    gone_context = Channel{HT.RequestContext}(1)
+    late = HT.Handlers.handlertimeout(60.0)(req -> begin
+        put!(gone_context, HT.get_request_context(req))
+        return _response_with_text("done")
+    end)
+    @test late(gone).status == 200
+    late_context = take!(gone_context)
+    @test HT.canceled(late_context)
+    @test HT._cancel_message(late_context) == "client gone"
 end
 
 function _logging_stream_request(stream)

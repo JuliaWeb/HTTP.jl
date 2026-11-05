@@ -19,6 +19,9 @@ mutable struct _H2ServerStreamState
     handler_finished::Bool
     aborted::Bool
     cancel_kind::UInt8
+    # The request's context. It exists before the request does, so a reset that
+    # arrives before the handler starts still cancels it.
+    const context::RequestContext
 end
 
 function _H2ServerStreamState(stream_id::UInt32, max_buffered_bytes::Int=_H2_DEFAULT_MAX_BUFFERED_BYTES)
@@ -44,6 +47,7 @@ function _H2ServerStreamState(stream_id::UInt32, max_buffered_bytes::Int=_H2_DEF
         false,
         false,
         UInt8(0),
+        RequestContext(),
     )
 end
 
@@ -503,9 +507,13 @@ function _set_h2_server_stream_cancelled!(
     finish_if_unstarted::Bool=false,
 )::Int
     discarded = 0
+    first_cancel = false
     lock(state.lock)
     try
-        state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN) && (state.cancel_kind = UInt8(kind))
+        if state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN)
+            state.cancel_kind = UInt8(kind)
+            first_cancel = true
+        end
         aborted && (state.aborted = true)
         state.stream_done = true
         discard_body && (discarded = _take_h2_server_unread_bytes!(state))
@@ -514,6 +522,8 @@ function _set_h2_server_stream_cancelled!(
     finally
         unlock(state.lock)
     end
+    # A running handler learns from its request context that no response can be sent.
+    first_cancel && cancel!(state.context; message=_h2_server_stream_exception(kind).message)
     return discarded
 end
 
@@ -1089,7 +1099,12 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     return method::String, scheme, path, authority, out_headers
 end
 
-function _decode_h2_request(headers::Vector{HeaderField}, body::AbstractBody, stream_done::Bool=false)::Request
+function _decode_h2_request(
+    headers::Vector{HeaderField},
+    body::AbstractBody,
+    stream_done::Bool=false,
+    context::RequestContext=RequestContext(),
+)::Request
     method, _scheme, path, authority, out_headers = _validate_h2_request_headers!(headers)
     target = method == "CONNECT" ? authority::String : (path::String)
     host = authority === nothing ? header(out_headers, "Host") : authority
@@ -1118,6 +1133,7 @@ function _decode_h2_request(headers::Vector{HeaderField}, body::AbstractBody, st
         content_length=content_length,
         proto_major=2,
         proto_minor=0,
+        context=context,
     )
 end
 
@@ -1537,7 +1553,7 @@ function _handle_h2_stream!(
         unlock(state.lock)
     end
     try
-        request = _decode_h2_request(decoded_headers, request_body::AbstractBody, stream_done)
+        request = _decode_h2_request(decoded_headers, request_body::AbstractBody, stream_done, state.context)
         request.trailers = state.trailers
         lock(state.lock)
         try

@@ -2121,7 +2121,9 @@ function _h2_roundtrip_incoming!(
             # Stop a body writer parked on flow control; cancellation means no
             # more request DATA may be sent on this stream.
             _mark_h2_send_closed!(conn, stream_state.stream_id)
-            @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x8)))
+            # Write the reset from its own task. `cancel!` can run on an HTTP/2
+            # server's frame reader, which must not wait for this connection's writes.
+            Threads.@spawn @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x8)))
             lock(conn.state_lock)
             try
                 notify(conn.window_condition; all=true)

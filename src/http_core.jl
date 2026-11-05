@@ -1314,6 +1314,12 @@ the context of a request a server is handling.
 request still running at the deadline throws [`TimeoutError`](@ref), and
 [`cancel!`](@ref) makes it throw [`CanceledError`](@ref).
 
+A server cancels the context of an HTTP/2 request when the request's stream is
+reset, as when the client cancels the request, or when its connection closes. A
+handler can check [`canceled`](@ref) to stop work that no client will receive.
+An HTTP/1 server does not watch the connection while a handler runs; the handler
+learns that the client has gone when a write to it fails.
+
 Application data is stored under `Symbol` keys:
 
 ```julia
@@ -1353,21 +1359,27 @@ end
     cancel!(ctx; message="request canceled") -> ctx
 
 Cancel the request that uses `ctx`. Its current read or write stops, and the
-request throws a [`CanceledError`](@ref) carrying `message`. `cancel!` does not
+request throws a [`CanceledError`](@ref) carrying `message`. Only the first call
+takes effect, so a later call does not replace its `message`. `cancel!` does not
 throw itself.
 """
 function cancel!(ctx::RequestContext; message::AbstractString="request canceled")
-    @atomic :release ctx.canceled_flag = true
-    ctx.cancel_message = String(message)
     lock(ctx.cancel_callbacks_lock)
     callbacks = try
+        canceled(ctx) && return ctx
+        # Set the message before the flag, so a task that sees the flag sees the message.
+        ctx.cancel_message = String(message)
+        @atomic :release ctx.canceled_flag = true
         copy(ctx.cancel_callbacks)
     finally
         unlock(ctx.cancel_callbacks_lock)
     end
     for cb in callbacks
         try
-            cb()
+            # A runtime call, because `juliac --trim` rejects a call on an
+            # abstract `Function`. A trimmed program can run only methods
+            # compiled into it, and `_on_cancel!` compiles one per callback type.
+            ccall(:jl_apply_generic, Any, (Any, Ptr{Any}, UInt32), cb, C_NULL, UInt32(0))
         catch
             # callbacks must not propagate errors back into cancel!
         end
@@ -1387,14 +1399,19 @@ end
 """
     _on_cancel!(ctx, callback) -> ctx
 
-Register `callback` (a zero-argument function) to run when `cancel!(ctx)` fires.
-If `ctx` is already canceled, `callback` runs immediately. Internal helper used
-by the transport layer to interrupt in-flight reads/writes.
+Register `callback` (a zero-argument function) to run once, when `ctx` is first
+canceled. If `ctx` is already canceled, `callback` runs immediately. Internal
+helper used by the transport layer to interrupt in-flight reads/writes.
+`cancel!` can run callbacks on an HTTP/2 server connection's frame reader, so a
+callback must not wait for I/O or for a lock that I/O can hold.
 """
 function _on_cancel!(ctx::RequestContext, callback::Function)
     if (@atomic :acquire ctx.canceled_flag)
         try
-            callback()
+            # Not inlined, so a trimmed program compiles a method for this
+            # callback type that `cancel!` can call at run time. One such call
+            # in `_on_cancel!` is enough.
+            @noinline callback()
         catch
         end
         return ctx
