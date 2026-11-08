@@ -244,12 +244,25 @@ function _query_string(query)::String
         return String(take!(encoded))
     end
     _pair_string(k, v) = string(_percent_encode_query_component(k), "=", _percent_encode_query_component(v))
+    # A vector value is a multi-valued parameter: emit one `key=value` pair per
+    # element (a=1&a=2) rather than stringifying the whole vector. An empty
+    # vector emits nothing.
+    function _push_query_pair!(parts, k, v)
+        if v isa AbstractVector
+            for item in v
+                push!(parts, _pair_string(k, item))
+            end
+        else
+            push!(parts, _pair_string(k, v))
+        end
+        return parts
+    end
     parts = String[]
     if query isa AbstractDict
         query_pairs = collect(pairs(query))
         sort!(query_pairs; by=x -> String(x.first))
         for (k, v) in query_pairs
-            push!(parts, _pair_string(k, v))
+            _push_query_pair!(parts, k, v)
         end
         return join(parts, "&")
     end
@@ -257,12 +270,12 @@ function _query_string(query)::String
         for item in query
             if item isa Pair
                 pair = item::Pair
-                push!(parts, _pair_string(pair.first, pair.second))
+                _push_query_pair!(parts, pair.first, pair.second)
                 continue
             end
             if item isa Tuple && length(item) == 2
                 tup = item::Tuple
-                push!(parts, _pair_string(tup[1], tup[2]))
+                _push_query_pair!(parts, tup[1], tup[2])
                 continue
             end
             throw(ArgumentError("unsupported query entry type $(typeof(item)); expected Pair or 2-tuple"))

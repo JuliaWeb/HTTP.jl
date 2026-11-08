@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A `query` value that is a vector now sends one `key=value` pair per element,
+  so `query=Dict("a" => [10, 20])` gives `?a=10&a=20` instead of a single
+  parameter holding the encoded text of the whole vector (`a=%5B10%2C%2020%5D`).
+  An empty vector sends no parameter. This applies to `Dict` values and to the
+  values in a vector of pairs or tuples. ([#1559])
+
 ## [v2.15.0] - 2026-11-05
 
 ### Added
@@ -1799,3 +1806,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1547]: https://github.com/JuliaWeb/HTTP.jl/issues/1547
 [#1549]: https://github.com/JuliaWeb/HTTP.jl/issues/1549
 [#1553]: https://github.com/JuliaWeb/HTTP.jl/issues/1553
+[#1559]: https://github.com/JuliaWeb/HTTP.jl/issues/1559
