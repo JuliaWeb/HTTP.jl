@@ -77,6 +77,9 @@ you:
 HTTP.post("https://example.com/login", [], Dict("user" => "alice", "pw" => "s3cret"))
 ```
 
+A vector value sends its field once for each element, so
+`Dict("tag" => ["a", "b"])` is sent as `tag=a&tag=b`.
+
 Use [`HTTP.Form`](@ref) for `multipart/form-data`, such as file uploads. An open
 file is sent with its file name:
 
