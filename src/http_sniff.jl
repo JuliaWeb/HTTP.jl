@@ -215,12 +215,12 @@ end
 function _sniff_match(::_SniffMP4Sig, data::AbstractVector{UInt8}, firstnonws::Int)::Bool
     _ = firstnonws
     length(data) < 12 && return false
-    boxsize = Int(_big_endian_u32(data))
+    boxsize = _big_endian_u32(data)
     (boxsize % 4 != 0 || length(data) < boxsize) && return false
     _byte_equal(data, 5, _SNIFF_MP4_FTYP) || return false
     # `_byte_equal` reads `data[st:st+2]` under `@inbounds`, so stop the brand
     # scan where a 3-byte window still fits in `data`.
-    laststart = min(boxsize + 1, length(data) - length(_SNIFF_MP4) + 1)
+    laststart = min(Int(boxsize) + 1, length(data) - length(_SNIFF_MP4) + 1)
     for st in 9:4:laststart
         st == 13 && continue
         _byte_equal(data, st, _SNIFF_MP4) && return true

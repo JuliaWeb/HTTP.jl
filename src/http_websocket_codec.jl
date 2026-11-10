@@ -18,7 +18,7 @@ ws_is_data_frame(opcode::WsOpcode.T)::Bool = return ws_is_data_frame(UInt8(opcod
 ws_is_control_frame(opcode::UInt8)::Bool = return opcode >= 0x08
 ws_is_control_frame(opcode::WsOpcode.T)::Bool = return ws_is_control_frame(UInt8(opcode))
 
-const WS_MAX_PAYLOAD_LENGTH = UInt64(0x7fffffffffffffff)
+const WS_MAX_PAYLOAD_LENGTH = UInt64(typemax(Int))
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # RFC 6455 §5.3 requires the client frame masking key to be derived from a strong

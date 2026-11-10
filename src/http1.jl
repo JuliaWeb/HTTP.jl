@@ -78,7 +78,7 @@ converts malformed chunk syntax and trailer overflows into `ParseError` or
 function ChunkedBody(io::I; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES, max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES) where {I<:IO}
     max_line_bytes <= 0 && throw(ArgumentError("max_line_bytes must be > 0"))
     max_header_bytes <= 0 && throw(ArgumentError("max_header_bytes must be > 0"))
-    return ChunkedBody(io, 0, false, Headers(), Int(max_line_bytes), Int(max_header_bytes), false)
+    return ChunkedBody(io, Int64(0), false, Headers(), Int(max_line_bytes), Int(max_header_bytes), false)
 end
 
 """

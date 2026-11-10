@@ -742,9 +742,10 @@ function _encode_integer!(out::Vector{UInt8}, value::Int, prefix_bits::Int, pref
     return nothing
 end
 
-# The largest integer the decoder accepts. Indices, string lengths, and table
-# sizes in a valid header block are far smaller.
-const _HPACK_MAX_INTEGER = Int(typemax(UInt32))
+# The largest integer the decoder accepts: 2^32 - 1, or `typemax(Int)` where
+# `Int` is 32 bits. Indices, string lengths, and table sizes in a valid header
+# block are far smaller.
+const _HPACK_MAX_INTEGER = Int(min(typemax(UInt32), typemax(Int)))
 
 function _decode_integer(data::Vector{UInt8}, index::Int, prefix_bits::Int)::Tuple{Int,Int}
     index <= length(data) || throw(ParseError("HPACK integer decode out of bounds"))
@@ -754,16 +755,19 @@ function _decode_integer(data::Vector{UInt8}, index::Int, prefix_bits::Int)::Tup
     if value < max_prefix
         return value, index
     end
+    # Int64, so the fifth continuation byte (shifted by 28) cannot wrap a
+    # 32-bit Int before the limit check.
+    total = Int64(value)
     shift = 0
     while true
         index <= length(data) || throw(ParseError("HPACK integer continuation overflow"))
         b = data[index]
         index += 1
-        value += Int(b & 0x7f) << shift
+        total += Int64(b & 0x7f) << shift
         # RFC 7541 §5.1: an integer past the decoder's limit, in value or in
         # length, is a decoding error. Five continuation bytes cover the limit.
-        value <= _HPACK_MAX_INTEGER || throw(ParseError("HPACK integer too large"))
-        (b & 0x80) == 0 && return value, index
+        total <= _HPACK_MAX_INTEGER || throw(ParseError("HPACK integer too large"))
+        (b & 0x80) == 0 && return Int(total), index
         shift += 7
         shift <= 28 || throw(ParseError("HPACK integer too large"))
     end
