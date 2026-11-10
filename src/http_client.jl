@@ -2099,7 +2099,15 @@ function _merge_client_default_query(client::Union{Nothing,Client}, query)
     if query === nothing
         return defaults
     end
-    query isa AbstractString && return query
+    if query isa AbstractString
+        isempty(query) && return defaults
+        # A name in the query string, compared as written, replaces the default
+        # of that name. Not decoding it keeps a malformed escape from throwing.
+        names = Set{String}(String(first(eachsplit(entry, '='; limit=2))) for entry in eachsplit(query, '&'))
+        kept = Pair{String,String}[kv for kv in defaults if !(kv.first in names)]
+        isempty(kept) && return query
+        return string(_query_string(kept), "&", query)
+    end
     overrides_pairs = _query_params(query)
     overrides_keys = Set{String}(first(kv) for kv in overrides_pairs)
     merged = Pair{String,String}[]

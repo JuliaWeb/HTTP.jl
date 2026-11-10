@@ -3401,6 +3401,12 @@ end
             @test occursin("extra=true", body2)
             @test occursin("page=2", body2)
             @test !occursin("api_key=abc", body2)
+
+            # A query string keeps the defaults it does not name, and is sent as written.
+            resp3 = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x"; query="page=3&q=a+b")
+            @test String(resp3.body) == "/x?api_key=abc&page=3&q=a+b"
+            resp4 = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x"; query="page=%zz")
+            @test String(resp4.body) == "/x?api_key=abc&page=%zz"
         finally
             close(client)
         end
