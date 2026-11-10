@@ -294,6 +294,35 @@ function _append_query(target::String, query)::String
     return string(target, "?", query_s)
 end
 
+# The `name => value` parameters of a query or form collection: a dictionary, a
+# `NamedTuple`, a `Pair`, or a collection of pairs or 2-tuples. A vector value
+# repeats its parameter, so `"a" => [1, 2]` gives `"a" => "1"` and `"a" => "2"`.
+function _query_params(query)::Vector{Pair{String,String}}
+    entries = query isa NamedTuple ? pairs(query) : query isa Pair ? (query,) : query
+    params = Pair{String,String}[]
+    for entry in entries
+        if entry isa Pair
+            _push_query_param!(params, entry.first, entry.second)
+        elseif entry isa Tuple && length(entry) == 2
+            _push_query_param!(params, entry[1], entry[2])
+        else
+            throw(ArgumentError("unsupported query entry type $(typeof(entry)); expected Pair or 2-tuple"))
+        end
+    end
+    return params
+end
+
+function _push_query_param!(params::Vector{Pair{String,String}}, name, value)
+    if value isa AbstractVector
+        for item in value
+            _push_query_param!(params, name, item)
+        end
+    else
+        push!(params, string(name) => string(value))
+    end
+    return params
+end
+
 @inline _uri_component_present(component)::Bool = component !== URIs.absent
 
 @inline function _uri_component_string(component)::String

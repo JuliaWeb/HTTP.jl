@@ -53,7 +53,7 @@ end
 function _form_urlencode(body_input)::Vector{UInt8}
     encoded = IOBuffer()
     first_pair = true
-    for (k, v) in pairs(body_input)
+    for (k, v) in _query_params(body_input)
         first_pair || write(encoded, '&')
         first_pair = false
         write(encoded, _percent_encode_form_component(k))
