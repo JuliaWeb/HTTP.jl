@@ -169,6 +169,8 @@ end
     # No "mp4" brand here, so the expected classification is octet-stream.
     @test HT.sniff(mp4_boundary) == "application/octet-stream"
     @test HT.sniff(IOBuffer(mp4_boundary)) == "application/octet-stream"
+    # A box size of 2^31 or more does not fit a 32-bit Int.
+    @test HT.sniff(UInt8[0x80, 0x00, 0x00, 0x00, 'f', 't', 'y', 'p', 'm', 'p', '4', '2']) == "application/octet-stream"
     # Also exercise the exact 16-byte PoC from the report.
     poc = vcat(UInt8[0x00, 0x00, 0x00, 0x10], collect(codeunits("ftypXXXXYYYY")))
     @test length(poc) == 16
@@ -502,7 +504,7 @@ end
         end
         scan(v) = HTTP.find_multipart_boundary(v, collect(codeunits("b")))
         fetch(Threads.@spawn scan(GCWatchBytes(1 << 16)))  # compile before the real run
-        v = GCWatchBytes(1 << 31)
+        v = GCWatchBytes(typemax(Int32) - 64)
         t = Threads.@spawn scan(v)
         while !(@atomic v.started) end
         GC.gc(false)

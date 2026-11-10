@@ -148,11 +148,18 @@ end
     @test_throws HT.ParseError HT.decode_header_block(decoder, vcat(UInt8[0x40, 0x7f], continuation))
     @test_throws HT.ParseError HT.decode_header_block(decoder, vcat(UInt8[0x3f], continuation))
     # The largest accepted integer still decodes: a table size update to 2^32 - 1
-    # exceeds the 4096 allowed here, which is a different error.
-    err = try
-        HT.decode_header_block(decoder, UInt8[0x3f, 0xe0, 0xff, 0xff, 0xff, 0x0f])
+    # (2^31 - 1 where `Int` is 32 bits) exceeds the 4096 allowed here, which is a
+    # different error.
+    decode_error(block) = try
+        HT.decode_header_block(HT.Decoder(), block)
     catch e
         e
     end
+    largest = Sys.WORD_SIZE == 64 ? UInt8[0x3f, 0xe0, 0xff, 0xff, 0xff, 0x0f] : UInt8[0x3f, 0xe0, 0xff, 0xff, 0xff, 0x07]
+    err = decode_error(largest)
     @test err isa HT.ParseError && occursin("table size update too large", err.message)
+    # About 2^35 in five continuation bytes: past the limit everywhere, though it
+    # wraps to 30 in 32-bit arithmetic.
+    err = decode_error(UInt8[0x3f, 0xff, 0xff, 0xff, 0xff, 0x7f])
+    @test err isa HT.ParseError && occursin("HPACK integer too large", err.message)
 end

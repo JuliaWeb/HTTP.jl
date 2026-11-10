@@ -84,7 +84,7 @@ end
     advance_buf = Vector{UInt8}(undef, 2)
     @test HT.body_read!(partial_body, advance_buf) == 2
     partial_io = IOBuffer()
-    HT._write_exact_bytes_body!(partial_io, partial_body, 4)
+    HT._write_exact_bytes_body!(partial_io, partial_body, Int64(4))
     @test take!(partial_io) == collect(codeunits("cdef"))
 end
 

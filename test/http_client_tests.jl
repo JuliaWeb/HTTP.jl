@@ -2984,7 +2984,7 @@ end
     @test config.expect_continue_timeout_ns == 1_500_000_000
 
     ctx = HT.RequestContext()
-    HT._apply_request_timeout_settings!(ctx, request_timeout_ns, config; now_ns=100)
+    HT._apply_request_timeout_settings!(ctx, request_timeout_ns, config; now_ns=Int64(100))
     stored = ctx.timeout_config
     @test stored !== nothing
     @test stored == config
