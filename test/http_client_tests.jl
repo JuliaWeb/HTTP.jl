@@ -3409,6 +3409,29 @@ end
     end
 end
 
+@testset "Vector values repeat a form or Client query parameter (#1559)" begin
+    server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        return HT.Response(200; body=req.method == "POST" ? _read_all_body_bytes_client(req.body) : req.target)
+    end
+    try
+        url = "http://127.0.0.1:$(HT.port(server))/x"
+        @test String(HT.post(url; body=Dict("a" => [1, 2])).body) == "a=1&a=2"
+        @test String(HT.post(url; body=(a=["x y", "z"], b=3)).body) == "a=x+y&a=z&b=3"
+        @test String(HT.post(url; body=Dict("a" => Int[])).body) == ""
+        client = HT.Client(default_query=Dict("tag" => ["a", "b"]))
+        try
+            @test String(HT.get(client, url).body) == "/x?tag=a&tag=b"
+            @test String(HT.get(client, url; query=Dict("id" => [1, 2])).body) == "/x?tag=a&tag=b&id=1&id=2"
+            @test String(HT.get(client, url; query="tag" => ["c", "d"]).body) == "/x?tag=c&tag=d"
+            @test String(HT.get(client, url; query=[("id", 1)]).body) == "/x?tag=a&tag=b&id=1"
+        finally
+            close(client)
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
 @testset "Client positional verb helpers" begin
     server = HT.serve!("127.0.0.1", 0; listenany=true) do req
         return HT.Response(200; body=req.method)
