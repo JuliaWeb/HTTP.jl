@@ -1944,6 +1944,23 @@ end
         @test_throws ArgumentError HT._parse_http_url("https://example.com/invalid", [("ok", 1, 2)])
         @test_throws ArgumentError HT._parse_http_url("https://example.com/invalid", 42)
 
+        # Vector values are multi-valued parameters (#1559)
+        parsed_multi = HT._parse_http_url("https://example.com/multi", Dict("a" => [10, 20]))
+        @test parsed_multi.target == "/multi?a=10&a=20"
+        @test parsed_multi.url == "https://example.com:443/multi?a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", Dict("a" => [10])).target == "/multi?a=10"
+        @test HT._parse_http_url("https://example.com/multi", Dict("a" => Int[])).target == "/multi"
+        @test HT._parse_http_url("https://example.com/multi", Dict("a" => Int[], "b" => 1)).target == "/multi?b=1"
+        @test HT._parse_http_url("https://example.com/multi", Dict("a" => [1, 2], "b" => "x")).target == "/multi?a=1&a=2&b=x"
+        @test HT._parse_http_url("https://example.com/multi", Dict("k" => ["a b", "c&d"])).target == "/multi?k=a%20b&k=c%26d"
+        @test HT._parse_http_url("https://example.com/multi", ["a" => [1, 2], "b" => 3]).target == "/multi?a=1&a=2&b=3"
+        @test HT._parse_http_url("https://example.com/multi", [("a", [1, 2])]).target == "/multi?a=1&a=2"
+        @test HT._parse_http_url(HT.URI("https://example.com/multi?x=0"), Dict("a" => [10, 20])).target == "/multi?x=0&a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", (a = [10, 20],)).target == "/multi?a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", (a = 1, b = "x y")).target == "/multi?a=1&b=x%20y"
+        @test HT._parse_http_url("https://example.com/multi", "a" => [10, 20]).target == "/multi?a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", "a" => 1).target == "/multi?a=1"
+
         parsed_ipv6 = HT._parse_http_url("https://[2001:db8::1]/ipv6")
         @test parsed_ipv6.address == "[2001:db8::1]:443"
         @test parsed_ipv6.target == "/ipv6"
