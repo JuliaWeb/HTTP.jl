@@ -1956,6 +1956,10 @@ end
         @test HT._parse_http_url("https://example.com/multi", ["a" => [1, 2], "b" => 3]).target == "/multi?a=1&a=2&b=3"
         @test HT._parse_http_url("https://example.com/multi", [("a", [1, 2])]).target == "/multi?a=1&a=2"
         @test HT._parse_http_url(HT.URI("https://example.com/multi?x=0"), Dict("a" => [10, 20])).target == "/multi?x=0&a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", (a = [10, 20],)).target == "/multi?a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", (a = 1, b = "x y")).target == "/multi?a=1&b=x%20y"
+        @test HT._parse_http_url("https://example.com/multi", "a" => [10, 20]).target == "/multi?a=10&a=20"
+        @test HT._parse_http_url("https://example.com/multi", "a" => 1).target == "/multi?a=1"
 
         parsed_ipv6 = HT._parse_http_url("https://[2001:db8::1]/ipv6")
         @test parsed_ipv6.address == "[2001:db8::1]:443"

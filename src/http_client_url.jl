@@ -221,6 +221,8 @@ end
 function _query_string(query)::String
     query === nothing && return ""
     query isa AbstractString && return String(query)
+    query isa NamedTuple && return _query_string(collect(pairs(query)))
+    query isa Pair && return _query_string([query])
     _is_unreserved_query_byte(b::UInt8) = (
         (b >= UInt8('A') && b <= UInt8('Z')) ||
         (b >= UInt8('a') && b <= UInt8('z')) ||

@@ -8,11 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- A `query` value that is a vector now sends one `key=value` pair per element,
-  so `query=Dict("a" => [10, 20])` gives `?a=10&a=20` instead of a single
-  parameter holding the encoded text of the whole vector (`a=%5B10%2C%2020%5D`).
-  An empty vector sends no parameter. This applies to `Dict` values and to the
-  values in a vector of pairs or tuples. ([#1559])
+- A vector value in `query` is sent as one parameter per element, as in
+  HTTP.jl 1.x, so `query=Dict("a" => [10, 20])` sends `?a=10&a=20` instead of
+  `?a=%5B10%2C%2020%5D`. An empty vector sends no parameter. `query` also
+  accepts a `NamedTuple`, as documented, and a `Pair`. ([#1559])
 
 ## [v2.15.0] - 2026-11-05
 
