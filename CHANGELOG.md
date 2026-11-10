@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP.jl 1.x, so `query=Dict("a" => [10, 20])` sends `?a=10&a=20` instead of
   `?a=%5B10%2C%2020%5D`. An empty vector sends no parameter. `query` also
   accepts a `NamedTuple`, as documented, and a `Pair`. ([#1559])
+- A vector value in a form body (a `Dict` or `NamedTuple` body) or in a
+  `Client`'s `default_query` is sent as one parameter per element again, as in
+  HTTP.jl 1.x, so `body=Dict("a" => [1, 2])` sends `a=1&a=2` instead of
+  `a=%5B1%2C+2%5D`. A per-call `query` that a client merges with its
+  `default_query` is read the same way, and can also be a `Pair` or a vector
+  of 2-tuples. ([#1559])
+- A per-call `query` string no longer drops a `Client`'s `default_query`. The
+  defaults whose names the string does not use are sent before it. ([#1561])
 
 ## [v2.15.0] - 2026-11-05
 
@@ -1806,3 +1814,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1549]: https://github.com/JuliaWeb/HTTP.jl/issues/1549
 [#1553]: https://github.com/JuliaWeb/HTTP.jl/issues/1553
 [#1559]: https://github.com/JuliaWeb/HTTP.jl/issues/1559
+[#1561]: https://github.com/JuliaWeb/HTTP.jl/issues/1561
