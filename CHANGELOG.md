@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of 2-tuples. ([#1559])
 - A per-call `query` string no longer drops a `Client`'s `default_query`. The
   defaults whose names the string does not use are sent before it. ([#1561])
+- HTTP.jl loads and runs on 32-bit Julia. Precompiling it threw
+  `InexactError: convert(Int32, 0xffffffff)`, and every chunked HTTP/1 request
+  or response body threw `MethodError`. On 32-bit Julia, a peer's HTTP/2
+  SETTINGS limit of 2^31 or more, `sniff` on some data whose first byte is 0x80
+  or more, and a websocket frame of 2^31 bytes or more also threw
+  `InexactError`, and an HPACK integer past the decoder's limit could wrap to a
+  small value. CI now tests on 32-bit Julia. ([#1558])
 
 ## [v2.15.0] - 2026-11-05
 
@@ -1815,3 +1822,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1553]: https://github.com/JuliaWeb/HTTP.jl/issues/1553
 [#1559]: https://github.com/JuliaWeb/HTTP.jl/issues/1559
 [#1561]: https://github.com/JuliaWeb/HTTP.jl/issues/1561
+[#1558]: https://github.com/JuliaWeb/HTTP.jl/issues/1558
