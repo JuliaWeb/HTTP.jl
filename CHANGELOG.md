@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.15.2] - 2026-11-11
+
 ### Fixed
 - A byte-vector value in a multipart `Form`, such as
   `HTTP.Form(Dict("file" => read(path)))`, is sent as its bytes again, as in
@@ -1445,7 +1447,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.1...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.2...HEAD
+[v2.15.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.1...v2.15.2
 [v2.15.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.0...v2.15.1
 [v2.15.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.2...v2.15.0
 [v2.14.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.1...v2.14.2
