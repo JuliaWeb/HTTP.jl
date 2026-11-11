@@ -301,7 +301,7 @@ function _apply_h2_peer_settings!(
             id = setting.first
             value = setting.second
             if id == UInt16(0x1)
-                header_table_size = Int(value)
+                header_table_size = _h2_settings_limit(value)
             elseif id == UInt16(0x4)
                 # RFC 9113 §6.5.2, §6.9.2: both are connection FLOW_CONTROL_ERRORs.
                 value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large", _PROTOCOL_ERROR_FLOW_CONTROL))
@@ -320,7 +320,7 @@ function _apply_h2_peer_settings!(
                 value > UInt32(16_777_215) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too large"))
                 send_state.peer_max_send_frame_size = Int(value)
             elseif id == UInt16(0x6)
-                send_state.peer_max_header_list_size = Int(value)
+                send_state.peer_max_header_list_size = _h2_settings_limit(value)
             end
         end
         notify(send_state.window_condition; all=true)

@@ -446,11 +446,11 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
             id = setting.first
             value = setting.second
             if id == UInt16(0x1)
-                header_table_size = Int(value)
+                header_table_size = _h2_settings_limit(value)
             elseif id == UInt16(0x2)
                 value == UInt32(0) || throw(ProtocolError("HTTP/2 servers must not enable push"))
             elseif id == UInt16(0x3)
-                conn.peer_max_concurrent_streams = Int(value)
+                conn.peer_max_concurrent_streams = _h2_settings_limit(value)
             elseif id == UInt16(0x4)
                 value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large"))
                 new_window = Int64(value)
@@ -467,7 +467,7 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
                 value > UInt32(16_777_215) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too large"))
                 conn.peer_max_send_frame_size = Int(value)
             elseif id == UInt16(0x6)
-                conn.peer_max_header_list_size = Int(value)
+                conn.peer_max_header_list_size = _h2_settings_limit(value)
             end
         end
         notify(conn.window_condition; all=true)

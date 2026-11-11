@@ -117,6 +117,15 @@ end
     decoder = HT.WebSockets.ws_decoder_new()
     @test_throws HT.WebSockets.WebSocketProtocolError HT.WebSockets.ws_decoder_process!(decoder, UInt8[0x98, 0x00])
 
+    # A 2^31-byte frame header and its first payload byte. A 32-bit Int cannot
+    # index that payload, so there it is a protocol error.
+    huge = UInt8[0x82, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00]
+    if Sys.WORD_SIZE == 32
+        @test_throws HT.WebSockets.WebSocketProtocolError HT.WebSockets.ws_decoder_process!(HT.WebSockets.ws_decoder_new(), huge)
+    else
+        @test isempty(HT.WebSockets.ws_decoder_process!(HT.WebSockets.ws_decoder_new(), huge))
+    end
+
     decoder = HT.WebSockets.ws_decoder_new()
     header_events = Tuple{UInt8, Bool, UInt64}[]
     medium_payload = fill(UInt8('m'), 126)

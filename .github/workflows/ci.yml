@@ -36,6 +36,13 @@ jobs:
           - os: macOS-latest
             arch: aarch64
             version: 1
+          # 32-bit Julia, where `Int` is `Int32`.
+          - os: ubuntu-latest
+            arch: x86
+            version: 1
+          - os: windows-latest
+            arch: x86
+            version: 1
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -43,6 +50,18 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
+      - name: Set up 32-bit Linux
+        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x86'
+        run: |
+          # The trim tests compile with `gcc -m32`.
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          # Julia stops at startup when it tries to load the runner's newer
+          # 32-bit libstdc++ ("Unable to dlopen(cxxpath) in parent!"), so it
+          # uses its own.
+          echo "JULIA_PROBE_LIBSTDCXX=0" >> "$GITHUB_ENV"
+          # One trim build and run: all 15 put a 32-bit job at the timeout.
+          echo "HTTP_TRIM_ONLY=http_trim_client_h1_upload.jl" >> "$GITHUB_ENV"
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - name: Check buffered upload allocations

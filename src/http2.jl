@@ -29,6 +29,10 @@ const _H2_DEFAULT_MAX_BUFFERED_BYTES = 256 * 1024
 # Maximum legal flow-control window (RFC 7540 §6.9.1): 2^31 - 1.
 const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
 
+# A peer's SETTINGS limit as an `Int`. A limit of 2^31 or more cannot be reached
+# where `Int` is 32 bits, so it becomes `typemax(Int)` there.
+@inline _h2_settings_limit(value::UInt32)::Int = value > typemax(Int) ? typemax(Int) : Int(value)
+
 """
     HTTP2Settings(; initial_window_size=65535, connection_window_size=65535)
 

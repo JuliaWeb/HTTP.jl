@@ -657,7 +657,7 @@ end
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     try
-        @test_throws Reseau.IOPoll.DeadlineExceededError HT.connect_h2!(address; secure=false, connect_deadline_ns=1)
+        @test_throws Reseau.IOPoll.DeadlineExceededError HT.connect_h2!(address; secure=false, connect_deadline_ns=Int64(1))
     finally
         HTTP.@try_ignore NC.close(listener)
     end
@@ -3423,6 +3423,12 @@ end
         HT._apply_peer_settings!(conn, Pair{UInt16,UInt32}[UInt16(0x1) => typemax(UInt32)])
         @test conn.encoder.max_table_size_limit == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
         @test conn.encoder.table.max_size == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+        # 2^32 - 1 stream and header list limits fit a 64-bit Int; a 32-bit Int
+        # holds them as typemax(Int).
+        HT._apply_peer_settings!(conn, Pair{UInt16,UInt32}[UInt16(0x3) => typemax(UInt32), UInt16(0x6) => typemax(UInt32)])
+        unlimited = Sys.WORD_SIZE == 64 ? 4_294_967_295 : typemax(Int)
+        @test conn.peer_max_concurrent_streams == unlimited
+        @test conn.peer_max_header_list_size == unlimited
     finally
         cleanup()
     end

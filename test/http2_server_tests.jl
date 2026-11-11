@@ -973,10 +973,12 @@ end
     HT._apply_h2_peer_settings!(
         send_state,
         ReentrantLock(),
-        Pair{UInt16,UInt32}[UInt16(0x1) => typemax(UInt32)],
+        Pair{UInt16,UInt32}[UInt16(0x1) => typemax(UInt32), UInt16(0x6) => typemax(UInt32)],
     )
     @test send_state.header_encoder.max_table_size_limit == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
     @test send_state.header_encoder.table.max_size == HT._MAX_ENCODER_DYNAMIC_TABLE_SIZE
+    # 2^32 - 1 fits a 64-bit Int; a 32-bit Int holds it as typemax(Int).
+    @test send_state.peer_max_header_list_size == (Sys.WORD_SIZE == 64 ? 4_294_967_295 : typemax(Int))
 end
 
 @testset "HTTP/2 server accepts duplicate peer settings in order" begin
