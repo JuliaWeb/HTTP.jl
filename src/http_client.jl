@@ -426,24 +426,7 @@ end
 # Normalize default_query input into a Vector{Pair{String,String}} stored on the Client.
 function _normalize_default_query(q)::Union{Nothing,Vector{Pair{String,String}}}
     q === nothing && return nothing
-    pairs_out = Pair{String,String}[]
-    if q isa AbstractDict
-        for (k, v) in q
-            push!(pairs_out, string(k) => string(v))
-        end
-    elseif q isa NamedTuple
-        for (k, v) in pairs(q)
-            push!(pairs_out, string(k) => string(v))
-        end
-    else
-        for kv in q
-            if kv isa Pair
-                push!(pairs_out, string(kv.first) => string(kv.second))
-            else
-                throw(ArgumentError("default_query entries must be Pair{String,String}"))
-            end
-        end
-    end
+    pairs_out = _query_params(q)
     isempty(pairs_out) && return nothing
     return pairs_out
 end
@@ -2116,30 +2099,17 @@ function _merge_client_default_query(client::Union{Nothing,Client}, query)
     if query === nothing
         return defaults
     end
-    overrides_keys = Set{String}()
-    overrides_pairs = Pair{String,String}[]
-    if query isa AbstractDict
-        for (k, v) in query
-            sk = string(k)
-            push!(overrides_keys, sk)
-            push!(overrides_pairs, sk => string(v))
-        end
-    elseif query isa NamedTuple
-        for (k, v) in pairs(query)
-            sk = string(k)
-            push!(overrides_keys, sk)
-            push!(overrides_pairs, sk => string(v))
-        end
-    elseif query isa AbstractVector
-        for kv in query
-            kv isa Pair || throw(ArgumentError("query entries must be Pair{String,String}"))
-            sk = string(kv.first)
-            push!(overrides_keys, sk)
-            push!(overrides_pairs, sk => string(kv.second))
-        end
-    else
-        return query
+    if query isa AbstractString
+        isempty(query) && return defaults
+        # A name in the query string, compared as written, replaces the default
+        # of that name. Not decoding it keeps a malformed escape from throwing.
+        names = Set{String}(String(first(eachsplit(entry, '='; limit=2))) for entry in eachsplit(query, '&'))
+        kept = Pair{String,String}[kv for kv in defaults if !(kv.first in names)]
+        isempty(kept) && return query
+        return string(_query_string(kept), "&", query)
     end
+    overrides_pairs = _query_params(query)
+    overrides_keys = Set{String}(first(kv) for kv in overrides_pairs)
     merged = Pair{String,String}[]
     for kv in defaults
         kv.first in overrides_keys || push!(merged, kv)
