@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.15.1] - 2026-11-11
+
 ### Fixed
 - A vector value in `query` is sent as one parameter per element, as in
   HTTP.jl 1.x, so `query=Dict("a" => [10, 20])` sends `?a=10&a=20` instead of
@@ -1437,7 +1439,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.1...HEAD
+[v2.15.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.0...v2.15.1
 [v2.15.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.2...v2.15.0
 [v2.14.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.1...v2.14.2
 [v2.14.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.0...v2.14.1
