@@ -17,10 +17,11 @@ using UUIDs
 
 A multipart request body. `parts` is a collection of `name => value` pairs. An
 `IO` value is streamed (an open file is sent with its file name, and a
-[`Multipart`](@ref) with its own name and content type); any other value is
-sent as `string(value)`. `type = :mixed` builds a `multipart/mixed` body
-instead of `multipart/form-data`. A request with a `Form` body gets the
-matching `Content-Type` header from [`content_type`](@ref).
+[`Multipart`](@ref) with its own name and content type), an
+`AbstractVector{UInt8}` value such as `read(path)` is sent as its bytes, and
+any other value is sent as `string(value)`. `type = :mixed` builds a
+`multipart/mixed` body instead of `multipart/form-data`. A request with a
+`Form` body gets the matching `Content-Type` header from [`content_type`](@ref).
 """
 mutable struct Form <: IO
     data::Vector{IO}
@@ -132,7 +133,7 @@ function Form(d; boundary=_default_form_boundary(), type::Symbol=:formdata)
             io = IOBuffer()
         else
             write(io, "\r\n\r\n")
-            write(io, string(v))
+            write(io, v isa AbstractVector{UInt8} ? v : string(v))
         end
     end
     write(io, "\r\n--" * boundary * "--" * "\r\n")

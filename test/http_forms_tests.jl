@@ -417,6 +417,14 @@ end
     @test_throws ArgumentError HT.Form(["f" => HT.Multipart("a.txt", IOBuffer("d"), "text/plain", "binary\nX: 1")])
 end
 
+@testset "multipart byte-vector values are sent as their bytes" begin
+    bytes = UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x00, 0xff]
+    form = HT.Form(["raw" => bytes, "view" => view(bytes, 2:4), "units" => codeunits("hé"), "n" => 1])
+    parts = HT.parse_multipart_form(HT.content_type(form), read(form))
+    @test [p.name for p in parts] == ["raw", "view", "units", "n"]
+    @test [read(p) for p in parts] == [bytes, bytes[2:4], Vector{UInt8}("hé"), Vector{UInt8}("1")]
+end
+
 @testset "multipart Content-Type parameters" begin
     body = Vector{UInt8}("--abc\r\nContent-Disposition: form-data; name=\"greeting\"\r\n\r\nhello\r\n--abc--\r\n")
     for ct in (

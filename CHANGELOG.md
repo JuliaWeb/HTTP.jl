@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A byte-vector value in a multipart `Form`, such as
+  `HTTP.Form(Dict("file" => read(path)))`, is sent as its bytes again, as in
+  HTTP.jl 1.x. It was sent as the text `UInt8[0x89, 0x50, ...]`. Other
+  non-`IO` values are still sent as `string(value)`. ([#1564])
+
 ## [v2.15.1] - 2026-11-11
 
 ### Fixed
@@ -1826,3 +1832,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1559]: https://github.com/JuliaWeb/HTTP.jl/issues/1559
 [#1561]: https://github.com/JuliaWeb/HTTP.jl/issues/1561
 [#1558]: https://github.com/JuliaWeb/HTTP.jl/issues/1558
+[#1564]: https://github.com/JuliaWeb/HTTP.jl/issues/1564
