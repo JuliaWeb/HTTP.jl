@@ -80,8 +80,9 @@ HTTP.post("https://example.com/login", [], Dict("user" => "alice", "pw" => "s3cr
 A vector value sends its field once for each element, so
 `Dict("tag" => ["a", "b"])` is sent as `tag=a&tag=b`.
 
-Use [`HTTP.Form`](@ref) for `multipart/form-data`, such as file uploads. An open
-file is sent with its file name:
+Use [`HTTP.Form`](@ref) for `multipart/form-data`, such as file uploads. A byte
+vector such as `read(path)` is sent as its bytes, and an open file is also sent
+with its file name:
 
 ```julia
 open("upload.bin") do file
