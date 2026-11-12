@@ -221,8 +221,6 @@ end
 function _query_string(query)::String
     query === nothing && return ""
     query isa AbstractString && return String(query)
-    query isa NamedTuple && return _query_string(collect(pairs(query)))
-    query isa Pair && return _query_string([query])
     _is_unreserved_query_byte(b::UInt8) = (
         (b >= UInt8('A') && b <= UInt8('Z')) ||
         (b >= UInt8('a') && b <= UInt8('z')) ||
@@ -245,46 +243,9 @@ function _query_string(query)::String
         end
         return String(take!(encoded))
     end
-    _pair_string(k, v) = string(_percent_encode_query_component(k), "=", _percent_encode_query_component(v))
-    # A vector value is a multi-valued parameter: emit one `key=value` pair per
-    # element (a=1&a=2) rather than stringifying the whole vector. An empty
-    # vector emits nothing.
-    function _push_query_pair!(parts, k, v)
-        if v isa AbstractVector
-            for item in v
-                push!(parts, _pair_string(k, item))
-            end
-        else
-            push!(parts, _pair_string(k, v))
-        end
-        return parts
-    end
-    parts = String[]
-    if query isa AbstractDict
-        query_pairs = collect(pairs(query))
-        sort!(query_pairs; by=x -> String(x.first))
-        for (k, v) in query_pairs
-            _push_query_pair!(parts, k, v)
-        end
-        return join(parts, "&")
-    end
-    if query isa AbstractVector
-        for item in query
-            if item isa Pair
-                pair = item::Pair
-                _push_query_pair!(parts, pair.first, pair.second)
-                continue
-            end
-            if item isa Tuple && length(item) == 2
-                tup = item::Tuple
-                _push_query_pair!(parts, tup[1], tup[2])
-                continue
-            end
-            throw(ArgumentError("unsupported query entry type $(typeof(item)); expected Pair or 2-tuple"))
-        end
-        return join(parts, "&")
-    end
-    throw(ArgumentError("unsupported query type $(typeof(query)); expected String, Dict, or vector of Pair/tuples"))
+    # A Dict has no order; sort it by name so the same Dict always gives the same URL.
+    params = _query_params(query isa AbstractDict ? sort!(collect(query); by=kv -> string(first(kv))) : query)
+    return join((string(_percent_encode_query_component(k), "=", _percent_encode_query_component(v)) for (k, v) in params), "&")
 end
 
 function _append_query(target::String, query)::String
@@ -296,9 +257,12 @@ end
 
 # The `name => value` parameters of a query or form collection: a dictionary, a
 # `NamedTuple`, a `Pair`, or a collection of pairs or 2-tuples. A vector value
-# repeats its parameter, so `"a" => [1, 2]` gives `"a" => "1"` and `"a" => "2"`.
+# repeats its parameter and a nested vector flattens, so `"a" => [1, [2]]` gives
+# `"a" => "1"` and `"a" => "2"`.
 function _query_params(query)::Vector{Pair{String,String}}
     entries = query isa NamedTuple ? pairs(query) : query isa Pair ? (query,) : query
+    applicable(iterate, entries) ||
+        throw(ArgumentError("unsupported query type $(typeof(query)); expected a Dict, NamedTuple, Pair, or collection of pairs or 2-tuples"))
     params = Pair{String,String}[]
     for entry in entries
         if entry isa Pair

@@ -2365,8 +2365,9 @@ redirect responses (301, 302, 303, 307, and 308). A timeout throws a
 # Keywords
 
 Request and response:
-- `query`: a `Dict`, `NamedTuple`, vector of pairs, or string to add to the
-  URL's query string.
+- `query`: a `Dict`, `NamedTuple`, `Pair`, vector of pairs, or string to add
+  to the URL's query string. A vector value repeats its name, so
+  `Dict("tag" => ["a", "b"])` adds `tag=a&tag=b`.
 - `basicauth`: credentials as `user => password` or `(user, password)`. An
   `Authorization` header takes precedence; credentials in the URL are used when
   neither is given. In a URL, percent-encode characters such as `/`, `?`, `#`,

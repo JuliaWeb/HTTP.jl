@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one, or read a blank line in its body as the end of its headers. A part
   that HTTP.jl 2.5 to 2.15 wrote this way is read with the extra CRLF at the
   start of its body, as other parsers read it. ([#1565])
+- A nested vector in `query`, such as `query=Dict("a" => ["x", ["y", "z"]])`,
+  is sent as one parameter per element, `?a=x&a=y&a=z`, as in HTTP.jl 1.x. It
+  was sent as the text of the inner vector. Form bodies and a `Client`'s
+  `default_query` already flattened it. `query` also accepts any collection of
+  pairs, such as a tuple of pairs. ([#1567])
 
 ## [v2.15.2] - 2026-11-11
 
@@ -1848,3 +1853,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1558]: https://github.com/JuliaWeb/HTTP.jl/issues/1558
 [#1564]: https://github.com/JuliaWeb/HTTP.jl/issues/1564
 [#1565]: https://github.com/JuliaWeb/HTTP.jl/issues/1565
+[#1567]: https://github.com/JuliaWeb/HTTP.jl/issues/1567
