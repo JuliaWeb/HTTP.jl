@@ -261,6 +261,8 @@ end
 # `"a" => "1"` and `"a" => "2"`.
 function _query_params(query)::Vector{Pair{String,String}}
     entries = query isa NamedTuple ? pairs(query) : query isa Pair ? (query,) : query
+    applicable(iterate, entries) ||
+        throw(ArgumentError("unsupported query type $(typeof(query)); expected a Dict, NamedTuple, Pair, or collection of pairs or 2-tuples"))
     params = Pair{String,String}[]
     for entry in entries
         if entry isa Pair
