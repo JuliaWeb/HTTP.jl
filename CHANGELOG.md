@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A part with no headers in a `multipart/mixed` body, such as a plain value
+  in `HTTP.Form(parts; type=:mixed)` or `HTTP.Batch`, is written as RFC 2046
+  requires: its delimiter line, one blank line, then its body. HTTP.jl wrote
+  an extra blank line, so other parsers, such as Python's `email`, read the
+  body with an extra CRLF at its start. `HTTP.parse_multipart` and
+  `HTTP.parse_multipart_mixed` now read a part with no headers. They threw on
+  one, or read a blank line in its body as the end of its headers. A part
+  that HTTP.jl 2.5 to 2.15 wrote this way is read with the extra CRLF at the
+  start of its body, as other parsers read it. ([#1565])
+
 ## [v2.15.2] - 2026-11-11
 
 ### Fixed
@@ -1836,3 +1847,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1561]: https://github.com/JuliaWeb/HTTP.jl/issues/1561
 [#1558]: https://github.com/JuliaWeb/HTTP.jl/issues/1558
 [#1564]: https://github.com/JuliaWeb/HTTP.jl/issues/1564
+[#1565]: https://github.com/JuliaWeb/HTTP.jl/issues/1565
