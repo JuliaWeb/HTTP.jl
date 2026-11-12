@@ -250,6 +250,27 @@ end
     @test startswith(after_boundary, "\r\nio content")  # one blank line only
 end
 
+@testset "multipart/mixed parts without headers (RFC 2046)" begin
+    # Such a part is its delimiter line, the blank line that ends its empty header section, then its body.
+    @test String(read(HT.Form(["a" => "value"]; type=:mixed, boundary="BND"))) == "--BND\r\n\r\nvalue\r\n--BND--\r\n"
+    @test String(read(HT.Batch(["a" => "value", "b" => ""]; boundary="BND"))) == "--BND\r\n\r\nvalue\r\n--BND\r\n\r\n\r\n--BND--\r\n"
+    @test String(read(HT.Form(["a" => IOBuffer("io")]; type=:mixed, boundary="BND"))) == "--BND\r\n\r\nio\r\n--BND--\r\n"
+    @test String(read(HT.Form(["a" => "value"]; boundary="BND"))) == "--BND\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nvalue\r\n--BND--\r\n"
+
+    bodies(body) = [String(read(p)) for p in HT.parse_multipart_mixed("multipart/mixed; boundary=BND", Vector{UInt8}(body))]
+    @test bodies("--BND\r\n\r\nbare-io\r\n--BND--\r\n") == ["bare-io"]
+    @test bodies("--BND\r\n\r\n\r\n--BND--\r\n") == [""]
+    @test bodies("--BND\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n\r\n--BND--\r\n") == ["GET / HTTP/1.1\r\nHost: x\r\n\r\n"]
+    # A blank line after the empty header section is the first line of the body, as other parsers read it.
+    @test bodies("--BND\r\n\r\n\r\nvalue\r\n--BND--\r\n") == ["\r\nvalue"]
+
+    values = Pair["a" => "value", "b" => "", "c" => "\r\nlead", "d" => UInt8[0x00, 0xff], "e" => IOBuffer("GET /\r\n\r\n"),
+        "f" => IOBuffer(""), "g" => HT.Multipart(nothing, IOBuffer("{}"), "application/json")]
+    form = HT.Form(values; type=:mixed)
+    parts = HT.parse_multipart_mixed(HT.content_type(form), read(form))
+    @test [read(p) for p in parts] == [codeunits("value"), UInt8[], codeunits("\r\nlead"), UInt8[0x00, 0xff], codeunits("GET /\r\n\r\n"), UInt8[], codeunits("{}")]
+end
+
 @testset "parse_multipart boundary length error" begin
     # Covers the `length(boundary_delimiter) > 70` error path
     long_boundary = 'a'^71
