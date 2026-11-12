@@ -3424,6 +3424,10 @@ end
         @test String(HT.post(url; body=Dict("a" => [1, 2])).body) == "a=1&a=2"
         @test String(HT.post(url; body=(a=["x y", "z"], b=3)).body) == "a=x+y&a=z&b=3"
         @test String(HT.post(url; body=Dict("a" => Int[])).body) == ""
+        # A nested vector flattens, as in HTTP.jl 1.x.
+        @test String(HT.get(url; query=Dict("a" => ["x", ["y", "z"]])).body) == "/x?a=x&a=y&a=z"
+        @test String(HT.get(url; query=(a=1, b=[2, [3]])).body) == "/x?a=1&b=2&b=3"
+        @test String(HT.get(url; query="a" => [1, [2]]).body) == "/x?a=1&a=2"
         client = HT.Client(default_query=Dict("tag" => ["a", "b"]))
         try
             @test String(HT.get(client, url).body) == "/x?tag=a&tag=b"
