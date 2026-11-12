@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.15.3] - 2026-11-12
+
 ### Fixed
 - A part with no headers in a `multipart/mixed` body, such as a plain value
   in `HTTP.Form(parts; type=:mixed)` or `HTTP.Batch`, is written as RFC 2046
@@ -1463,7 +1465,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.2...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.3...HEAD
+[v2.15.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.2...v2.15.3
 [v2.15.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.1...v2.15.2
 [v2.15.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.0...v2.15.1
 [v2.15.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.14.2...v2.15.0
