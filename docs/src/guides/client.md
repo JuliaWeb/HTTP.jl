@@ -105,8 +105,8 @@ HTTP.query(
 
 ## Query Parameters
 
-The `query` keyword URL-encodes a `Dict`, `NamedTuple`, or vector of pairs and
-appends it to the URL's query string:
+The `query` keyword URL-encodes a `Dict`, `NamedTuple`, `Pair`, or vector of
+pairs and appends it to the URL's query string:
 
 ```julia
 HTTP.get("https://example.com/search"; query = Dict("page" => 2, "limit" => 10))
@@ -119,6 +119,9 @@ A `Dict` has no order. Use a vector of pairs to fix the order or to repeat a key
 HTTP.get("https://example.com/search"; query = ["tag" => "a", "tag" => "b"])
 # GET /search?tag=a&tag=b
 ```
+
+A vector value also repeats its key, so `query = Dict("tag" => ["a", "b"])`
+sends the same query. An empty vector sends nothing.
 
 `query` adds to a query string that is already in the URL:
 
