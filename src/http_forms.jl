@@ -125,14 +125,13 @@ function Form(d; boundary=_default_form_boundary(), type::Symbol=:formdata)
     for (i, (k, v)) in enumerate(d)
         write(io, (i == 1 ? "" : "\r\n") * "--" * boundary * "\r\n")
         type == :mixed || write(io, "Content-Disposition: form-data; name=\"", _escape_multipart_quoted(string(k)), "\"")
+        writemultipartheader(io, v, type)
         if isa(v, IO)
-            writemultipartheader(io, v, type)
             seekstart(io)
             push!(data, io)
             push!(data, v)
             io = IOBuffer()
         else
-            write(io, "\r\n\r\n")
             write(io, v isa AbstractVector{UInt8} ? v : string(v))
         end
     end
@@ -152,7 +151,8 @@ function writemultipartheader(io::IOBuffer, stream::IOStream, type::Symbol=:form
     return nothing
 end
 
-function writemultipartheader(io::IOBuffer, stream::IO, type::Symbol=:formdata)
+# A value with no headers of its own: a plain value, or an IO other than a file or a Multipart.
+function writemultipartheader(io::IOBuffer, value, type::Symbol=:formdata)
     # :formdata: close the "Content-Disposition: …" line opened by the caller, then blank line
     # :mixed: caller wrote nothing, so only the blank line ending the empty headers section
     write(io, type == :mixed ? "\r\n" : "\r\n\r\n")
@@ -331,6 +331,8 @@ function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::Abstr
 end
 
 function find_header_boundary(bytes::AbstractVector{UInt8})
+    # A part with no headers starts with the blank line that ends its empty header section.
+    length(bytes) >= 2 && bytes[1] == _CR_BYTE && bytes[2] == _LF_BYTE && return 1, 2
     # A part too short to hold the separator, such as an empty one, has none.
     length(_CRLFCRLF) > length(bytes) && error("no delimiter found separating header from multipart body")
     l = length(bytes) - length(_CRLFCRLF) + 1
