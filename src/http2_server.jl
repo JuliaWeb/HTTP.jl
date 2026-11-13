@@ -1564,7 +1564,7 @@ function _handle_h2_stream!(
         if server.stream
             stream = Stream(server, tracked, conn, write_lock, send_state, stream_id, request)
             try
-                server.handler(stream)
+                _call_handler(server, stream)
                 if !(@atomic :acquire stream.write_closed)
                     closewrite(stream)
                 end
@@ -1611,7 +1611,7 @@ function _handle_h2_stream!(
                 return nothing
             end
             response = try
-                server.handler(handler_request)
+                _call_handler(server, handler_request)
             catch err
                 _log_handler_error(err, catch_backtrace(), request, conn)
                 _write_h2_response!(
