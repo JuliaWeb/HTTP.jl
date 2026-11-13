@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `serve!`, `serve`, `listen!`, `listen`, and `Server` take
+  `invokelatest = true`, which calls the handler through `Base.invokelatest`
+  as HTTP.jl 1.x did, so the handler sees methods defined after the server
+  starts. Without it, a route registered on a running `Router` gets `500
+  Internal Server Error`, and a handler edited with Revise keeps running its
+  old code. ([#1515])
+
 ## [v2.15.3] - 2026-11-12
 
 ### Fixed
@@ -1857,3 +1865,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1564]: https://github.com/JuliaWeb/HTTP.jl/issues/1564
 [#1565]: https://github.com/JuliaWeb/HTTP.jl/issues/1565
 [#1567]: https://github.com/JuliaWeb/HTTP.jl/issues/1567
+[#1515]: https://github.com/JuliaWeb/HTTP.jl/issues/1515

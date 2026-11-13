@@ -239,6 +239,11 @@ keep their 1.x shapes. Some details changed:
 - The server `readtimeout` keyword still works and sets `read_timeout`. Each
   server timeout has a seconds keyword (`read_timeout`) and a nanoseconds
   keyword (`read_timeout_ns`).
+- Handlers are called directly, not through `Base.invokelatest`, so they do
+  not see methods defined after the server starts. A route registered on a
+  running `Router` gets `500 Internal Server Error`, and a handler edited with
+  Revise keeps running its old code. Pass `invokelatest = true` to get the 1.x
+  behavior.
 
 Before:
 

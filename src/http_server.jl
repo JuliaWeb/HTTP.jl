@@ -112,6 +112,7 @@ mutable struct Server{F}
     http2_settings::HTTP2Settings
     max_concurrent_streams::Int
     allow_h2c::Bool
+    invokelatest::Bool
     listenany::Bool
     reuseaddr::Bool
     backlog::Int
@@ -138,6 +139,7 @@ function Server(;
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -165,6 +167,7 @@ function Server(;
         http2_settings,
         Int(max_concurrent_streams),
         allow_h2c,
+        invokelatest,
         listenany,
         reuseaddr,
         Int(backlog),
@@ -177,6 +180,21 @@ function Server(;
         _ServerState.INITIAL,
     )
 end
+
+# A connection task runs in the world age of the task that started the server,
+# so methods defined later, such as a route registered on a running `Router`,
+# are visible to the handler only through `Base.invokelatest`.
+@inline _call_handler(server::Server, x) =
+    server.invokelatest ? Base.invokelatest(_LatestCall(server.handler), x) : server.handler(x)
+
+# `juliac --trim` replaces `Base.invokelatest` with a method that only passes its
+# function on. Julia does not specialize such a method on an argument of type
+# `Function`, so a closure handler would become an unresolved call. This wrapper
+# is not a `Function`, so the call specializes on the handler's type.
+struct _LatestCall{F}
+    f::F
+end
+(c::_LatestCall)(x) = c.f(x)
 
 @inline function _h2_max_header_block_bytes(server::Server)::Int
     limit = server.max_header_bytes
@@ -1294,7 +1312,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                 # the request body via stream.request_body, not stream.reader.
                 stream.reader = reader
                 try
-                    server.handler(stream)
+                    _call_handler(server, stream)
                     if !(@atomic :acquire stream.write_closed)
                         closewrite(stream)
                     end
@@ -1356,7 +1374,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     return nothing
                 end
                 response = try
-                    server.handler(handler_request)
+                    _call_handler(server, handler_request)
                 catch err
                     _log_handler_error(err, catch_backtrace(), request, tracked.conn)
                     _try_write_server_error!(tracked.conn, request, 500)
@@ -1592,6 +1610,7 @@ function listen!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1612,6 +1631,7 @@ function listen!(
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         allow_h2c=allow_h2c,
+        invokelatest=invokelatest,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1634,6 +1654,7 @@ function listen!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1656,6 +1677,7 @@ function listen!(
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         allow_h2c=allow_h2c,
+        invokelatest=invokelatest,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1678,6 +1700,7 @@ function listen!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1702,6 +1725,7 @@ function listen!(
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         allow_h2c=allow_h2c,
+        invokelatest=invokelatest,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1758,6 +1782,10 @@ Julia's `:interactive` thread pool; see [`Server`](@ref).
   have open; `0` means no limit.
 - `allow_h2c = true`: serve cleartext HTTP/2 to clients that send the HTTP/2
   connection preface.
+- `invokelatest = false`: `true` calls `handler` through `Base.invokelatest`,
+  so it sees methods defined after the server starts. Without it, a route
+  registered on a running `Router` gets `500 Internal Server Error`, and a
+  handler edited with Revise keeps running its old code.
 - `listenany = false`: `true` ignores `port` and listens on a free port.
 - `reuseaddr = true`, `backlog = 128`: options for the listener that `serve!`
   creates; they do not apply to a `listener` argument.
@@ -1784,6 +1812,7 @@ function serve!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1809,6 +1838,7 @@ function serve!(
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         allow_h2c=allow_h2c,
+        invokelatest=invokelatest,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1837,6 +1867,7 @@ function serve!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1862,6 +1893,7 @@ function serve!(
             http2_settings=http2_settings,
             max_concurrent_streams=max_concurrent_streams,
             allow_h2c=allow_h2c,
+            invokelatest=invokelatest,
             reuseaddr=reuseaddr,
             backlog=backlog,
         )
@@ -1891,6 +1923,7 @@ function serve!(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1914,6 +1947,7 @@ function serve!(
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         allow_h2c=allow_h2c,
+        invokelatest=invokelatest,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1943,6 +1977,7 @@ function serve(
     http2_settings::HTTP2Settings=HTTP2Settings(),
     max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     allow_h2c::Bool=true,
+    invokelatest::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1965,6 +2000,7 @@ function serve(
         http2_settings=http2_settings,
         max_concurrent_streams=max_concurrent_streams,
         allow_h2c=allow_h2c,
+        invokelatest=invokelatest,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,

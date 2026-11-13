@@ -642,6 +642,41 @@ end
     end
 end
 
+@testset "invokelatest = true lets a server see methods defined after it starts" begin
+    # `@eval` defines each late handler in a newer world than the server task's.
+    for invokelatest in (false, true)
+        router = HT.Router()
+        stream_router = HT.Router()
+        # Server tasks inherit the logger, which keeps the expected 500s out of the test log.
+        server, stream_server = Logging.with_logger(Logging.NullLogger()) do
+            HT.serve!(router, "127.0.0.1", 0; listenany = true, invokelatest),
+            HT.listen!(stream_router, "127.0.0.1", 0; listenany = true, invokelatest)
+        end
+        @test server.invokelatest == invokelatest
+        try
+            HT.register!(router, "GET", "/late", @eval req -> HT.Response(200, "late"))
+            HT.register!(stream_router, "GET", "/late", @eval stream -> begin
+                HT.setstatus(stream, 200)
+                write(stream, "late stream")
+                nothing
+            end)
+            for protocol in (:h1, :h2)
+                resp = HT.get("http://$(HT.server_addr(server))/late"; protocol, status_exception = false, retry = false)
+                @test resp.status == (invokelatest ? 200 : 500)
+                invokelatest && @test String(resp.body) == "late"
+                resp = HT.get("http://$(HT.server_addr(stream_server))/late"; protocol, status_exception = false, retry = false)
+                @test resp.status == (invokelatest ? 200 : 500)
+                invokelatest && @test String(resp.body) == "late stream"
+            end
+        finally
+            HT.forceclose(server)
+            HT.forceclose(stream_server)
+            wait(server)
+            wait(stream_server)
+        end
+    end
+end
+
 @testset "Access log status matches non-Exception handler failures" begin
     for stream in (false, true), protocol in (:h1, :h2)
         logger = Test.TestLogger()
