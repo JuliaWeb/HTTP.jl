@@ -1,0 +1,15 @@
+# Documentation: http://docs.travis-ci.com/user/languages/julia/
+language: julia
+os:
+  - linux
+#  - osx
+julia:
+  - 0.6
+  - 0.7
+notifications:
+  email: false
+after_success:
+  # push coverage results to Codecov
+  - julia -e 'cd(Pkg.dir("HTTP")); Pkg.add("Coverage"); using Coverage; Codecov.submit(Codecov.process_folder())'
+  - julia -e 'Pkg.add("Documenter")'
+  - julia -e 'cd(Pkg.dir("HTTP")); include(joinpath("docs", "make.jl"))'
