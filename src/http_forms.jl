@@ -453,6 +453,10 @@ is no body. Each [`Multipart`](@ref) has the part's `name`, `filename` (or
 `nothing`), `contenttype`, and its content as the `IO` `data`. A body with
 more than `max_parts` parts throws an error; `max_parts = 0` removes the limit.
 
+A part without a `Content-Disposition: form-data` header, or whose header has
+no `name`, is skipped, as Go's `mime/multipart` skips it. A part with an empty
+name, `name=""`, is kept.
+
 # Examples
 ```jldoctest
 julia> body = Vector{UInt8}(
@@ -530,6 +534,9 @@ form reads the header and body of a `Request` or `Response`.
 `nothing` when the content type does not match or there is no body. A body
 with more than `max_parts` parts throws an error; `max_parts = 0` removes the
 limit.
+
+For `multipart/form-data`, parts without a name are skipped, as in
+[`parse_multipart_form`](@ref).
 """
 function parse_multipart(
     content_type_header::Union{String,Nothing},
