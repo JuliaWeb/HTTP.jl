@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.16.0] - 2026-11-13
+
 ### Added
 - `serve!`, `serve`, `listen!`, `listen`, and `Server` take
   `invokelatest = true`, which calls the handler through `Base.invokelatest`
@@ -1473,7 +1475,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.3...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.16.0...HEAD
+[v2.16.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.3...v2.16.0
 [v2.15.3]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.2...v2.15.3
 [v2.15.2]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.1...v2.15.2
 [v2.15.1]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.15.0...v2.15.1
