@@ -156,6 +156,33 @@ end
     end
 end
 
+@testset "HTTP.WebSockets invokelatest = true lets a handler see methods defined after the server starts" begin
+    for invokelatest in (false, true)
+        late = Ref{Any}(nothing)
+        # Server tasks inherit the logger, which keeps the expected handler error out of the test log.
+        server = Logging.with_logger(Logging.NullLogger()) do
+            W.listen!(ws -> W.send(ws, late[](W.receive(ws))), "127.0.0.1", 0; invokelatest)
+        end
+        @test server.invokelatest == invokelatest
+        try
+            # `@eval` defines the function in a newer world than the server task's.
+            late[] = @eval msg -> "late " * msg
+            reply = try
+                W.open(ws -> (W.send(ws, "hi"); W.receive(ws)), "ws://$(W.server_addr(server))/")
+            catch err
+                err
+            end
+            if invokelatest
+                @test reply == "late hi"
+            else
+                @test reply isa W.WebSocketError && reply.message.code == 1011
+            end
+        finally
+            close(server)
+        end
+    end
+end
+
 @testset "HTTP.WebSockets server closes a connection whose unread messages pass the cap" begin
     # The handler never receives, so the client's messages queue up until they
     # pass four times maxframesize (4 KiB here); the server then closes with 1008.
