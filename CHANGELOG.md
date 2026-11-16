@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `WebSockets.listen!`, `WebSockets.serve!`, `WebSockets.listen`, and
+  `WebSockets.Server` take `invokelatest = true`, as the HTTP server functions
+  do since 2.16.0, so a WebSocket handler sees methods defined after the server
+  starts. ([#1515])
+
 ## [v2.16.0] - 2026-11-13
 
 ### Added

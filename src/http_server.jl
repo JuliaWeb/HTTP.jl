@@ -184,7 +184,7 @@ end
 # A connection task runs in the world age of the task that started the server,
 # so methods defined later, such as a route registered on a running `Router`,
 # are visible to the handler only through `Base.invokelatest`.
-@inline _call_handler(server::Server, x) =
+@inline _call_handler(server, x) =
     server.invokelatest ? Base.invokelatest(_LatestCall(server.handler), x) : server.handler(x)
 
 # `juliac --trim` replaces `Base.invokelatest` with a method that only passes its

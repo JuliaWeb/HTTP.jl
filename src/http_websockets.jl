@@ -38,6 +38,7 @@ import .._close_conn!
 import .._client_for_request
 import .._conn_reader_available
 import .._conn_stream
+import .._call_handler
 import .._copy_request
 import .._copy_request_for_send
 import .._cookie_header
@@ -1308,6 +1309,7 @@ mutable struct Server{F}
     maxfragmentation::Int
     read_buffer_bytes::Int
     compress::Bool
+    invokelatest::Bool
     # Limits on reading the handshake request and on a session's silence; 0 is none.
     read_header_timeout_ns::Int64
     idle_timeout_ns::Int64
@@ -1333,6 +1335,7 @@ function Server(;
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     compress::Bool=false,
+    invokelatest::Bool=false,
     read_header_timeout_ns::Integer=0,
     idle_timeout_ns::Integer=0,
 ) where {F}
@@ -1352,6 +1355,7 @@ function Server(;
         Int(maxfragmentation),
         Int(read_buffer_bytes),
         compress,
+        invokelatest,
         Int64(read_header_timeout_ns),
         Int64(idle_timeout_ns),
         ReentrantLock(),
@@ -1757,7 +1761,7 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
     _start_read_task!(ws, server.read_buffer_bytes)
     _track_session!(server, ws)
     try
-        server.handler(ws)
+        _call_handler(server, ws)
     catch err
         if !isclosed(ws)
             if err isa WebSocketError
@@ -1957,6 +1961,9 @@ address.
 - `compress = false`: accept permessage-deflate compression
   ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)) from clients that offer
   it.
+- `invokelatest = false`: `true` calls `handler` through `Base.invokelatest`,
+  so it sees methods defined after the server starts, as for `HTTP.serve!`.
+  Without it, a handler edited with Revise keeps running its old code.
 - `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
   frame, and the most frames in one message. Messages that have arrived but
   not been received may hold up to four times `maxframesize` bytes; past that
@@ -1985,6 +1992,7 @@ function listen!(
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
     listenany::Bool=false,
     compress::Bool=false,
+    invokelatest::Bool=false,
     read_timeout=nothing,
     read_header_timeout=nothing,
     idle_timeout=nothing,
@@ -2007,6 +2015,7 @@ function listen!(
         maxfragmentation=maxfragmentation,
         read_buffer_bytes=read_buffer_bytes,
         compress=compress,
+        invokelatest=invokelatest,
         read_header_timeout_ns=header_ns > 0 ? header_ns : read_ns,
         idle_timeout_ns=idle_ns > 0 ? idle_ns : read_ns,
     )
