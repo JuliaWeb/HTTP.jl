@@ -1283,6 +1283,10 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
             header_deadline_armed || _set_read_deadline_for_header!(server, tracked.conn)
             header_deadline_armed = false
             request = try
+                # A peer that closes before its first byte sent no request, so it
+                # gets no 400. Later requests were checked the same way after the
+                # previous response, and arrive with bytes already buffered.
+                _conn_reader_available(reader) == 0 && _fill_conn_reader!(reader) == 0 && return nothing
                 read_request(reader; max_header_bytes=server.max_header_bytes)
             catch err
                 action = _classify_server_conn_error(err::Exception)
