@@ -1,0 +1,9 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+.DS_Store
+*.key
+*.crt
+*.swp
+docs/build/
+docs/site/

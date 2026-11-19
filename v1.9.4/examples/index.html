@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Examples · HTTP.jl</title><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">HTTP.jl</a></span></div><form class="docs-search" action="../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li><a class="tocitem" href="../client/">Client</a></li><li><a class="tocitem" href="../server/">Server</a></li><li><a class="tocitem" href="../websockets/">WebSockets</a></li><li><a class="tocitem" href="../reference/">API Reference</a></li><li class="is-active"><a class="tocitem" href>Examples</a><ul class="internal"><li><a class="tocitem" href="#Simple-Server"><span>Simple Server</span></a></li><li><a class="tocitem" href="#Cors-Server"><span>Cors Server</span></a></li><li><a class="tocitem" href="#Server-Sent-Events"><span>Server Sent Events</span></a></li><li><a class="tocitem" href="#Session"><span>Session</span></a></li><li><a class="tocitem" href="#Squaring-Server-Client"><span>Squaring Server Client</span></a></li><li><a class="tocitem" href="#Readme-Examples"><span>Readme Examples</span></a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Examples</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Examples</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/JuliaWeb/HTTP.jl/blob/master/docs/src/examples.md" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Examples"><a class="docs-heading-anchor" href="#Examples">Examples</a><a id="Examples-1"></a><a class="docs-heading-anchor-permalink" href="#Examples" title="Permalink"></a></h1><p>Some examples that may prove potentially useful for those using  <code>HTTP.jl</code>. The code for these examples can also be found on Github  in the <code>docs/examples</code> folder.</p><h2 id="Simple-Server"><a class="docs-heading-anchor" href="#Simple-Server">Simple Server</a><a id="Simple-Server-1"></a><a class="docs-heading-anchor-permalink" href="#Simple-Server" title="Permalink"></a></h2><p>A simple example of creating a server with HTTP.jl. It handles creating, deleting,  updating, and retrieving Animals from a dictionary through 4 different routes</p><pre><code class="language-julia hljs">using HTTP, JSON3, StructTypes, Sockets
+
+# modified Animal struct to associate with specific user
+mutable struct Animal
+    id::Int
+    userId::Base.UUID
+    type::String
+    name::String
+    Animal() = new()
+end
+
+StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
+
+# use a plain `Dict` as a &quot;data store&quot;
+const ANIMALS = Dict{Int, Animal}()
+const NEXT_ID = Ref(0)
+function getNextId()
+    id = NEXT_ID[]
+    NEXT_ID[] += 1
+    return id
+end
+
+# &quot;service&quot; functions to actually do the work
+function createAnimal(req::HTTP.Request)
+    animal = JSON3.read(req.body, Animal)
+    animal.id = getNextId()
+    ANIMALS[animal.id] = animal
+    return HTTP.Response(200, JSON3.write(animal))
+end
+
+function getAnimal(req::HTTP.Request)
+    animalId = HTTP.getparams(req)[&quot;id&quot;]
+    animal = ANIMALS[parse(Int, animalId)]
+    return HTTP.Response(200, JSON3.write(animal))
+end
+
+function updateAnimal(req::HTTP.Request)
+    animal = JSON3.read(req.body, Animal)
+    ANIMALS[animal.id] = animal
+    return HTTP.Response(200, JSON3.write(animal))
+end
+
+function deleteAnimal(req::HTTP.Request)
+    animalId = HTTP.getparams(req)[&quot;id&quot;]
+    delete!(ANIMALS, animalId)
+    return HTTP.Response(200)
+end
+
+# define REST endpoints to dispatch to &quot;service&quot; functions
+const ANIMAL_ROUTER = HTTP.Router()
+HTTP.register!(ANIMAL_ROUTER, &quot;POST&quot;, &quot;/api/zoo/v1/animals&quot;, createAnimal)
+# note the use of `*` to capture the path segment &quot;variable&quot; animal id
+HTTP.register!(ANIMAL_ROUTER, &quot;GET&quot;, &quot;/api/zoo/v1/animals/{id}&quot;, getAnimal)
+HTTP.register!(ANIMAL_ROUTER, &quot;PUT&quot;, &quot;/api/zoo/v1/animals&quot;, updateAnimal)
+HTTP.register!(ANIMAL_ROUTER, &quot;DELETE&quot;, &quot;/api/zoo/v1/animals/{id}&quot;, deleteAnimal)
+
+server = HTTP.serve!(ANIMAL_ROUTER, Sockets.localhost, 8080)
+
+# using our server
+x = Animal()
+x.type = &quot;cat&quot;
+x.name = &quot;pete&quot;
+# create 1st animal
+resp = HTTP.post(&quot;http://localhost:8080/api/zoo/v1/animals&quot;, [], JSON3.write(x))
+x2 = JSON3.read(resp.body, Animal)
+# retrieve it back
+resp = HTTP.get(&quot;http://localhost:8080/api/zoo/v1/animals/$(x2.id)&quot;)
+x3 = JSON3.read(resp.body, Animal)
+
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)
+</code></pre><h2 id="Cors-Server"><a class="docs-heading-anchor" href="#Cors-Server">Cors Server</a><a id="Cors-Server-1"></a><a class="docs-heading-anchor-permalink" href="#Cors-Server" title="Permalink"></a></h2><p>Server example that takes after the simple server, however, handles dealing with CORS preflight headers when dealing with more than just a simple request. For CORS details, see e.g. https://cors-errors.info/</p><pre><code class="language-julia hljs">
+using HTTP, JSON3, StructTypes, Sockets, UUIDs
+
+# modified Animal struct to associate with specific user
+mutable struct Animal
+    id::Int
+    userId::UUID
+    type::String
+    name::String
+    Animal() = new()
+end
+
+StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
+
+# use a plain `Dict` as a &quot;data store&quot;, outer Dict maps userId to user-specific Animals
+const ANIMALS = Dict{UUID, Dict{Int, Animal}}()
+const NEXT_ID = Ref(0)
+function getNextId()
+    id = NEXT_ID[]
+    NEXT_ID[] += 1
+    return id
+end
+
+# CORS preflight headers that show what kinds of complex requests are allowed to API
+const CORS_OPT_HEADERS = [
+    &quot;Access-Control-Allow-Origin&quot; =&gt; &quot;*&quot;,
+    &quot;Access-Control-Allow-Headers&quot; =&gt; &quot;*&quot;,
+    &quot;Access-Control-Allow-Methods&quot; =&gt; &quot;POST, GET, OPTIONS&quot;
+]
+
+# CORS response headers that set access right of the recepient
+const CORS_RES_HEADERS = [&quot;Access-Control-Allow-Origin&quot; =&gt; &quot;*&quot;]
+
+#= 
+JSONMiddleware minimizes code by automatically converting the request body
+to JSON to pass to the other service functions automatically. JSONMiddleware
+recieves the body of the response from the other service funtions and sends
+back a success response code
+=#
+function JSONMiddleware(handler)
+    # Middleware functions return *Handler* functions
+    return function(req::HTTP.Request)
+        # first check if there&#39;s any request body
+        if isempty(req.body)
+            # we slightly change the Handler interface here because we know
+            # our handler methods will either return nothing or an Animal instance
+            ret = handler(req)
+        else
+            # replace request body with parsed Animal instance
+            req.body = JSON3.read(req.body, Animal)
+            ret = handler(req)
+        end
+        # return a Response, if its a response already (from 404 and 405 handlers)
+        if ret isa HTTP.Response
+            return ret
+        else # otherwise serialize any Animal as json string and wrap it in Response
+            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? &quot;&quot; : JSON3.write(ret))
+        end
+    end
+end
+
+#= CorsMiddleware: handles preflight request with the OPTIONS flag
+If a request was recieved with the correct headers, then a response will be 
+sent back with a 200 code, if the correct headers were not specified in the request,
+then a CORS error will be recieved on the client side
+
+Since each request passes throught the CORS Handler, then if the request is 
+not a preflight request, it will simply go to the JSONMiddleware to be passed to the
+correct service function =#
+function CorsMiddleware(handler)
+    return function(req::HTTP.Request)
+        if HTTP.method(req)==&quot;OPTIONS&quot;
+            return HTTP.Response(200, CORS_OPT_HEADERS)
+        else 
+            return handler(req)
+        end
+    end
+end
+
+# **simplified** &quot;service&quot; functions
+function createAnimal(req::HTTP.Request)
+    animal = req.body
+    animal.id = getNextId()
+    ANIMALS[animal.userId][animal.id] = animal
+    return animal
+end
+
+function getAnimal(req::HTTP.Request)
+    # retrieve our matched path parameters from registered route
+    animalId = parse(Int, HTTP.getparams(req)[&quot;id&quot;])
+    userId = UUID(HTTP.getparams(req)[&quot;userId&quot;])
+    return ANIMALS[userId][animalId]
+end
+
+function updateAnimal(req::HTTP.Request)
+    animal = req.body
+    ANIMALS[animal.userId][animal.id] = animal
+    return animal
+end
+
+function deleteAnimal(req::HTTP.Request)
+    # retrieve our matched path parameters from registered route
+    animalId = parse(Int, HTTP.getparams(req)[&quot;id&quot;])
+    userId = UUID(HTTP.getparams(req)[&quot;userId&quot;])
+    delete!(ANIMALS[userId], animal.id)
+    return nothing
+end
+
+function createUser(req::HTTP.Request)
+    userId = uuid4()
+    ANIMALS[userId] = Dict{Int, Animal}()
+    return userId
+end
+
+# CORS handlers for error responses
+cors404(::HTTP.Request) = HTTP.Response(404, CORS_RES_HEADERS, &quot;&quot;)
+cors405(::HTTP.Request) = HTTP.Response(405, CORS_RES_HEADERS, &quot;&quot;)
+
+# add an additional endpoint for user creation
+const ANIMAL_ROUTER = HTTP.Router(cors404, cors405)
+HTTP.register!(ANIMAL_ROUTER, &quot;POST&quot;, &quot;/api/zoo/v1/users&quot;, createUser)
+# modify service endpoints to have user pass UUID in
+HTTP.register!(ANIMAL_ROUTER, &quot;POST&quot;, &quot;/api/zoo/v1/users/{userId}/animals&quot;, createAnimal)
+HTTP.register!(ANIMAL_ROUTER, &quot;GET&quot;, &quot;/api/zoo/v1/users/{userId}/animals/{id}&quot;, getAnimal)
+HTTP.register!(ANIMAL_ROUTER, &quot;DELETE&quot;, &quot;/api/zoo/v1/users/{userId}/animals/{id}&quot;, deleteAnimal)
+
+server = HTTP.serve!(ANIMAL_ROUTER |&gt; JSONMiddleware |&gt; CorsMiddleware, Sockets.localhost, 8080)
+
+# using our server
+resp = HTTP.post(&quot;http://localhost:8080/api/zoo/v1/users&quot;)
+userId = JSON3.read(resp.body, UUID)
+x = Animal()
+x.userId = userId
+x.type = &quot;cat&quot;
+x.name = &quot;pete&quot;
+# create 1st animal
+resp = HTTP.post(&quot;http://localhost:8080/api/zoo/v1/users/$(userId)/animals&quot;, [], JSON3.write(x))
+x2 = JSON3.read(resp.body, Animal)
+# retrieve it back
+resp = HTTP.get(&quot;http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)&quot;)
+x3 = JSON3.read(resp.body, Animal)
+# try bad path
+resp = HTTP.get(&quot;http://localhost:8080/api/zoo/v1/badpath&quot;)
+
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)
+</code></pre><h2 id="Server-Sent-Events"><a class="docs-heading-anchor" href="#Server-Sent-Events">Server Sent Events</a><a id="Server-Sent-Events-1"></a><a class="docs-heading-anchor-permalink" href="#Server-Sent-Events" title="Permalink"></a></h2><p>Simple server that implements <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">server-sent events</a>, loosely following <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events">this tutorial</a>.</p><h3 id="Example-client-code-(JS):"><a class="docs-heading-anchor" href="#Example-client-code-(JS):">Example client code (JS):</a><a id="Example-client-code-(JS):-1"></a><a class="docs-heading-anchor-permalink" href="#Example-client-code-(JS):" title="Permalink"></a></h3><pre><code class="language-http hljs">&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;UTF-8&quot;&gt;
+    &lt;title&gt;Server-sent events demo&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;h3&gt;Fetched items:&lt;/h3&gt;
+    &lt;ul id=&quot;list&quot;&gt;&lt;/ul&gt;
+&lt;/body&gt;
+&lt;script&gt;
+    const evtSource = new EventSource(&quot;http://127.0.0.1:8080/api/events&quot;)
+    evtSource.onmessage = async function (event) {
+        const newElement = document.createElement(&quot;li&quot;);
+        const eventList = document.getElementById(&quot;list&quot;);
+        if (parseFloat(event.data) &gt; 0.5) {
+            const r = await fetch(&quot;http://127.0.0.1:8080/api/getItems&quot;)
+            if (r.ok) {
+                const body = await r.json()
+                newElement.textContent = body;
+                eventList.appendChild(newElement);
+            }
+        }
+    }
+    evtSource.addEventListener(&quot;ping&quot;, function(event) {
+        console.log(&#39;ping:&#39;, event.data)
+    });
+&lt;/script&gt;
+&lt;/html&gt;</code></pre><h3 id="Example-client-code-(Julia)"><a class="docs-heading-anchor" href="#Example-client-code-(Julia)">Example client code (Julia)</a><a id="Example-client-code-(Julia)-1"></a><a class="docs-heading-anchor-permalink" href="#Example-client-code-(Julia)" title="Permalink"></a></h3><pre><code class="language-julia hljs">using HTTP, JSON
+
+HTTP.open(&quot;GET&quot;, &quot;http://127.0.0.1:8080/api/events&quot;) do io
+    while !eof(io)
+        println(String(readavailable(io)))
+    end
+end</code></pre><h3 id="Server-code:"><a class="docs-heading-anchor" href="#Server-code:">Server code:</a><a id="Server-code:-1"></a><a class="docs-heading-anchor-permalink" href="#Server-code:" title="Permalink"></a></h3><pre><code class="language-julia hljs">using HTTP, Sockets, JSON
+
+const ROUTER = HTTP.Router()
+
+function getItems(req::HTTP.Request)
+    headers = [
+        &quot;Access-Control-Allow-Origin&quot; =&gt; &quot;*&quot;,
+        &quot;Access-Control-Allow-Methods&quot; =&gt; &quot;GET, OPTIONS&quot;
+    ]
+    if HTTP.method(req) == &quot;OPTIONS&quot;
+        return HTTP.Response(200, headers)
+    end
+    return HTTP.Response(200, headers, JSON.json(rand(2)))
+end
+
+function events(stream::HTTP.Stream)
+    HTTP.setheader(stream, &quot;Access-Control-Allow-Origin&quot; =&gt; &quot;*&quot;)
+    HTTP.setheader(stream, &quot;Access-Control-Allow-Methods&quot; =&gt; &quot;GET, OPTIONS&quot;)
+    HTTP.setheader(stream, &quot;Content-Type&quot; =&gt; &quot;text/event-stream&quot;)
+
+    if HTTP.method(stream.message) == &quot;OPTIONS&quot;
+        return nothing
+    end
+
+    HTTP.setheader(stream, &quot;Content-Type&quot; =&gt; &quot;text/event-stream&quot;)
+    HTTP.setheader(stream, &quot;Cache-Control&quot; =&gt; &quot;no-cache&quot;)
+    while true
+        write(stream, &quot;event: ping\ndata: $(round(Int, time()))\n\n&quot;)
+        if rand(Bool)
+            write(stream, &quot;data: $(rand())\n\n&quot;)
+        end
+        sleep(1)
+    end
+    return nothing
+end
+
+HTTP.register!(ROUTER, &quot;GET&quot;, &quot;/api/getItems&quot;, HTTP.streamhandler(getItems))
+HTTP.register!(ROUTER, &quot;/api/events&quot;, events)
+
+server = HTTP.serve!(ROUTER, &quot;127.0.0.1&quot;, 8080; stream=true)
+
+# Julia usage
+resp = HTTP.get(&quot;http://localhost:8080/api/getItems&quot;)
+
+close = Ref(false)
+@async HTTP.open(&quot;GET&quot;, &quot;http://127.0.0.1:8080/api/events&quot;) do io
+    while !eof(io) &amp;&amp; !close[]
+        println(String(readavailable(io)))
+    end
+end
+
+# run the following to stop the streaming client request
+close[] = true
+
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)
+</code></pre><h2 id="Session"><a class="docs-heading-anchor" href="#Session">Session</a><a id="Session-1"></a><a class="docs-heading-anchor-permalink" href="#Session" title="Permalink"></a></h2><p>A simple example of creating a persistent session and logging into a web form. HTTP.jl does not have a distinct session object like requests.session() or rvest::html_session() but rather uses the <code>cookies</code> flag along with standard functions</p><pre><code class="language-julia hljs">using HTTP
+
+#dummy site, any credentials work
+url = &quot;http://quotes.toscrape.com/login&quot;
+session = HTTP.get(url; cookies = true)
+
+credentials = Dict(
+    &quot;Username&quot; =&gt; &quot;username&quot;,
+    &quot;Password&quot; =&gt; &quot;password&quot;)
+
+response = HTTP.post(url, credentials)
+</code></pre><h2 id="Squaring-Server-Client"><a class="docs-heading-anchor" href="#Squaring-Server-Client">Squaring Server Client</a><a id="Squaring-Server-Client-1"></a><a class="docs-heading-anchor-permalink" href="#Squaring-Server-Client" title="Permalink"></a></h2><p>Simple server in Julia and client code in JS.</p><h3 id="Example-client-code-(JS):-2"><a class="docs-heading-anchor" href="#Example-client-code-(JS):-2">Example client code (JS):</a><a class="docs-heading-anchor-permalink" href="#Example-client-code-(JS):-2" title="Permalink"></a></h3><pre><code class="language-http hljs">&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;UTF-8&quot;&gt;
+    &lt;title&gt;Squaring numbers&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;input id=&quot;number&quot; placeholder=&quot;Input a number&quot; type=&quot;number&quot;&gt;
+    &lt;button id=&quot;submit&quot;&gt;Square&lt;/button&gt;
+    &lt;h4&gt;Outputs&lt;/h4&gt;
+    &lt;ul id=&quot;list&quot;&gt;&lt;/ul&gt;
+&lt;/body&gt;
+&lt;script&gt;
+    document.getElementById(&#39;submit&#39;).addEventListener(&#39;click&#39;, async function (event) {
+        const list = document.getElementById(&#39;list&#39;);
+        try {
+            const r = await fetch(&#39;http://127.0.0.1:8080/api/square&#39;, {
+                method: &#39;POST&#39;,
+                body: document.getElementById(&#39;number&#39;).value
+            });
+
+            if (r.ok) {
+                const body = await r.text()
+                const newElement = document.createElement(&#39;li&#39;);
+                newElement.textContent = body;
+                list.insertBefore(newElement, list.firstChild);
+            } else {
+                console.error(r)
+            };
+        } catch (err) {
+            console.error(err)
+        }
+    })
+&lt;/script&gt;
+&lt;/html&gt;</code></pre><h3 id="Server-code:-2"><a class="docs-heading-anchor" href="#Server-code:-2">Server code:</a><a class="docs-heading-anchor-permalink" href="#Server-code:-2" title="Permalink"></a></h3><pre><code class="language-julia hljs">using HTTP
+
+const ROUTER = HTTP.Router()
+
+function square(req::HTTP.Request)
+    headers = [
+        &quot;Access-Control-Allow-Origin&quot; =&gt; &quot;*&quot;,
+        &quot;Access-Control-Allow-Methods&quot; =&gt; &quot;POST, OPTIONS&quot;
+    ]
+    # handle CORS requests
+    if HTTP.method(req) == &quot;OPTIONS&quot;
+        return HTTP.Response(200, headers)
+    end
+    body = parse(Float64, String(req.body))
+    square = body^2
+    HTTP.Response(200, headers, string(square))
+end
+
+HTTP.register!(ROUTER, &quot;POST&quot;, &quot;/api/square&quot;, square)
+
+server = HTTP.serve!(ROUTER, Sockets.localhost, 8080)
+
+# usage
+resp = HTTP.post(&quot;http://localhost:8080/api/square&quot;; body=&quot;3&quot;)
+sq = parse(Float64, String(resp.body))
+@assert sq == 9.0
+
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)
+</code></pre><h2 id="Readme-Examples"><a class="docs-heading-anchor" href="#Readme-Examples">Readme Examples</a><a id="Readme-Examples-1"></a><a class="docs-heading-anchor-permalink" href="#Readme-Examples" title="Permalink"></a></h2><pre><code class="language-julia hljs">#CLIENT
+
+#HTTP.request sends a HTTP Request Message and returns a Response Message.
+
+r = HTTP.request(&quot;GET&quot;, &quot;http://httpbin.org/ip&quot;)
+println(r.status) 
+println(String(r.body)) 
+
+#HTTP.open sends a HTTP Request Message and opens an IO stream from which the Response can be read.
+HTTP.open(:GET, &quot;https://tinyurl.com/bach-cello-suite-1-ogg&quot;) do http
+    open(`vlc -q --play-and-exit --intf dummy -`, &quot;w&quot;) do vlc
+        write(vlc, http)
+    end
+end
+
+#SERVERS
+
+#Using HTTP.Servers.listen:
+#The server will start listening on 127.0.0.1:8081 by default.
+
+using HTTP
+
+HTTP.listen() do http::HTTP.Stream
+    @show http.message
+    @show HTTP.header(http, &quot;Content-Type&quot;)
+    while !eof(http)
+        println(&quot;body data: &quot;, String(readavailable(http)))
+    end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, &quot;Foo-Header&quot; =&gt; &quot;bar&quot;)
+    HTTP.startwrite(http)
+    write(http, &quot;response body&quot;)
+    write(http, &quot;more response body&quot;)
+end
+
+#Using HTTP.Handlers.serve:
+
+using HTTP
+
+# HTTP.listen! and HTTP.serve! are the non-blocking versions of HTTP.listen/HTTP.serve
+server = HTTP.serve!() do request::HTTP.Request
+    @show request
+    @show request.method
+    @show HTTP.header(request, &quot;Content-Type&quot;)
+    @show request.body
+    try
+        return HTTP.Response(&quot;Hello&quot;)
+    catch e
+        return HTTP.Response(400, &quot;Error: $e&quot;)
+    end
+ end
+ # HTTP.serve! returns an `HTTP.Server` object that we can close manually
+ close(server)
+
+#WebSocket Examples
+using HTTP.WebSockets
+server = WebSockets.listen!(&quot;127.0.0.1&quot;, 8081) do ws
+        for msg in ws
+            send(ws, msg)
+        end
+    end
+
+WebSockets.open(&quot;ws://127.0.0.1:8081&quot;) do ws
+           send(ws, &quot;Hello&quot;)
+           s = receive(ws)
+           println(s)
+       end;
+Hello
+#Output: Hello
+
+close(server)
+
+</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../reference/">« API Reference</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.24 on <span class="colophon-date" title="Sunday 14 May 2023 04:56">Sunday 14 May 2023</span>. Using Julia version 1.9.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
