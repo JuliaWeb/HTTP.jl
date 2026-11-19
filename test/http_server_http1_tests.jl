@@ -2333,6 +2333,28 @@ end
     end
 end
 
+@testset "HTTP server stream handlers see chunked request trailers" begin
+    raw_request(address) = "POST / HTTP/1.1\r\nHost: $(address)\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" *
+                           "5\r\nhello\r\n0\r\nX-Sum: 42\r\n\r\n"
+    echo(req) = HT.Response(200, "trailer=" * HT.header(req.trailers, "X-Sum", "none"))
+    stream_echo = function (stream)
+        req = HT.startread(stream)
+        _ = read(stream)
+        write(stream, "trailer=" * HT.header(req.trailers, "X-Sum", "none"))
+        return nothing
+    end
+    for handler in (stream_echo, HT.streamhandler(echo))
+        server = HT.listen!(handler, "127.0.0.1", 0; listenany = true)
+        try
+            raw = _raw_http_request(HT.port(server), raw_request(HT.server_addr(server)))
+            @test occursin("trailer=42", raw)
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
+    end
+end
+
 @testset "HTTP listen! reports a busy port as AddressInUseError" begin
     first_server = HT.listen!(stream -> nothing, "127.0.0.1", 0; listenany = true)
     port_num = HT.port(first_server)

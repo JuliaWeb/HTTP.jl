@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts. ([#1515])
 
 ### Fixed
+- A stream handler, from `listen!` or `streamhandler`, sees the request's
+  trailers in `req.trailers` once it has read the body. They stayed empty for
+  trailers after a chunked HTTP/1 body and for HTTP/2 request trailers, while
+  `serve!` handlers saw them. ([#1575])
 - A client that connects and closes without sending a byte, such as a TCP
   health check, no longer gets `400 Bad Request`; the server closes the
   connection without a response, as it does for an idle kept-alive one.
@@ -1881,4 +1885,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1565]: https://github.com/JuliaWeb/HTTP.jl/issues/1565
 [#1567]: https://github.com/JuliaWeb/HTTP.jl/issues/1567
 [#1515]: https://github.com/JuliaWeb/HTTP.jl/issues/1515
+[#1575]: https://github.com/JuliaWeb/HTTP.jl/issues/1575
 [#1576]: https://github.com/JuliaWeb/HTTP.jl/issues/1576
