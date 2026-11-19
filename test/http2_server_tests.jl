@@ -1161,7 +1161,11 @@ end
 end
 
 @testset "HTTP/2 streamhandler sends Content-Length for HEAD" begin
-    server = HT.listen!(HT.streamhandler(request -> HT.Response(200, "hello")), "127.0.0.1", 0; listenany = true)
+    # The suppressed body is not a body shorter than its Content-Length.
+    logger = Test.TestLogger()
+    server = Base.CoreLogging.with_logger(logger) do
+        HT.listen!(HT.streamhandler(request -> HT.Response(200, "hello")), "127.0.0.1", 0; listenany = true)
+    end
     address = HT.server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
     try
@@ -1172,9 +1176,10 @@ end
         @test isempty(_read_all_h2_server(head_res.body))
     finally
         close(conn)
-        HT.forceclose(server)
-        HTTP.@try_ignore wait(server.serve_task::Task)
+        # Graceful close returns once the connection, and its logging, is done.
+        close(server)
     end
+    @test isempty(logger.logs)
 end
 
 @testset "HTTP/2 server stream handlers flush DATA before handler return" begin
