@@ -2729,3 +2729,55 @@ end
         HT.@try_ignore NC.close(listener)
     end
 end
+
+@testset "HTTP server resets the connection when a close-delimited body fails" begin
+    # A response to HTTP/1.0 without Content-Length ends when the connection
+    # closes. After a clean close the client takes a failed body for the whole
+    # response (RFC 9112 §8), so the server resets the connection instead.
+    function failing_body()
+        sent = Ref(false)
+        return HT.CallbackBody(dst -> begin
+            sent[] && error("body failed")
+            sent[] = true
+            copyto!(dst, codeunits("partial"))
+            return 7
+        end, () -> nothing)
+    end
+    function stream_handler(stream)
+        HT.startread(stream)
+        HT.startwrite(stream)
+        write(stream, "partial")
+        error("body failed")
+    end
+    for tls in (false, true), (start, handler) in ((HT.serve!, _ -> HT.Response(200, failing_body())), (HT.listen!, stream_handler))
+        listener = if tls
+            Reseau.TLS.listen("tcp", "127.0.0.1:0", Reseau.TLS.Config(
+                verify_peer = false,
+                cert_file = joinpath(@__DIR__, "resources", "localhost-only.crt"),
+                key_file = joinpath(@__DIR__, "resources", "localhost-only.key"),
+            ))
+        else
+            NC.listen("tcp", "127.0.0.1:0")
+        end
+        logger = Test.TestLogger()
+        server = Logging.with_logger(() -> start(handler, listener), logger)
+        sock = tls ? Reseau.TLS.connect(NC.loopback_addr(HT.port(server)), Reseau.TLS.Config(verify_peer = false)) :
+                     NC.connect(NC.loopback_addr(HT.port(server)))
+        try
+            write(sock, "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            # Windows drops unread bytes on a reset, so the error can come
+            # before the head is read.
+            outcome = try
+                response = HT._read_response(HT._ConnReader(sock))
+                String(_read_all_server_bytes(response.body))
+            catch err
+                err
+            end
+            @test outcome isa (tls ? Reseau.TLS.TLSError : Base.SystemError)
+        finally
+            HTTP.@try_ignore close(sock)
+            close(server)
+        end
+        @test count(record -> record.message == "server handler error", logger.logs) == 1
+    end
+end
