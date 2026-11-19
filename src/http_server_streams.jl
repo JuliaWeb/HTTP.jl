@@ -443,7 +443,8 @@ function _server_closewrite(stream::Stream)::Nothing
         return nothing
     end
     if _server_stream_live_h2(stream)
-        if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
+        # A HEAD, 1xx, 204, or 304 response sends no body, whatever its length.
+        if !stream.ignore_writes && stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length", _PROTOCOL_ERROR_RESPONSE_LENGTH))
         end
         if !isempty(stream.response.trailers)
