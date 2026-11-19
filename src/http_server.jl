@@ -634,6 +634,18 @@ function _close_server_transport!(conn::Union{TCP.Conn,TLS.Conn})::Nothing
     return nothing
 end
 
+# A body without Content-Length or chunking ends when the connection closes,
+# so after a clean close (FIN, TLS close_notify) the client takes a body that
+# failed partway for the whole response (RFC 9112 §8). A reset tells it the
+# response is incomplete: SO_LINGER 0 makes the close send RST, and closing the
+# TCP connection directly skips close_notify.
+function _reset_server_transport!(conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    tcp = conn isa TLS.Conn ? (conn::TLS.Conn).tcp : conn::TCP.Conn
+    @try_ignore TCP.set_linger!(tcp, 0)
+    @try_ignore TCP.close(tcp)
+    return nothing
+end
+
 function _close_server_write!(conn::Union{TCP.Conn,TLS.Conn})::Nothing
     if conn isa TLS.Conn
         TLS.closewrite(conn::TLS.Conn)
@@ -1366,7 +1378,10 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     end
                     # Return without `closewrite`: the connection closes, and a body
                     # that already started stays unterminated, so the client can tell
-                    # the response is incomplete.
+                    # the response is incomplete. A close-delimited body has no end
+                    # to leave out, so its connection is reset.
+                    stream.write_mode == _ServerStreamWriteMode.IDENTITY && (@atomic :acquire stream.head_committed) &&
+                        _reset_server_transport!(tracked.conn)
                     return nothing
                 end
             else
@@ -1409,9 +1424,11 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source, he
                     _write_response_parts!(tracked.conn, head, response_obj, use_chunked, trailer_values, allows_body, write_buffer)
                 catch err
                     # The head may be out, so close the connection and leave the
-                    # body unfinished. An error that is not the connection's came
-                    # from the response body, such as a failing body callback.
+                    # body unfinished; reset it when the body is close-delimited.
+                    # An error that is not the connection's came from the
+                    # response body, such as a failing body callback.
                     _is_conn_write_error(err::Exception) || _log_handler_error(err, catch_backtrace(), request, tracked.conn)
+                    allows_body && !use_chunked && response_obj.content_length < 0 && _reset_server_transport!(tracked.conn)
                     return nothing
                 finally
                     _close_response_body!(response_obj)
