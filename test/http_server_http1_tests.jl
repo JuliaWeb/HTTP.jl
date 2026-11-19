@@ -1219,6 +1219,28 @@ end
     end
 end
 
+@testset "HTTP server closes a connection that sends no request without a response" begin
+    for allow_h2c in (true, false)
+        server = HT.serve!(req -> HT.Response(200, "ok"), "127.0.0.1", 0; listenany = true, allow_h2c = allow_h2c)
+        try
+            @test _raw_http_request(HT.port(server), "") == ""
+            @test startswith(_raw_http_request(HT.port(server), "G"), "HTTP/1.1 400")
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
+        # A peer that stays silent still gets 408 once the header deadline passes.
+        server = HT.serve!(req -> HT.Response(200, "ok"), "127.0.0.1", 0;
+            listenany = true, allow_h2c = allow_h2c, read_header_timeout_ns = 1)
+        try
+            @test startswith(_raw_http_request(HT.port(server), ""; close_write = false), "HTTP/1.1 408")
+        finally
+            _run_test_operation(() -> HT.forceclose(server))
+            _run_test_operation(() -> wait(server))
+        end
+    end
+end
+
 @testset "HTTP server timeout and handler error responses" begin
     timeout_server = HT.Server(
         address = "127.0.0.1:0",
