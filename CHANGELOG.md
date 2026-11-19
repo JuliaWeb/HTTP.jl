@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   health check, no longer gets `400 Bad Request`; the server closes the
   connection without a response, as it does for an idle kept-alive one.
   ([#1576])
+- An HTTP/2 request whose stream the client resets before the handler reads
+  its body is no longer handled as a complete request with an empty body.
+  `serve!` does not call the handler, and a stream handler's read throws, as
+  it does when the reset arrives later. ([#1577])
 - A `HEAD` request over HTTP/2 to a `streamhandler` server no longer logs
   `server handler error` or resets the stream after its head; the missing
   body was checked against the response's `Content-Length`. ([#1578])
@@ -1890,4 +1894,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1515]: https://github.com/JuliaWeb/HTTP.jl/issues/1515
 [#1575]: https://github.com/JuliaWeb/HTTP.jl/issues/1575
 [#1576]: https://github.com/JuliaWeb/HTTP.jl/issues/1576
+[#1577]: https://github.com/JuliaWeb/HTTP.jl/issues/1577
 [#1578]: https://github.com/JuliaWeb/HTTP.jl/issues/1578

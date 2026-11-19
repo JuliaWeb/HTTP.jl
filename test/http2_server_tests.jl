@@ -3519,3 +3519,63 @@ end
         HTTP.@try_ignore wait(server.serve_task::Task)
     end
 end
+
+@testset "HTTP/2 server does not pass a reset request to a handler as complete" begin
+    # The client sends part of a body without a Content-Length and resets the
+    # stream, all in one write, so the server reads the reset before the
+    # handler reads the body.
+    logger = Test.TestLogger()
+    request_bodies = Channel{String}(1)
+    stream_reads = Channel{Any}(1)
+    request_server, stream_server = Base.CoreLogging.with_logger(logger) do
+        return (
+            HT.serve!("127.0.0.1", 0; listenany = true) do request
+                put!(request_bodies, String(copy(request.body)))
+                return HT.Response(200, "ok")
+            end,
+            HT.listen!("127.0.0.1", 0; listenany = true) do stream
+                HT.startread(stream)
+                put!(stream_reads, try
+                    String(read(stream))
+                catch err
+                    err
+                end)
+            end,
+        )
+    end
+    try
+        for server in (request_server, stream_server)
+            address = HT.server_addr(server)
+            conn, reader = _open_raw_h2_server_conn(address)
+            try
+                fields = HT.HeaderField[
+                    HT.HeaderField(":method", "POST", false),
+                    HT.HeaderField(":scheme", "http", false),
+                    HT.HeaderField(":authority", address, false),
+                    HT.HeaderField(":path", "/upload", false),
+                ]
+                io = IOBuffer()
+                HT.write_frame!(io, HT.HeadersFrame(UInt32(1), false, true, HT.encode_header_block(HT.Encoder(), fields)))
+                HT.write_frame!(io, HT.DataFrame(UInt32(1), false, collect(codeunits("partial")), 0))
+                HT.write_frame!(io, HT.RSTStreamFrame(UInt32(1), UInt32(0x8)))
+                HT.write_frame!(io, HT.PingFrame(false, ntuple(UInt8, 8)))
+                _write_all_h2_server_raw!(conn, take!(io))
+                # The ACK shows the server has read the reset; the stream is gone
+                # once its handler, if any, has returned.
+                _read_h2_server_frame_until!(conn, reader, f -> f isa HT.PingFrame && (f::HT.PingFrame).ack)
+                tracked = only(HT._server_conns(server))
+                while HT._conn_state(tracked) != HT._ConnState.IDLE
+                    yield()
+                end
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+    finally
+        close(request_server)
+        close(stream_server)
+    end
+    @test !isready(request_bodies)
+    @test isready(stream_reads) && take!(stream_reads) isa HT.ProtocolError
+    @test isempty(filter(record -> record.level >= Base.CoreLogging.Warn, logger.logs))
+end

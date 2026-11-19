@@ -1544,7 +1544,10 @@ function _handle_h2_stream!(
     lock(state.lock)
     try
         stream_done = state.stream_done
-        if state.stream_done && _h2_server_available_bytes(state) == 0
+        # A reset also ends the stream and drops its buffered bytes, so only a
+        # stream the client ended has an empty body. The body of a reset stream
+        # raises the reset when read.
+        if state.stream_done && state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN) && _h2_server_available_bytes(state) == 0
             request_body = EmptyBody()
         else
             request_body = _H2ServerBody(conn, write_lock, states_lock, states, stream_id, tracked, state, send_state, false)
