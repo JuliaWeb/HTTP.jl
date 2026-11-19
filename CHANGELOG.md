@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   health check, no longer gets `400 Bad Request`; the server closes the
   connection without a response, as it does for an idle kept-alive one.
   ([#1576])
+- A response without `Content-Length` or chunking, such as one to an HTTP/1.0
+  request, whose body fails partway now ends with a connection reset instead
+  of a clean close, so the client sees it is incomplete (RFC 9112 §8). ([#1579])
 
 ## [v2.16.0] - 2026-11-13
 
@@ -1887,3 +1890,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1515]: https://github.com/JuliaWeb/HTTP.jl/issues/1515
 [#1575]: https://github.com/JuliaWeb/HTTP.jl/issues/1575
 [#1576]: https://github.com/JuliaWeb/HTTP.jl/issues/1576
+[#1579]: https://github.com/JuliaWeb/HTTP.jl/issues/1579
