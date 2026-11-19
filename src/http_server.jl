@@ -263,14 +263,15 @@ end
 
 # Rebuild through the positional internal constructor rather than the public
 # keyword form: a `Core.kwcall` in this path is not statically resolvable
-# under `juliac --trim`, and the keyword constructor's copy semantics are
-# reproduced explicitly here.
+# under `juliac --trim`. Headers are copied, as the keyword constructor does.
+# Trailers are shared instead: the body reader fills this collection when the
+# body ends, so a handler sees them once it has read the body.
 function _stream_request_metadata(request::Request)::Request{EmptyBody}
     return _request_nocopy(
         request.method,
         request.target,
         copy(request.headers),
-        copy(request.trailers),
+        request.trailers,
         EmptyBody(),
         request.host,
         Int64(request.content_length),

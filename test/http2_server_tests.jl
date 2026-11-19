@@ -762,6 +762,36 @@ end
     end
 end
 
+@testset "HTTP/2 stream handler sees request trailers" begin
+    # The trailers are sent only once the handler runs, after its stream exists.
+    started = Channel{Bool}(1)
+    seen = Channel{String}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        req = HT.startread(stream)
+        put!(started, true)
+        _ = read(stream)
+        put!(seen, HT.header(req.trailers, "X-Trailer", "none"))
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        return nothing
+    end
+    address = HT.server_addr(server)
+    conn, _ = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/trailers"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), false, collect(codeunits("ok"))))
+        take!(started)
+        trailer_block = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField("x-trailer", "done", false)])
+        _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, true, trailer_block))
+        @test take!(seen) == "done"
+    finally
+        HTTP.@try_ignore NC.close(conn)
+        HT.forceclose(server)
+        HTTP.@try_ignore wait(server.serve_task::Task)
+    end
+end
+
 @testset "HTTP/2 server receives many request trailers split across CONTINUATION frames" begin
     # A client picks how many trailer fields it sends, up to the server's
     # `max_header_bytes`, so the server copies them in one pass: wire order,
