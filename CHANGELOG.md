@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   do since 2.16.0, so a WebSocket handler sees methods defined after the server
   starts. ([#1515])
 
+### Changed
+- `Transport` keeps up to 64 idle connections per host by default
+  (`max_idle_per_host` now defaults to `max_idle_total`; it was 2), and a
+  connection returned to a full pool replaces the one idle the longest instead
+  of being closed. Clients with many parallel requests to one host, such as
+  CloudStore's ranged downloads, no longer dial again for most of them. ([#1528])
+
 ### Fixed
 - A stream handler, from `listen!` or `streamhandler`, sees the request's
   trailers in `req.trailers` once it has read the body. They stayed empty for
@@ -1896,3 +1903,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1576]: https://github.com/JuliaWeb/HTTP.jl/issues/1576
 [#1577]: https://github.com/JuliaWeb/HTTP.jl/issues/1577
 [#1578]: https://github.com/JuliaWeb/HTTP.jl/issues/1578
+[#1528]: https://github.com/JuliaWeb/HTTP.jl/issues/1528
