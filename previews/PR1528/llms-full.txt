@@ -1,6 +1,6 @@
 # HTTP.jl documentation
 
-> Complete documentation for HTTP.jl v2.13.1 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
+> Complete documentation for HTTP.jl v2.16.0 in one markdown file: every page of https://juliaweb.github.io/HTTP.jl/stable/ in reading order, with all docstrings expanded. The short page index is at https://juliaweb.github.io/HTTP.jl/stable/llms.txt.
 
 ---
 
@@ -133,8 +133,12 @@ you:
 HTTP.post("https://example.com/login", [], Dict("user" => "alice", "pw" => "s3cret"))
 ```
 
-Use `HTTP.Form` for `multipart/form-data`, such as file uploads. An open
-file is sent with its file name:
+A vector value sends its field once for each element, so
+`Dict("tag" => ["a", "b"])` is sent as `tag=a&tag=b`.
+
+Use `HTTP.Form` for `multipart/form-data`, such as file uploads. A byte
+vector such as `read(path)` is sent as its bytes, and an open file is also sent
+with its file name:
 
 ```julia
 open("upload.bin") do file
@@ -157,8 +161,8 @@ HTTP.query(
 
 ## Query Parameters
 
-The `query` keyword URL-encodes a `Dict`, `NamedTuple`, or vector of pairs and
-appends it to the URL's query string:
+The `query` keyword URL-encodes a `Dict`, `NamedTuple`, `Pair`, or vector of
+pairs and appends it to the URL's query string:
 
 ```julia
 HTTP.get("https://example.com/search"; query = Dict("page" => 2, "limit" => 10))
@@ -171,6 +175,9 @@ A `Dict` has no order. Use a vector of pairs to fix the order or to repeat a key
 HTTP.get("https://example.com/search"; query = ["tag" => "a", "tag" => "b"])
 # GET /search?tag=a&tag=b
 ```
+
+A vector value also repeats its key, so `query = Dict("tag" => ["a", "b"])`
+sends the same query. An empty vector sends nothing.
 
 `query` adds to a query string that is already in the URL:
 
@@ -589,6 +596,15 @@ Keep the `Server` that `serve!` or `listen!` returns:
   progress to finish.
 - `HTTP.forceclose(server)` stops at once and closes every connection.
 
+A server compiles its connection handling for the type of its handler, so a new
+process answers its first request slowly when no package image has that code.
+A package that serves its own handler type can keep the code in its package
+image by calling `HTTP.precompile_server` in its precompile workload:
+
+```julia
+HTTP.precompile_server(typeof(handler))
+```
+
 ### Timeouts
 
 All server timeouts are off by default. Each keyword takes seconds, and a
@@ -655,7 +671,9 @@ server = HTTP.serve!(router, "127.0.0.1", 8080)
 Read the matched route and its path variables with `HTTP.getroute`,
 `HTTP.getparams`, and `HTTP.getparam`. A path that matches no route gets
 `404 Not Found`, and a path that matches with another method gets
-`405 Method Not Allowed`.
+`405 Method Not Allowed`. Each path segment is percent-decoded before it is
+matched, so `/%61dmin` takes the route `/admin`; path variables keep the text
+as sent, still percent-encoded.
 
 Middleware is a function that takes a handler and returns a new handler. The
 third argument of `Router` wraps every route registered on it. This router
@@ -723,6 +741,11 @@ file or directory. `spa_fallback` serves the given file for a missing path that
 does not look like a file name, as a single-page app needs. It answers
 `If-Modified-Since` and single `Range` requests, and also `If-None-Match` when
 you pass `etag`.
+
+A path with a `..` segment, an encoded slash (`%2F`), a backslash, or a name
+that ends in a dot or space (which Windows drops) gets `400 Bad Request`. Routes are case-sensitive, but the default file systems on
+macOS and Windows are not, so there `/ADMIN/x` serves `admin/x` even when a
+route guards `/admin/**`; check access in the handler when that matters.
 
 `HTTP.servefile` serves one file for a request, and
 `HTTP.servecontent` serves bytes or a seekable `IO` that you already
@@ -1132,6 +1155,11 @@ keep their 1.x shapes. Some details changed:
 - The server `readtimeout` keyword still works and sets `read_timeout`. Each
   server timeout has a seconds keyword (`read_timeout`) and a nanoseconds
   keyword (`read_timeout_ns`).
+- Handlers are called directly, not through `Base.invokelatest`, so they do
+  not see methods defined after the server starts. A route registered on a
+  running `Router` gets `500 Internal Server Error`, and a handler edited with
+  Revise keeps running its old code. Pass `invokelatest = true` to get the 1.x
+  behavior.
 
 Before:
 
@@ -1311,6 +1339,12 @@ the context of a request a server is handling.
 `deadline_ns` is an absolute `time_ns()` value, or `0` for no deadline. A client
 request still running at the deadline throws `TimeoutError`, and
 `cancel!` makes it throw `CanceledError`.
+
+A server cancels the context of an HTTP/2 request when the request's stream is
+reset, as when the client cancels the request, or when its connection closes. A
+handler can check `canceled` to stop work that no client will receive.
+An HTTP/1 server does not watch the connection while a handler runs; the handler
+learns that the client has gone when a write to it fails.
 
 Application data is stored under `Symbol` keys:
 
@@ -1572,7 +1606,8 @@ removes the deadline.
     cancel!(ctx; message="request canceled") -> ctx
 
 Cancel the request that uses `ctx`. Its current read or write stops, and the
-request throws a `CanceledError` carrying `message`. `cancel!` does not
+request throws a `CanceledError` carrying `message`. Only the first call
+takes effect, so a later call does not replace its `message`. `cancel!` does not
 throw itself.
 
 ### `HTTP.canceled` — Function
@@ -1732,10 +1767,11 @@ header of a `Response`.
 
 A multipart request body. `parts` is a collection of `name => value` pairs. An
 `IO` value is streamed (an open file is sent with its file name, and a
-`Multipart` with its own name and content type); any other value is
-sent as `string(value)`. `type = :mixed` builds a `multipart/mixed` body
-instead of `multipart/form-data`. A request with a `Form` body gets the
-matching `Content-Type` header from `content_type`.
+`Multipart` with its own name and content type), an
+`AbstractVector{UInt8}` value such as `read(path)` is sent as its bytes, and
+any other value is sent as `string(value)`. `type = :mixed` builds a
+`multipart/mixed` body instead of `multipart/form-data`. A request with a
+`Form` body gets the matching `Content-Type` header from `content_type`.
 
     Form(parts::Vector{<:Multipart}; boundary)
 
@@ -1787,6 +1823,10 @@ is no body. Each `Multipart` has the part's `name`, `filename` (or
 `nothing`), `contenttype`, and its content as the `IO` `data`. A body with
 more than `max_parts` parts throws an error; `max_parts = 0` removes the limit.
 
+A part without a `Content-Disposition: form-data` header, or whose header has
+no `name`, is skipped, as Go's `mime/multipart` skips it. A part with an empty
+name, `name=""`, is kept.
+
 #### Examples
 ```jldoctest
 julia> body = Vector{UInt8}(
@@ -1837,6 +1877,9 @@ form reads the header and body of a `Request` or `Response`.
 `nothing` when the content type does not match or there is no body. A body
 with more than `max_parts` parts throws an error; `max_parts = 0` removes the
 limit.
+
+For `multipart/form-data`, parts without a name are skipped, as in
+`parse_multipart_form`.
 
 ### `HTTP.parse_multipart_mixed` — Function
 
@@ -2053,7 +2096,9 @@ stream; read it with `body_read!` and close it with
 Send an HTTP request and return the `Response`, with the whole body in
 `response.body` as a `Vector{UInt8}`.
 
-`url` is a string or `URI`. `headers` is anything `Headers` accepts.
+`url` is a string or `URI`. An IPv4 host must be in dotted-decimal form, such
+as `127.0.0.1`; other numeric hosts, such as `127.1`, `0x7f.1`, or `010.0.0.1`,
+throw an `ArgumentError`. `headers` is anything `Headers` accepts.
 `body` may be a `String`, a byte vector, an `IO`, a `Dict` or `NamedTuple` (sent
 as a URL-encoded form), a `Form`, an iterable of string or byte chunks,
 or an `AbstractBody`. `headers` and `body` can also be passed as
@@ -2073,8 +2118,9 @@ redirect responses (301, 302, 303, 307, and 308). A timeout throws a
 #### Keywords
 
 Request and response:
-- `query`: a `Dict`, `NamedTuple`, vector of pairs, or string to add to the
-  URL's query string.
+- `query`: a `Dict`, `NamedTuple`, `Pair`, vector of pairs, or string to add
+  to the URL's query string. A vector value repeats its name, so
+  `Dict("tag" => ["a", "b"])` adds `tag=a&tag=b`.
 - `basicauth`: credentials as `user => password` or `(user, password)`. An
   `Authorization` header takes precedence; credentials in the URL are used when
   neither is given. In a URL, percent-encode characters such as `/`, `?`, `#`,
@@ -2584,6 +2630,10 @@ Julia's `:interactive` thread pool; see `Server`.
   have open; `0` means no limit.
 - `allow_h2c = true`: serve cleartext HTTP/2 to clients that send the HTTP/2
   connection preface.
+- `invokelatest = false`: `true` calls `handler` through `Base.invokelatest`,
+  so it sees methods defined after the server starts. Without it, a route
+  registered on a running `Router` gets `500 Internal Server Error`, and a
+  handler edited with Revise keeps running its old code.
 - `listenany = false`: `true` ignores `port` and listens on a free port.
 - `reuseaddr = true`, `backlog = 128`: options for the listener that `serve!`
   creates; they do not apply to a `listener` argument.
@@ -2729,12 +2779,33 @@ instead of reused.
 
 ### `HTTP.peeraddr` — Function
 
-    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddr}
+    peeraddr(stream::Stream) -> Union{Nothing, Reseau.TCP.SocketAddrV4, Reseau.TCP.SocketAddrV6}
 
 Return the client's address for a server `stream`, or `nothing` when it is not
 known. `string(addr)` gives `"ip:port"`; `addr.ip` is a tuple of the address
 bytes and `addr.port` is the port. Works over HTTP/1 and HTTP/2, with or without
 TLS. Throws `ArgumentError` for a client stream.
+
+### `HTTP.precompile_server` — Function
+
+    HTTP.precompile_server(F::Type) -> Bool
+
+Compile the code that a server whose handler has type `F` runs to accept
+connections and answer requests, for `serve!` and `listen!`
+alike, over HTTP/1.1 and HTTP/2, with or without TLS. Nothing runs and no
+socket opens. Like `precompile`, it returns `false` when some of that code
+cannot be compiled.
+
+Without it, a new process compiles this code for its handler type when the
+server starts and when the first connection and the first HTTP/2 request
+arrive, which can take more than a second. Call `precompile_server` in a
+package's precompile workload, with the type of the handler the package serves,
+so that the package image keeps the code:
+
+```julia
+handler(req::HTTP.Request) = HTTP.Response(200, "ok")
+HTTP.precompile_server(typeof(handler))
+```
 
 ## Routing and Middleware
 
@@ -2778,6 +2849,12 @@ A route path is made of segments:
 - `*`, which matches any one segment
 - `**` at the end, which matches the rest of the path
 
+Each segment of the request path is percent-decoded before it is matched, so
+`/%61dmin` takes the route `/admin`: literal route segments are decoded the same
+way, and variable patterns see the decoded segment. An encoded slash (`%2F`)
+stays inside its segment. Path variables hold the segment as sent, still
+percent-encoded.
+
 A handler reads the matched route with `getroute` and its variables with
 `getparams` and `getparam`.
 
@@ -2818,8 +2895,8 @@ Return the registered path, such as `"/users/{id}"`, of the route that matched
 
     HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
 
-Return the path variables of the route that matched `req`, or `nothing` when no
-route matched or it has no variables.
+Return the path variables of the route that matched `req`, as sent (still
+percent-encoded), or `nothing` when no route matched or it has no variables.
 
 ### `HTTP.Handlers.getparam` — Function
 
@@ -2842,8 +2919,9 @@ Return middleware that answers with `status`, `body`, and `content_type` when a
 request handler takes longer than `timeout_s` seconds. The handler runs with a
 child `RequestContext` whose deadline is the earlier of the timeout and
 the request's own deadline. At the timeout that context is canceled, but the
-handler keeps running until it returns or checks the context. Only request
-handlers are supported.
+handler keeps running until it returns or checks the context. The context is
+also canceled when the request's own context is. Only request handlers are
+supported.
 
 ### `HTTP.Handlers.logging_middleware` — Function
 
@@ -3063,6 +3141,9 @@ address.
 - `compress = false`: accept permessage-deflate compression
   ([RFC 7692](https://www.rfc-editor.org/rfc/rfc7692)) from clients that offer
   it.
+- `invokelatest = false`: `true` calls `handler` through `Base.invokelatest`,
+  so it sees methods defined after the server starts, as for `HTTP.serve!`.
+  Without it, a handler edited with Revise keeps running its old code.
 - `maxframesize = 16 MiB`, `maxfragmentation = 1024`: the largest incoming
   frame, and the most frames in one message. Messages that have arrived but
   not been received may hold up to four times `maxframesize` bytes; past that
