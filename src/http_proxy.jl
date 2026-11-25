@@ -410,7 +410,7 @@ function _env_proxy(names::Vararg{String})::Union{Nothing,_ProxyTarget}
             return _parse_proxy_target(value)
         catch err
             # The message leaves out the URL's credentials.
-            err isa ArgumentError && @warn "Ignoring the $name environment variable: $(sprint(showerror, err))" maxlog=1 _id=Symbol("HTTP_env_proxy_", name)
+            err isa ArgumentError && @warn "Ignoring the $name environment variable" exception=err maxlog=1 _id=Symbol("HTTP_env_proxy_", name)
             return nothing
         end
     end
