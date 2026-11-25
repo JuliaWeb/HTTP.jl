@@ -1511,8 +1511,11 @@ end
     # out the credentials. The lowercase name is cleared first because Windows
     # environment variables are case-insensitive.
     withenv("http_proxy" => nothing, "HTTP_PROXY" => "http://CORP\\jdoe:pw@proxy.local:8080") do
-        config = @test_logs (:warn, r"^Ignoring the HTTP_PROXY environment variable: ArgumentError: invalid character '\\\\' in URL userinfo$") HT.ProxyFromEnvironment()
+        logs, config = Test.collect_test_logs(HT.ProxyFromEnvironment)
         @test config.http === nothing
+        @test only(logs).message == "Ignoring the HTTP_PROXY environment variable"
+        @test sprint(showerror, only(logs).kwargs[:exception]) ==
+            "ArgumentError: invalid character '\\\\' in URL userinfo"
     end
     withenv("http_proxy" => nothing, "HTTP_PROXY" => "http://CORP%5Cjdoe:pw@proxy.local:8080") do
         @test HT.ProxyFromEnvironment().http.authorization == HT._userinfo_basic_authorization("CORP%5Cjdoe:pw")
